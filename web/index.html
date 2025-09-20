@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MADOLA - Math Domain Language Editor</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="js/madola-browser.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Top Menu Bar -->
+        <header class="menubar">
+            <div class="menu-section">
+                <button id="btn-new" class="menu-btn">
+                    <span class="btn-icon">📄</span>
+                    New
+                </button>
+                <button id="btn-open" class="menu-btn">
+                    <span class="btn-icon">📁</span>
+                    Open
+                </button>
+                <button id="btn-save" class="menu-btn">
+                    <span class="btn-icon">💾</span>
+                    Save
+                </button>
+                <button id="btn-save-as" class="menu-btn">
+                    <span class="btn-icon">📋</span>
+                    Save As
+                </button>
+            </div>
+            <div class="menu-section">
+                <button id="btn-about" class="menu-btn">
+                    <span class="btn-icon">ℹ️</span>
+                    About
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Container -->
+        <main class="main-container">
+            <!-- Left Panel -->
+            <div class="panel left-panel">
+                <div class="panel-header">
+                    <h3>MADOLA Editor</h3>
+                    <div class="editor-controls">
+                        <button id="btn-format" class="control-btn">Format</button>
+                        <button id="btn-run" class="control-btn primary">Run</button>
+                    </div>
+                </div>
+                <div class="editor-container">
+                    <textarea id="editor" placeholder="// Enter your MADOLA code here...
+fn test(a, b) {
+    c := 1;
+    return a + b + c;
+}
+
+x := test(5, 3);
+print(x);"></textarea>
+                </div>
+                <div id="progress" class="progress-panel">
+                    <div class="progress-header">
+                        <h4>Messages</h4>
+                        <button id="btn-clear-messages" class="clear-btn">Clear</button>
+                    </div>
+                    <div id="messages" class="messages-container"></div>
+                </div>
+            </div>
+
+            <!-- Right Panel -->
+            <div class="panel right-panel">
+                <div class="panel-header">
+                    <h3>Markdown Output</h3>
+                    <div class="output-controls">
+                        <button id="btn-copy-output" class="control-btn">Copy</button>
+                        <button id="btn-download-md" class="control-btn">Download</button>
+                    </div>
+                </div>
+                <div id="output" class="output-container">
+                    <div class="output-placeholder">
+                        <p>Run your MADOLA code to see the formatted output here.</p>
+                        <p>Math expressions will be rendered with MathJax.</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- About Modal -->
+        <div id="about-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>About MADOLA</h2>
+                    <button id="modal-close" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p><strong>MADOLA</strong> (Math Domain Language) is a specialized language for mathematical computations and documentation.</p>
+                    <p>Features:</p>
+                    <ul>
+                        <li>Function definitions and calls</li>
+                        <li>Variable assignments</li>
+                        <li>Mathematical expressions</li>
+                        <li>Markdown output with LaTeX math rendering</li>
+                    </ul>
+                    <p>Built with WebAssembly for high performance in the browser.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- File input for opening files -->
+    <input type="file" id="file-input" accept=".clg,.txt" style="display: none;">
+
+    <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MADOLA WASM Test</title>
+</head>
+<body>
+    <h1>MADOLA WASM Loading Test</h1>
+    <div id="status">Testing WASM loading...</div>
+    <div id="output"></div>
+
+    <script>
+        async function testWasm() {
+            const statusDiv = document.getElementById('status');
+            const outputDiv = document.getElementById('output');
+
+            try {
+                statusDiv.textContent = 'Fetching WASM module...';
+
+                // Load the WASM module
+                const response = await fetch('./madola.js');
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch: ${response.status}`);
+                }
+
+                statusDiv.textContent = 'Parsing module...';
+                const moduleText = await response.text();
+
+                statusDiv.textContent = 'Executing module...';
+                // Execute the module code
+                eval(moduleText);
+
+                statusDiv.textContent = 'Initializing WASM...';
+                // Initialize the WASM module
+                const wasmModule = await MADOLA();
+
+                statusDiv.textContent = 'Testing evaluation...';
+                // Test evaluation
+                const testCode = 'x := 5; print(x);';
+                const evalResultPtr = wasmModule.ccall('evaluate_madola', 'number', ['string'], [testCode]);
+
+                if (evalResultPtr !== 0) {
+                    const result = wasmModule.UTF8ToString(evalResultPtr);
+                    wasmModule.ccall('free_result', null, ['number'], [evalResultPtr]);
+
+                    statusDiv.textContent = 'SUCCESS! WASM module loaded and working.';
+                    outputDiv.innerHTML = `<h3>Test Result:</h3><pre>${result}</pre>`;
+                } else {
+                    statusDiv.textContent = 'WASM module loaded but evaluation failed.';
+                }
+
+            } catch (error) {
+                statusDiv.textContent = `ERROR: ${error.message}`;
+                outputDiv.innerHTML = `<h3>Error Details:</h3><pre>${error.stack}</pre>`;
+            }
+        }
+
+        // Start the test
+        testWasm();
+    </script>
+</body>
+</html>

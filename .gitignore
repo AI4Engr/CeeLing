@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+build-wasm/
+*.o
+*.so
+*.dll
+*.exe
+.DS_Store
+*.log

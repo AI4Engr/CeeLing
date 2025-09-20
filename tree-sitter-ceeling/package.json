@@ -1,0 +1,12 @@
+{
+  "name": "tree-sitter-ceeling",
+  "version": "1.0.0",
+  "description": "Tree-sitter grammar for CeeLing language",
+  "main": "bindings/node",
+  "tree-sitter": [
+    {
+      "scope": "source.ceeling",
+      "file-types": ["clg"]
+    }
+  ]
+}

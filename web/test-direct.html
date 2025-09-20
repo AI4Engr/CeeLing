@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MADOLA WASM Direct Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .log { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; }
+        .error { background: #ffebee; border-left: 4px solid #f44336; }
+        .success { background: #e8f5e8; border-left: 4px solid #4caf50; }
+        .info { background: #e3f2fd; border-left: 4px solid #2196f3; }
+    </style>
+</head>
+<body>
+    <h1>🧪 MADOLA WASM Direct Loading Test</h1>
+    <div id="output"></div>
+    
+    <script>
+        function log(message, type = 'info') {
+            const output = document.getElementById('output');
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            output.appendChild(div);
+            console.log(message);
+        }
+
+        async function testDirectWasm() {
+            log('Starting direct WASM test...', 'info');
+            
+            try {
+                // Test 1: Check if WASM files are accessible
+                log('Test 1: Checking WASM file accessibility...', 'info');
+                
+                const jsResponse = await fetch('./madola.js');
+                if (!jsResponse.ok) {
+                    throw new Error(`madola.js fetch failed: ${jsResponse.status}`);
+                }
+                log(`✅ madola.js accessible (${jsResponse.status})`, 'success');
+                
+                const wasmResponse = await fetch('./madola.wasm');
+                if (!wasmResponse.ok) {
+                    throw new Error(`madola.wasm fetch failed: ${wasmResponse.status}`);
+                }
+                log(`✅ madola.wasm accessible (${wasmResponse.status})`, 'success');
+                
+                // Test 2: Try loading JS module directly
+                log('Test 2: Loading JS module directly...', 'info');
+                
+                // Set up Node.js environment mocks first
+                if (typeof global === 'undefined') {
+                    window.global = window;
+                }
+                if (typeof process === 'undefined') {
+                    window.process = {
+                        versions: { node: '16.0.0' },
+                        platform: 'browser',
+                        argv: ['node', 'script.js'],
+                        cwd: () => '/'
+                    };
+                }
+                if (typeof require === 'undefined') {
+                    window.require = (module) => {
+                        log(`⚠️ Attempted require('${module}') in browser`, 'error');
+                        if (module === 'fs') {
+                            return { readFileSync: () => { throw new Error('fs not available'); } };
+                        }
+                        throw new Error(`Module ${module} not available in browser`);
+                    };
+                }
+                
+                // Load the script tag
+                const script = document.createElement('script');
+                script.src = './madola.js';
+                script.onerror = (error) => {
+                    log(`❌ Script loading error: ${error}`, 'error');
+                };
+                script.onload = async () => {
+                    log('✅ Script loaded successfully', 'success');
+                    
+                    // Test 3: Check if MADOLA function exists
+                    log('Test 3: Checking for MADOLA function...', 'info');
+                    
+                    if (typeof MADOLA === 'undefined') {
+                        log('❌ MADOLA function not found', 'error');
+                        return;
+                    }
+                    log('✅ MADOLA function found', 'success');
+                    
+                    // Test 4: Try to initialize MADOLA
+                    log('Test 4: Initializing MADOLA module...', 'info');
+                    
+                    try {
+                        const module = await MADOLA();
+                        log('✅ MADOLA module initialized successfully', 'success');
+                        
+                        // Test 5: Check for exported functions
+                        log('Test 5: Checking exported functions...', 'info');
+                        
+                        if (typeof module.ccall === 'function') {
+                            log('✅ ccall function available', 'success');
+                        } else {
+                            log('❌ ccall function not available', 'error');
+                        }
+                        
+                        if (typeof module.UTF8ToString === 'function') {
+                            log('✅ UTF8ToString function available', 'success');
+                        } else {
+                            log('❌ UTF8ToString function not available', 'error');
+                        }
+                        
+                        // Test 6: Try a simple function call
+                        log('Test 6: Testing function call...', 'info');
+                        
+                        try {
+                            const testCode = 'x := 42; print(x);';
+                            const resultPtr = module.ccall('evaluate_madola', 'number', ['string'], [testCode]);
+                            
+                            if (resultPtr !== 0) {
+                                const result = module.UTF8ToString(resultPtr);
+                                module.ccall('free_result', null, ['number'], [resultPtr]);
+                                log(`✅ Function call successful: ${result}`, 'success');
+                            } else {
+                                log('❌ Function call returned null', 'error');
+                            }
+                        } catch (callError) {
+                            log(`❌ Function call failed: ${callError.message}`, 'error');
+                        }
+                        
+                        log('🎉 All tests completed!', 'success');
+                        
+                    } catch (initError) {
+                        log(`❌ MADOLA initialization failed: ${initError.message}`, 'error');
+                    }
+                };
+                
+                document.head.appendChild(script);
+                
+            } catch (error) {
+                log(`❌ Test failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Start the test when page loads
+        document.addEventListener('DOMContentLoaded', testDirectWasm);
+    </script>
+</body>
+</html>
+

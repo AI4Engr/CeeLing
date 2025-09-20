@@ -1,0 +1,56 @@
+# Enhanced CeeLing Source Mapping for GDB
+# This configuration prioritizes showing .clg source files
+
+set pagination off
+set height 0
+set width 0
+set confirm off
+set verbose off
+set complaints 0
+set history save off
+set print pretty on
+
+# Add source directories
+directory ..
+directory .
+
+# Create a custom list command for .clg files
+define lclg
+    if $argc == 0
+        list ..\example.clg:1,23
+    else
+        if $argc == 1
+            list ..\example.clg:$arg0
+        else
+            list ..\example.clg:$arg0,$arg1
+        end
+    end
+end
+
+# Create a command to show current location in .clg
+define whereclg
+    echo Current location mapped to .clg file:\n
+    list ..\example.clg:1,23
+end
+
+# Helper commands
+define bclg
+    if $argc == 1
+        break $arg0
+        echo Breakpoint set at line $arg0 (will show in .cpp but maps to .clg)\n
+    else
+        echo Usage: bclg <line_number>\n
+    end
+end
+
+echo ==========================================\n
+echo CeeLing .clg File Debugging\n
+echo ==========================================\n
+echo Commands:\n
+echo   lclg          - List entire .clg file\n
+echo   lclg N        - List around line N in .clg\n
+echo   lclg N,M      - List lines N to M in .clg\n
+echo   whereclg      - Show current location in .clg\n
+echo   bclg N        - Set breakpoint at line N\n
+echo   Standard GDB: break, run, next, step, etc.\n
+echo ==========================================\n
