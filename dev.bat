@@ -103,6 +103,16 @@ if "%1"=="test" (
     goto :eof
 )
 
+if "%1"=="regression" (
+    echo [INFO] Running regression tests...
+    if exist regression\run_regression.bat (
+        call regression\run_regression.bat %2 %3
+    ) else (
+        bash regression/run_regression.sh %2 %3
+    )
+    goto :eof
+)
+
 if "%1"=="wasm" (
     echo [INFO] Building CLing for WASM...
     emcc --version >nul 2>&1
@@ -133,44 +143,28 @@ if "%1"=="wasm" (
 if "%1"=="run" (
     set EXECUTABLE=dist\cling.exe
     if not exist !EXECUTABLE! (
-        echo [INFO] Building CLing first...
-        call %0 build
+        set EXECUTABLE=dist\cling
+        if not exist !EXECUTABLE! (
+            echo [INFO] Building CLing first...
+            call %0 build
+            set EXECUTABLE=dist\cling.exe
+            if not exist !EXECUTABLE! set EXECUTABLE=dist\cling
+        )
     )
 
-    set FILE=%2
-    if "%FILE%"=="" set FILE=example.clg
+    set INPUT_FILE=%2
+    if "!INPUT_FILE!"=="" set INPUT_FILE=tests\binary_tree.clg
 
-    set MODE=%3
-    if "%MODE%"=="" set MODE=eval
+    set OUTPUT_FILE=%3
+    if "!OUTPUT_FILE!"=="" set OUTPUT_FILE=build\generated_output.cpp
 
-    if "!MODE!"=="eval" (
-        echo [INFO] Evaluating !FILE!...
-        !EXECUTABLE! !FILE!
-    ) else if "!MODE!"=="evaluate" (
-        echo [INFO] Evaluating !FILE!...
-        !EXECUTABLE! !FILE!
-    ) else if "!MODE!"=="md" (
-        echo [INFO] Creating markdown from !FILE!...
-        set OUTPUT_FILE=!FILE:.cl=.md!
-        !EXECUTABLE! !FILE! --format > !OUTPUT_FILE!
-        echo [INFO] Markdown saved to !OUTPUT_FILE!
-    ) else if "!MODE!"=="markdown" (
-        echo [INFO] Creating markdown from !FILE!...
-        set OUTPUT_FILE=!FILE:.cl=.md!
-        !EXECUTABLE! !FILE! --format > !OUTPUT_FILE!
-        echo [INFO] Markdown saved to !OUTPUT_FILE!
-    ) else if "!MODE!"=="both" (
-        echo [INFO] Evaluating !FILE!...
-        !EXECUTABLE! !FILE!
-        echo.
-        echo [INFO] Creating markdown from !FILE!...
-        set OUTPUT_FILE=!FILE:.cl=.md!
-        !EXECUTABLE! !FILE! --format > !OUTPUT_FILE!
-        echo [INFO] Markdown saved to !OUTPUT_FILE!
-    ) else (
-        echo [ERROR] Invalid mode: !MODE!. Use 'eval', 'markdown', or 'both'
+    echo [INFO] Generating C++ from !INPUT_FILE!...
+    !EXECUTABLE! --cpp !OUTPUT_FILE! !INPUT_FILE!
+    if errorlevel 1 (
+        echo [ERROR] C++ generation failed
         exit /b 1
     )
+    echo [INFO] C++ saved to !OUTPUT_FILE!
     goto :eof
 )
 
@@ -214,9 +208,9 @@ echo   configure          - Configure CMake ^(Debug^)
 echo   configure-release  - Configure CMake ^(Release^)
 echo   build              - Build native executable
 echo   test               - Build and run test suite
+echo   regression         - Run regression tests ^(native only^)
 echo   wasm               - Build WASM version ^(requires emscripten^)
-echo   run [file] [mode]   - Run CeeLing with file ^(default: example.clg^)
-echo                        Modes: eval ^(default^), markdown, both
+echo   run [input] [output] - Transpile input .clg to C++ ^(default output: build\generated_output.cpp^)
 echo   debug              - Build debug version
 echo   release            - Build release version
 echo   tree-sitter        - Build with Tree-sitter support
@@ -226,8 +220,8 @@ echo Examples:
 echo   dev.bat generate-grammar
 echo   dev.bat build
 echo   dev.bat test
-echo   dev.bat run test.cl
-echo   dev.bat run test.cl markdown
-echo   dev.bat run test.cl both
+echo   dev.bat regression
+echo   dev.bat run tests\binary_tree.clg
+echo   dev.bat run tests\linked_list.clg build\linked_list.cpp
 echo   dev.bat wasm
 echo   dev.bat tree-sitter

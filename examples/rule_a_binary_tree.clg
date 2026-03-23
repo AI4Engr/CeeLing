@@ -1,0 +1,56 @@
+// Example demonstrating Rule A: Parent-Child Relationship
+// Binary Tree - children are owned exclusively by parents
+
+class TreeNode {
+public:
+    int data;
+    TreeNode left;     // Child owned exclusively by parent
+    TreeNode right;    // Child owned exclusively by parent
+
+    TreeNode(int value) {
+        data = value;
+        left = nullptr;
+        right = nullptr;
+    }
+
+    void insert(int value) {
+        if (value < data) {
+            if (!left) {
+                left = new TreeNode(value);  // Parent creates and owns child
+            } else {
+                left.insert(value);
+            }
+        } else {
+            if (!right) {
+                right = new TreeNode(value); // Parent creates and owns child
+            } else {
+                right.insert(value);
+            }
+        }
+    }
+
+    void printInOrder() {
+        if (left) {
+            left.printInOrder();
+        }
+        print(data);
+        if (right) {
+            right.printInOrder();
+        }
+    }
+};
+
+int main() {
+    TreeNode root = new TreeNode(50);
+    root.insert(30);
+    root.insert(70);
+    root.insert(20);
+    root.insert(40);
+    root.insert(60);
+    root.insert(80);
+    
+    print("Binary Tree (in-order): ");
+    root.printInOrder();
+    
+    return 0;
+}

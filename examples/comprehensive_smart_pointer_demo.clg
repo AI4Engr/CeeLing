@@ -1,0 +1,81 @@
+// Comprehensive Smart Pointer Rules Demonstration
+// This file demonstrates all four rules in action
+
+// Rule A: Parent-Child (Binary Tree)
+class TreeNode {
+public:
+    int data;
+    TreeNode left;     // Child - Rule A -> unique_ptr
+    TreeNode right;    // Child - Rule A -> unique_ptr
+    
+    TreeNode(int value) {
+        data = value;
+        left = nullptr;
+        right = nullptr;
+    }
+};
+
+// Rule C: Cycle Prevention (Doubly Linked List)
+class ListNode {
+public:
+    int value;
+    ListNode next;     // Forward - Rule C -> shared_ptr
+    ListNode prev;     // Backward - Rule C -> weak_ptr (breaks cycle)
+    
+    ListNode(int val) {
+        value = val;
+        next = nullptr;
+        prev = nullptr;
+    }
+};
+
+// Rule B: Shared Resources
+class Texture {
+public:
+    int width;
+    int height;
+    
+    Texture(int w, int h) {
+        width = w;
+        height = h;
+    }
+};
+
+class Material {
+public:
+    Texture texture;   // Shared between materials - Rule B -> shared_ptr
+    float shininess;
+    
+    Material(Texture tex, float shine) {
+        texture = tex;     // Sharing reference
+        shininess = shine;
+    }
+};
+
+// Combining all rules
+class ComplexGraph {
+public:
+    TreeNode rootNode;      // Rule A: Parent owns tree
+    ListNode listHead;      // Rule C: Part of cyclic structure
+    Material sharedMat;     // Rule B: Shared resource
+    
+    ComplexGraph() {
+        rootNode = new TreeNode(1);
+        listHead = new ListNode(100);
+        
+        Texture commonTexture = new Texture(512, 512);
+        sharedMat = new Material(commonTexture, 0.5);
+    }
+};
+
+int main() {
+    // Rule D: Local/Temporary objects
+    ComplexGraph graph = new ComplexGraph();     // Rule D -> unique_ptr
+    TreeNode tempNode = new TreeNode(42);        // Rule D -> unique_ptr
+    
+    // Rule B: Shared access
+    Material mat1 = graph.sharedMat;             // Rule B -> shared_ptr
+    Material mat2 = graph.sharedMat;             // Rule B -> shared_ptr
+    
+    return 0;
+}

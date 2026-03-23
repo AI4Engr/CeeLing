@@ -1,0 +1,77 @@
+// Test file demonstrating improved smart pointer analysis
+
+class Node {
+public:
+    int data;
+    Node next;     // Should be unique_ptr (parent-child relationship)
+    Node prev;     // Should be weak_ptr (back reference for doubly-linked list)
+    
+    Node(int value) {
+        data = value;
+        next = nullptr;
+        prev = nullptr;
+    }
+};
+
+class TreeNode {
+public:
+    int value;
+    TreeNode left;   // Should be unique_ptr (parent-child)
+    TreeNode right;  // Should be unique_ptr (parent-child)
+    TreeNode parent; // Should be weak_ptr (back reference)
+    
+    TreeNode(int val) {
+        value = val;
+        left = nullptr;
+        right = nullptr;
+        parent = nullptr;
+    }
+};
+
+class SharedResource {
+public:
+    int id;
+    
+    SharedResource(int resourceId) {
+        id = resourceId;
+    }
+};
+
+class Manager {
+public:
+    SharedResource resource; // Should be shared_ptr (shared ownership)
+    
+    Manager(SharedResource res) {
+        resource = res;
+    }
+};
+
+class Worker {
+public:
+    SharedResource resource; // Should be shared_ptr (shared ownership)
+    
+    Worker(SharedResource res) {
+        resource = res;
+    }
+};
+
+int main() {
+    // Test unique_ptr scenarios
+    Node head = new Node(1);
+    head.next = new Node(2);
+    head.next.prev = head;  // Creates cycle - prev should be weak_ptr
+    
+    TreeNode root = new TreeNode(10);
+    root.left = new TreeNode(5);
+    root.right = new TreeNode(15);
+    root.left.parent = root;   // Back reference - should be weak_ptr
+    root.right.parent = root;  // Back reference - should be weak_ptr
+    
+    // Test shared_ptr scenarios
+    SharedResource sharedRes = new SharedResource(42);
+    Manager mgr = new Manager(sharedRes);     // Shared ownership
+    Worker worker1 = new Worker(sharedRes);   // Shared ownership
+    Worker worker2 = new Worker(sharedRes);   // Shared ownership
+    
+    return 0;
+}

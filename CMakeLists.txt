@@ -38,6 +38,7 @@ include_directories(
 # Source files
 set(CORE_SOURCES
     src/core/generator/cpp_generator.cpp
+    src/core/generator/smart_pointer_analyzer.cpp
 )
 
 # Optional Tree-sitter support
@@ -106,8 +107,43 @@ endif()
 # Testing
 if(NOT EMSCRIPTEN)
     enable_testing()
-    # Use cling.exe for testing with test files (using absolute paths)
-    add_test(NAME cling_test_example COMMAND cling ${CMAKE_SOURCE_DIR}/example.clg)
+
+    function(add_transpile_compile_test test_name input_file generated_cpp output_exe)
+        add_test(NAME ${test_name}
+            COMMAND cling --cpp ${generated_cpp} ${input_file})
+
+        if(MSVC)
+            add_test(NAME ${test_name}_compile
+                COMMAND ${CMAKE_CXX_COMPILER} /nologo /EHsc /std:c++17 ${generated_cpp} /Fe:${output_exe})
+        else()
+            add_test(NAME ${test_name}_compile
+                COMMAND ${CMAKE_CXX_COMPILER} -std=c++17 ${generated_cpp} -o ${output_exe})
+        endif()
+
+        set_tests_properties(${test_name}_compile PROPERTIES DEPENDS ${test_name})
+    endfunction()
+
+    # Smoke tests for supported fixtures.
+    add_transpile_compile_test(
+        cling_test_binary_tree
+        ${CMAKE_SOURCE_DIR}/tests/binary_tree.clg
+        ${CMAKE_BINARY_DIR}/test_output_binary_tree.cpp
+        ${CMAKE_BINARY_DIR}/test_output_binary_tree.exe)
+    add_transpile_compile_test(
+        cling_test_linked_list
+        ${CMAKE_SOURCE_DIR}/tests/linked_list.clg
+        ${CMAKE_BINARY_DIR}/test_output_linked_list.cpp
+        ${CMAKE_BINARY_DIR}/test_output_linked_list.exe)
+    add_transpile_compile_test(
+        cling_test_new_expression_paths
+        ${CMAKE_SOURCE_DIR}/tests/new_expression_paths.clg
+        ${CMAKE_BINARY_DIR}/test_output_new_expression_paths.cpp
+        ${CMAKE_BINARY_DIR}/test_output_new_expression_paths.exe)
+
+    # Unsupported/legacy syntax should fail fast instead of silently succeeding.
+    add_test(NAME cling_test_legacy_syntax_rejected
+        COMMAND cling --cpp ${CMAKE_BINARY_DIR}/test_output_legacy.cpp ${CMAKE_SOURCE_DIR}/regression/fixtures/example.clg)
+    set_tests_properties(cling_test_legacy_syntax_rejected PROPERTIES WILL_FAIL TRUE)
 
     # Custom target for running tests
     add_custom_target(run_tests

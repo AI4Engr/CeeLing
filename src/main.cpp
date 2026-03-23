@@ -122,9 +122,13 @@ int main(int argc, char* argv[]) {
 
         std::unique_ptr<Program> program;
 
+#ifdef WITH_TREE_SITTER
         // Use Tree-sitter parser to build AST from source
         ASTBuilder builder;
         program = builder.buildProgram(source);
+#else
+        throw std::runtime_error("This build was configured without Tree-sitter support. Rebuild with -DWITH_TREE_SITTER=ON.");
+#endif
 
         // Generate C++ code
         CppGenerator generator;

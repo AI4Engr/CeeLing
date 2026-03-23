@@ -1,0 +1,133 @@
+// Example demonstrating Rule D: Temporary/Local Ownership
+// Objects that exist only within local scope
+
+class DataProcessor {
+public:
+    int id;
+    string name;
+    
+    DataProcessor(int identifier, string processName) {
+        id = identifier;
+        name = processName;
+        print("Created processor: " + name);
+    }
+    
+    void process(int data) {
+        print("Processing data " + data + " with " + name);
+    }
+    
+    int calculate(int input) {
+        return input * id + 42;
+    }
+};
+
+class TempFile {
+public:
+    string filename;
+    string content;
+    
+    TempFile(string name) {
+        filename = name;
+        content = "";
+        print("Created temp file: " + filename);
+    }
+    
+    void write(string data) {
+        content = content + data;
+    }
+    
+    void cleanup() {
+        print("Cleaning up temp file: " + filename);
+        content = "";
+    }
+};
+
+void processData(int value) {
+    // Local temporary processor - Rule D
+    DataProcessor processor = new DataProcessor(1, "LocalProcessor");
+    
+    // Use the processor locally
+    processor.process(value);
+    int result = processor.calculate(value);
+    print("Result: " + result);
+    
+    // processor automatically cleaned up when function exits
+}
+
+void fileOperation(string data) {
+    // Local temporary file - Rule D
+    TempFile tempFile = new TempFile("temp_" + data + ".txt");
+    
+    // Use the file locally
+    tempFile.write("Processing: " + data);
+    tempFile.write("\nTimestamp: " + getCurrentTime());
+    
+    // Process the file content
+    print("File content length: " + tempFile.content.length());
+    
+    // Cleanup
+    tempFile.cleanup();
+    
+    // tempFile automatically cleaned up when function exits
+}
+
+class WorkManager {
+public:
+    void doWork() {
+        // Local working objects - Rule D
+        DataProcessor workProcessor = new DataProcessor(2, "WorkProcessor");
+        TempFile workFile = new TempFile("work.tmp");
+        
+        // Use objects locally within this method
+        for (int i = 0; i < 5; i = i + 1) {
+            workProcessor.process(i);
+            workFile.write("Step " + i + ": " + workProcessor.calculate(i) + "\n");
+        }
+        
+        print("Work completed, files and processors cleaned up automatically");
+        
+        // Both objects automatically cleaned up when method exits
+    }
+    
+    DataProcessor createProcessor(string name) {
+        // Local creation and return - Rule D for local, Rule B for return value
+        DataProcessor newProcessor = new DataProcessor(3, name);
+        newProcessor.process(0);  // Test the processor
+        
+        return newProcessor;  // Ownership transferred to caller
+    }
+};
+
+string getCurrentTime() {
+    return "2023-12-01 10:30:00";  // Simplified for example
+}
+
+int main() {
+    print("=== Rule D Examples: Local/Temporary Ownership ===");
+    
+    // Example 1: Function-local objects
+    processData(100);
+    processData(200);
+    
+    // Example 2: Function-local file operations
+    fileOperation("test1");
+    fileOperation("test2");
+    
+    // Example 3: Method-local objects
+    WorkManager manager = new WorkManager();  // Rule D: local to main
+    manager.doWork();
+    
+    // Example 4: Local creation with ownership transfer
+    DataProcessor sharedProcessor = manager.createProcessor("SharedProcessor");
+    sharedProcessor.process(999);
+    
+    // Example 5: Loop-local objects
+    for (int i = 1; i <= 3; i = i + 1) {
+        DataProcessor loopProcessor = new DataProcessor(i, "LoopProcessor" + i);  // Rule D
+        loopProcessor.process(i * 10);
+        // loopProcessor cleaned up at end of each loop iteration
+    }
+    
+    print("All temporary and local objects handled safely!");
+    return 0;
+}

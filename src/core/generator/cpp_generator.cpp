@@ -1,14 +1,35 @@
 #include "cpp_generator.h"
 #include <iostream>
-#include <regex>
+#include <stdexcept>
 
 namespace cling {
 
-std::string CppGenerator::generateCpp(const Program& program, const std::string& source) {
+// ─── helpers ───────────────────────────────────────────────────────────────
+
+std::string CppGenerator::makeFactory(const std::string& ptrType,
+                                       const std::string& className,
+                                       const std::vector<ExpressionPtr>& args) {
+    std::string factoryName = (ptrType == "std::unique_ptr") ? "std::make_unique" : "std::make_shared";
+    std::string result = factoryName + "<" + className + ">(";
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (i > 0) result += ", ";
+        result += generateExpression(*args[i]);
+    }
+    result += ")";
+    return result;
+}
+
+// ─── main entry point ──────────────────────────────────────────────────────
+
+std::string CppGenerator::generateCpp(const Program& program, const std::string& /*source*/) {
     output.str("");
     output.clear();
 
-    // First pass: collect all class names
+    // Two-pass smart pointer analysis
+    std::cerr << "=== PERFORMING TWO-PASS SMART POINTER ANALYSIS ===" << std::endl;
+    analyzer.analyzeProgram(program);
+
+    // Collect all class names
     classNames.clear();
     for (const auto& stmt : program.statements) {
         if (auto classDecl = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
@@ -16,52 +37,29 @@ std::string CppGenerator::generateCpp(const Program& program, const std::string&
         }
     }
 
-    // For source preservation, we'll generate by traversing the source and replacing parts
-    std::string result = source;
-
-    // Transform class member variable declarations with smart pointer versions
-    for (const std::string& className : classNames) {
-        // Pattern: "ClassName variableName;"
-        std::regex pattern("\\b" + className + "\\s+(\\w+);");
-        std::string replacement = "std::shared_ptr<" + className + "> $1;";
-        result = std::regex_replace(result, pattern, replacement);
+    // Prepend #include <memory> / <utility> if classes are present and not already included
+    if (!classNames.empty()) {
+        bool hasMemory  = false;
+        bool hasUtility = false;
+        for (const auto& stmt : program.statements) {
+            if (auto inc = dynamic_cast<const IncludeStatement*>(stmt.get())) {
+                if (inc->includeFile.find("<memory>")  != std::string::npos) hasMemory  = true;
+                if (inc->includeFile.find("<utility>") != std::string::npos) hasUtility = true;
+            }
+        }
+        if (!hasMemory)  output << "#include <memory>\n";
+        if (!hasUtility) output << "#include <utility>\n";
     }
 
-    // Transform class variable declarations with assignment (not new)
-    for (const std::string& className : classNames) {
-        // Pattern: "ClassName variable = someVariable;" (but not "new ClassName")
-        std::regex pattern("\\b" + className + "\\s+(\\w+)\\s*=\\s*(?!new\\s)([^;]+);");
-        std::string replacement = "std::shared_ptr<" + className + "> $1 = $2;";
-        result = std::regex_replace(result, pattern, replacement);
+    // Walk AST and generate C++
+    for (const auto& stmt : program.statements) {
+        generateStatement(*stmt);
     }
 
-    // Transform new expressions to make_shared
-    for (const std::string& className : classNames) {
-        // Pattern: "ClassName var = new ClassName(...)"
-        std::regex pattern("\\b" + className + "\\s+(\\w+)\\s*=\\s*new\\s+" + className + "\\s*\\(([^)]*)\\)");
-        std::string replacement = "std::shared_ptr<" + className + "> $1 = std::make_shared<" + className + ">($2)";
-        result = std::regex_replace(result, pattern, replacement);
-    }
-
-    // Transform assignment of new expressions to make_shared
-    for (const std::string& className : classNames) {
-        // Pattern: "variableName = new ClassName(...)"
-        std::regex pattern("(\\w+)\\s*=\\s*new\\s+" + className + "\\s*\\(([^)]*)\\)");
-        std::string replacement = "$1 = std::make_shared<" + className + ">($2)";
-        result = std::regex_replace(result, pattern, replacement);
-    }
-
-    // Transform member access from . to ->
-    for (const std::string& className : classNames) {
-        // Pattern: "variableName.memberName" -> "variableName->memberName"
-        // This is a simplified transformation - in practice you'd want more sophisticated handling
-        std::regex pattern("(\\w+)\\.(\\w+)");
-        std::string replacement = "$1->$2";
-        result = std::regex_replace(result, pattern, replacement);
-    }
-
-    return result;
+    return output.str();
 }
+
+// ─── statement dispatch ────────────────────────────────────────────────────
 
 void CppGenerator::generateStatement(const Statement& stmt) {
     if (auto varDecl = dynamic_cast<const VariableDeclaration*>(&stmt)) {
@@ -72,6 +70,8 @@ void CppGenerator::generateStatement(const Statement& stmt) {
         generatePrintStatement(*printStmt);
     } else if (auto funcDecl = dynamic_cast<const FunctionDeclaration*>(&stmt)) {
         generateFunctionDeclaration(*funcDecl);
+    } else if (auto methodDecl = dynamic_cast<const MethodDeclaration*>(&stmt)) {
+        generateMethodDeclaration(*methodDecl);
     } else if (auto mainFunc = dynamic_cast<const MainFunction*>(&stmt)) {
         generateMainFunction(*mainFunc);
     } else if (auto classDecl = dynamic_cast<const ClassDeclaration*>(&stmt)) {
@@ -84,39 +84,51 @@ void CppGenerator::generateStatement(const Statement& stmt) {
         generateReturnStatement(*returnStmt);
     } else if (auto commentStmt = dynamic_cast<const CommentStatement*>(&stmt)) {
         generateCommentStatement(*commentStmt);
+    } else if (auto ifStmt = dynamic_cast<const IfStatement*>(&stmt)) {
+        generateIfStatement(*ifStmt);
     }
 }
 
+// ─── statement generators ──────────────────────────────────────────────────
+
 void CppGenerator::generateVariableDeclaration(const VariableDeclaration& decl) {
-    // Handle member variables without initialization (null expression)
     if (!decl.expression) {
-        // For member variables without initialization, transform class types
+        // Member variable without initializer
         if (isClassName(decl.type)) {
-            output << "std::shared_ptr<" << decl.type << "> " << decl.identifier << ";\n";
+            std::string ptrType = getSmartPointerType(decl.type, decl.identifier);
+            output << ptrType << "<" << decl.type << "> " << decl.identifier << ";\n";
         } else {
             output << decl.type << " " << decl.identifier << ";\n";
         }
         return;
     }
 
-    // Check if the type is a class name and the expression is a new expression
     if (isClassName(decl.type)) {
+        std::string ptrType = getSmartPointerType(decl.type, decl.identifier);
         if (auto newExpr = dynamic_cast<const NewExpression*>(decl.expression.get())) {
-            // Transform "ClassName var = new ClassName(...)" to "std::shared_ptr<ClassName> var = std::make_shared<ClassName>(...)"
+            // Use pointer-type-aware factory: make_unique or make_shared
+            output << ptrType << "<" << decl.type << "> " << decl.identifier
+                   << " = " << makeFactory(ptrType, newExpr->className, newExpr->arguments) << ";\n";
+        } else {
+            // Assigned from another variable — shared ownership
             output << "std::shared_ptr<" << decl.type << "> " << decl.identifier
                    << " = " << generateExpression(*decl.expression) << ";\n";
-            return;
         }
+        return;
     }
 
-    // Normal variable declaration
     output << decl.type << " " << decl.identifier
            << " = " << generateExpression(*decl.expression) << ";\n";
 }
 
 void CppGenerator::generateAssignmentStatement(const AssignmentStatement& stmt) {
-    output << stmt.variable
-           << " = " << generateExpression(*stmt.expression) << ";\n";
+    if (auto newExpr = dynamic_cast<const NewExpression*>(stmt.expression.get())) {
+        // Try to determine smart pointer type from the target variable name
+        std::string ptrType = getSmartPointerType(newExpr->className, stmt.variable);
+        output << stmt.variable << " = " << makeFactory(ptrType, newExpr->className, newExpr->arguments) << ";\n";
+    } else {
+        output << stmt.variable << " = " << generateExpression(*stmt.expression) << ";\n";
+    }
 }
 
 void CppGenerator::generatePrintStatement(const PrintStatement& stmt) {
@@ -127,15 +139,87 @@ void CppGenerator::generateCommentStatement(const CommentStatement& stmt) {
     output << "//" << stmt.content << "\n";
 }
 
+// Fix 3: actually generate C++ for standalone functions.
+// CeeLing function parameters have no type annotations, so we use 'auto'
+// (abbreviated function template, valid in C++20; also accepted by GCC/Clang in C++14 mode).
 void CppGenerator::generateFunctionDeclaration(const FunctionDeclaration& func) {
-    // Functions are generated before main - this is a simplified approach
-    // In a more complete implementation, we'd do a two-pass generation
-    std::cerr << "Warning: Function declarations not yet fully supported in C++ generation\n";
+    output << "auto " << func.name << "(";
+    for (size_t i = 0; i < func.parameters.size(); ++i) {
+        if (i > 0) output << ", ";
+        output << "auto " << func.parameters[i];
+    }
+    output << ") {\n";
+    for (const auto& stmt : func.body) {
+        output << "    ";
+        generateStatement(*stmt);
+    }
+    output << "}\n";
+}
+
+void CppGenerator::generateMethodDeclaration(const MethodDeclaration& method) {
+    output << method.returnType << " " << method.name << "(";
+    for (size_t i = 0; i < method.parameters.size(); ++i) {
+        if (i > 0) output << ", ";
+        output << method.parameters[i].first << " " << method.parameters[i].second;
+    }
+    output << ") {\n";
+    for (const auto& stmt : method.body) {
+        output << "    ";
+        generateStatement(*stmt);
+    }
+    output << "}\n";
 }
 
 void CppGenerator::generateReturnStatement(const ReturnStatement& stmt) {
     output << "return " << generateExpression(*stmt.expression) << ";\n";
 }
+
+void CppGenerator::generateIfStatement(const IfStatement& stmt) {
+    output << "if (" << generateExpression(*stmt.condition) << ") {\n";
+    for (const auto& bodyStmt : stmt.body) {
+        output << "    ";
+        generateStatement(*bodyStmt);
+    }
+    output << "}\n";
+}
+
+void CppGenerator::generateMainFunction(const MainFunction& func) {
+    output << func.returnType << " main() {\n";
+    for (const auto& stmt : func.body) {
+        output << "    ";
+        generateStatement(*stmt);
+    }
+    output << "}\n";
+}
+
+void CppGenerator::generateClassDeclaration(const ClassDeclaration& cls) {
+    output << "class " << cls.name << " {\npublic:\n";
+    for (const auto& member : cls.members) {
+        output << "    ";
+        generateStatement(*member);
+    }
+    output << "};\n";
+}
+
+void CppGenerator::generateConstructorDeclaration(const ConstructorDeclaration& ctor) {
+    output << ctor.name << "(";
+    for (size_t i = 0; i < ctor.parameters.size(); ++i) {
+        if (i > 0) output << ", ";
+        output << ctor.parameters[i].first << " " << ctor.parameters[i].second;
+    }
+    output << ") {\n";
+    for (const auto& stmt : ctor.body) {
+        output << "    ";
+        generateStatement(*stmt);
+    }
+    output << "}\n";
+}
+
+void CppGenerator::generateIncludeStatement(const IncludeStatement& include) {
+    output << include.includeFile << "\n";
+}
+
+// ─── expression generators ─────────────────────────────────────────────────
 
 std::string CppGenerator::generateExpression(const Expression& expr) {
     if (auto binExpr = dynamic_cast<const BinaryExpression*>(&expr)) {
@@ -144,6 +228,8 @@ std::string CppGenerator::generateExpression(const Expression& expr) {
         return generateFunctionCall(*funcCall);
     } else if (auto newExpr = dynamic_cast<const NewExpression*>(&expr)) {
         return generateNewExpression(*newExpr);
+    } else if (auto memberAccess = dynamic_cast<const MemberAccess*>(&expr)) {
+        return generateMemberAccess(*memberAccess);
     } else if (auto identifier = dynamic_cast<const Identifier*>(&expr)) {
         return generateIdentifier(*identifier);
     } else if (auto number = dynamic_cast<const Number*>(&expr)) {
@@ -159,13 +245,27 @@ std::string CppGenerator::generateBinaryExpression(const BinaryExpression& expr)
 
 std::string CppGenerator::generateFunctionCall(const FunctionCall& call) {
     std::string result = call.function_name + "(";
-    const auto& args = call.arguments;
-    for (size_t i = 0; i < args.size(); ++i) {
+    for (size_t i = 0; i < call.arguments.size(); ++i) {
         if (i > 0) result += ", ";
-        result += generateExpression(*args[i]);
+        result += generateExpression(*call.arguments[i]);
     }
     result += ")";
     return result;
+}
+
+// When called from expression context (no variable assignment target),
+// default to make_shared as the safe conservative choice.
+std::string CppGenerator::generateNewExpression(const NewExpression& newExpr,
+                                                  const std::string& targetVar,
+                                                  const std::string& targetClass) {
+    std::string ptrType = targetVar.empty()
+        ? "std::shared_ptr"
+        : getSmartPointerType(targetClass.empty() ? newExpr.className : targetClass, targetVar);
+    return makeFactory(ptrType, newExpr.className, newExpr.arguments);
+}
+
+std::string CppGenerator::generateMemberAccess(const MemberAccess& access) {
+    return generateExpression(*access.object) + "->" + access.member;
 }
 
 std::string CppGenerator::generateIdentifier(const Identifier& id) {
@@ -176,62 +276,20 @@ std::string CppGenerator::generateNumber(const Number& num) {
     return num.original_text;
 }
 
-void CppGenerator::generateMainFunction(const MainFunction& func) {
-    output << func.returnType << " main() {\n";
-    for (const auto& stmt : func.body) {
-        output << "    ";
-        generateStatement(*stmt);
-    }
-    output << "}\n";
-}
-
-std::string CppGenerator::generateNewExpression(const NewExpression& newExpr) {
-    // Transform "new ClassName(...)" to "std::make_shared<ClassName>(...)"
-    std::string result = "std::make_shared<" + newExpr.className + ">(";
-    for (size_t i = 0; i < newExpr.arguments.size(); ++i) {
-        if (i > 0) result += ", ";
-        result += generateExpression(*newExpr.arguments[i]);
-    }
-    result += ")";
-    return result;
-}
+// ─── helpers ───────────────────────────────────────────────────────────────
 
 bool CppGenerator::isClassName(const std::string& type) const {
     return classNames.find(type) != classNames.end();
 }
 
-void CppGenerator::generateClassDeclaration(const ClassDeclaration& cls) {
-    output << "class " << cls.name << " {\n";
-    output << "public:\n";
-
-    for (const auto& member : cls.members) {
-        output << "    ";
-        generateStatement(*member);
+std::string CppGenerator::getSmartPointerType(const std::string& className,
+                                               const std::string& variableName) const {
+    PointerType type = analyzer.getPointerType(className, variableName);
+    switch (type) {
+        case PointerType::UNIQUE: return "std::unique_ptr";
+        case PointerType::WEAK:   return "std::weak_ptr";
+        default:                  return "std::shared_ptr";
     }
-
-    output << "};\n";
-}
-
-void CppGenerator::generateConstructorDeclaration(const ConstructorDeclaration& ctor) {
-    output << ctor.name << "(";
-
-    for (size_t i = 0; i < ctor.parameters.size(); ++i) {
-        if (i > 0) output << ", ";
-        output << ctor.parameters[i].first << " " << ctor.parameters[i].second;
-    }
-
-    output << ") {\n";
-
-    for (const auto& stmt : ctor.body) {
-        output << "        ";
-        generateStatement(*stmt);
-    }
-
-    output << "    }\n";
-}
-
-void CppGenerator::generateIncludeStatement(const IncludeStatement& include) {
-    output << include.includeFile << "\n";
 }
 
 } // namespace cling

@@ -1,0 +1,157 @@
+// Example demonstrating Rule C: Cycle Prevention
+// Doubly Linked List with forward and backward references
+
+class Node {
+public:
+    int data;
+    Node next;    // Forward reference (owning)
+    Node prev;    // Backward reference (non-owning to prevent cycle)
+    
+    Node(int value) {
+        data = value;
+        next = nullptr;
+        prev = nullptr;
+    }
+};
+
+class DoublyLinkedList {
+private:
+    Node head;    // Owns the first node
+    Node tail;    // Non-owning reference to last node
+    
+public:
+    DoublyLinkedList() {
+        head = nullptr;
+        tail = nullptr;
+    }
+    
+    void append(int value) {
+        Node newNode = new Node(value);
+        
+        if (!head) {
+            // First node
+            head = newNode;
+            tail = newNode;
+        } else {
+            // Link the new node
+            tail.next = newNode;      // Forward link
+            newNode.prev = tail;      // Backward link - potential cycle!
+            tail = newNode;           // Update tail reference
+        }
+    }
+    
+    void prepend(int value) {
+        Node newNode = new Node(value);
+        
+        if (!head) {
+            // First node
+            head = newNode;
+            tail = newNode;
+        } else {
+            // Link the new node
+            newNode.next = head;      // Forward link
+            head.prev = newNode;      // Backward link - potential cycle!
+            head = newNode;           // Update head reference
+        }
+    }
+    
+    void printForward() {
+        print("Forward: ");
+        Node current = head;
+        while (current) {
+            print(current.data + " ");
+            current = current.next;
+        }
+        print("");
+    }
+    
+    void printBackward() {
+        print("Backward: ");
+        Node current = tail;
+        while (current) {
+            print(current.data + " ");
+            current = current.prev;    // Using backward reference
+        }
+        print("");
+    }
+    
+    void deleteNode(int value) {
+        Node current = head;
+        
+        while (current && current.data != value) {
+            current = current.next;
+        }
+        
+        if (current) {
+            // Update backward links
+            if (current.prev) {
+                current.prev.next = current.next;
+            } else {
+                head = current.next;  // Deleting head
+            }
+            
+            // Update forward links
+            if (current.next) {
+                current.next.prev = current.prev;
+            } else {
+                tail = current.prev;  // Deleting tail
+            }
+        }
+    }
+};
+
+class Graph {
+public:
+    Node nodeA;
+    Node nodeB;
+    Node nodeC;
+    
+    Graph() {
+        nodeA = new Node(1);
+        nodeB = new Node(2);
+        nodeC = new Node(3);
+        
+        // Create a cycle: A -> B -> C -> A
+        nodeA.next = nodeB;       // A points to B
+        nodeB.next = nodeC;       // B points to C
+        nodeC.next = nodeA;       // C points to A (creates cycle!)
+        
+        // Also create backward references
+        nodeB.prev = nodeA;       // B points back to A
+        nodeC.prev = nodeB;       // C points back to B
+        nodeA.prev = nodeC;       // A points back to C (completes cycle!)
+    }
+    
+    void traverse() {
+        print("Graph traversal starting from A:");
+        Node current = nodeA;
+        int steps = 0;
+        
+        while (current && steps < 10) {  // Prevent infinite loop
+            print("Node: " + current.data);
+            current = current.next;
+            steps = steps + 1;
+        }
+    }
+};
+
+int main() {
+    DoublyLinkedList list = new DoublyLinkedList();
+    
+    list.append(10);
+    list.append(20);
+    list.append(30);
+    list.prepend(5);
+    
+    list.printForward();   // Should print: 5 10 20 30
+    list.printBackward();  // Should print: 30 20 10 5
+    
+    list.deleteNode(20);
+    list.printForward();   // Should print: 5 10 30
+    
+    // Test cyclic graph
+    Graph graph = new Graph();
+    graph.traverse();      // Should detect and handle cycle safely
+    
+    return 0;
+}

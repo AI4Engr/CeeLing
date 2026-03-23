@@ -1,0 +1,59 @@
+// Test file for two-pass smart pointer analysis
+
+class Node {
+public:
+    int data;
+    Node next;     // Should be unique_ptr (parent-child, Rule A)
+    Node prev;     // Should be weak_ptr (back reference, Rule C)
+    
+    Node(int value) {
+        data = value;
+        next = nullptr;
+        prev = nullptr;
+    }
+};
+
+class LinkedList {
+private:
+    Node head;     // Should be unique_ptr (exclusive ownership, Rule A)
+    
+public:
+    LinkedList() {
+        head = nullptr;
+    }
+    
+    void append(int value) {
+        Node newNode = new Node(value);  // Should be unique_ptr
+        if (!head) {
+            head = newNode;
+        } else {
+            Node temp = head;            // Should be shared_ptr (shared access, Rule B)
+            while (temp.next) {
+                temp = temp.next;        // Sharing access pattern
+            }
+            temp.next = newNode;
+        }
+    }
+};
+
+class Graph {
+public:
+    Node nodeA;    // Should be shared_ptr (potential sharing, Rule B)
+    Node nodeB;    // Should be shared_ptr (potential sharing, Rule B)
+    
+    Graph() {
+        nodeA = new Node(1);
+        nodeB = new Node(2);
+        nodeA.next = nodeB;  // A references B
+        nodeB.next = nodeA;  // B references A (cycle!)
+    }
+};
+
+int main() {
+    LinkedList list = new LinkedList();  // Should be unique_ptr (local ownership, Rule D)
+    list.append(10);
+    
+    Graph graph = new Graph();           // Should be unique_ptr (local ownership, Rule D)
+    
+    return 0;
+}

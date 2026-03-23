@@ -104,33 +104,12 @@ case "${1:-help}" in
         EXEC="dist/cling"
         [ -f "dist/cling.exe" ] && EXEC="dist/cling.exe"
 
-        FILE=${2:-example.clg}
-        MODE=${3:-eval}
+        INPUT_FILE=${2:-tests/binary_tree.clg}
+        OUTPUT_FILE=${3:-build/generated_output.cpp}
 
-        case "$MODE" in
-            "eval"|"evaluate")
-                info "Evaluating $FILE..."
-                ${EXEC} "$FILE"
-                ;;
-            "md"|"markdown")
-                info "Creating markdown from $FILE..."
-                OUTPUT_FILE="${FILE%.cl}.md"
-                ${EXEC} "$FILE" --format > "$OUTPUT_FILE" 2>&1
-                info "✅ Markdown saved to $OUTPUT_FILE"
-                ;;
-            "both")
-                info "Evaluating $FILE..."
-                ${EXEC} "$FILE"
-                echo ""
-                info "Creating markdown from $FILE..."
-                OUTPUT_FILE="${FILE%.cl}.md"
-                ${EXEC} "$FILE" --format > "$OUTPUT_FILE"
-                info "✅ Markdown saved to $OUTPUT_FILE"
-                ;;
-            *)
-                error "Invalid mode: $MODE. Use 'eval', 'markdown', or 'both'"
-                ;;
-        esac
+        info "Generating C++ from $INPUT_FILE..."
+        ${EXEC} --cpp "$OUTPUT_FILE" "$INPUT_FILE"
+        info "✅ C++ saved to $OUTPUT_FILE"
         ;;
 
     "regression")
@@ -159,8 +138,8 @@ case "${1:-help}" in
         echo "  build      - Build native executable"
         echo "  wasm       - Build WASM version"
         echo "  test       - Run test suite"
-        echo "  run [file] [mode] - Run with file (default: example.clg)"
-        echo "                      Modes: eval (default), markdown, both"
+        echo "  run [input] [output] - Transpile input .clg to C++"
+        echo "                         Default output: build/generated_output.cpp"
         echo "  regression - Run regression tests"
         echo "  serve      - Start demo server at http://localhost:8080"
         echo "  clean      - Clean build artifacts"
@@ -173,8 +152,7 @@ case "${1:-help}" in
         echo "  ./dev.sh serve    # Start web demo"
         echo ""
         echo "Run examples:"
-        echo "  ./dev.sh run test.clg          # Evaluate test.clg"
-        echo "  ./dev.sh run test.clg markdown # Create test.md"
-        echo "  ./dev.sh run test.clg both     # Both evaluate and create markdown"
+        echo "  ./dev.sh run tests/binary_tree.clg"
+        echo "  ./dev.sh run tests/linked_list.clg build/linked_list.cpp"
         ;;
 esac

@@ -3,8 +3,36 @@
 #include <cstring>
 #include <algorithm>
 #include <iostream>
+#include <sstream>
 
 namespace cling {
+
+namespace {
+
+std::string makeNodeError(const char* prefix, TSNode node, const std::string& source) {
+    const TSPoint point = ts_node_start_point(node);
+    const uint32_t startByte = ts_node_start_byte(node);
+    const uint32_t endByte = ts_node_end_byte(node);
+    const uint32_t clampedEnd = std::min<uint32_t>(endByte, static_cast<uint32_t>(source.size()));
+    const uint32_t clampedStart = std::min<uint32_t>(startByte, clampedEnd);
+
+    std::string snippet = source.substr(clampedStart, clampedEnd - clampedStart);
+    if (snippet.size() > 120) {
+        snippet = snippet.substr(0, 120) + "...";
+    }
+
+    std::ostringstream oss;
+    oss << prefix
+        << " at line " << (point.row + 1)
+        << ", column " << (point.column + 1)
+        << ", node type '" << ts_node_type(node) << "'";
+    if (!snippet.empty()) {
+        oss << ", near: " << snippet;
+    }
+    return oss.str();
+}
+
+} // namespace
 
 ASTBuilder::ASTBuilder() {
     parser = ts_parser_new();
@@ -26,19 +54,49 @@ ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
     }
 
     TSNode root_node = ts_tree_root_node(tree);
-    const char* root_type = ts_node_type(root_node);
+    bool hasStructuralAnchor = false;
+    bool hasUnresolvedTopLevel = false;
+    TSNode firstUnresolvedNode{};
 
     uint32_t child_count = ts_node_child_count(root_node);
     for (uint32_t i = 0; i < child_count; i++) {
         TSNode child = ts_node_child(root_node, i);
-        const char* child_type = ts_node_type(child);
-        // For debugging: print the node type we're trying to parse
-        std::string debug_text = getNodeText(child, source);
+        if (strcmp(ts_node_type(child), "ERROR") == 0 || ts_node_is_missing(child)) {
+            if (!hasUnresolvedTopLevel) {
+                firstUnresolvedNode = child;
+            }
+            hasUnresolvedTopLevel = true;
+            continue;
+        }
 
         auto stmt = buildStatement(child, source);
         if (stmt) {
+            if (dynamic_cast<ClassDeclaration*>(stmt.get()) || dynamic_cast<MainFunction*>(stmt.get())) {
+                hasStructuralAnchor = true;
+            }
             program->addStatement(std::move(stmt));
+        } else {
+            if (!hasUnresolvedTopLevel) {
+                firstUnresolvedNode = child;
+            }
+            hasUnresolvedTopLevel = true;
         }
+    }
+
+    if (program->statements.empty()) {
+        std::string err = ts_node_is_null(firstUnresolvedNode)
+            ? "Parse error: could not build any top-level statements"
+            : makeNodeError("Parse error", firstUnresolvedNode, source);
+        ts_tree_delete(tree);
+        throw std::runtime_error(err);
+    }
+
+    if (hasUnresolvedTopLevel && !hasStructuralAnchor) {
+        std::string err = ts_node_is_null(firstUnresolvedNode)
+            ? "Parse error: unsupported top-level syntax"
+            : makeNodeError("Parse error", firstUnresolvedNode, source);
+        ts_tree_delete(tree);
+        throw std::runtime_error(err);
     }
 
     ts_tree_delete(tree);

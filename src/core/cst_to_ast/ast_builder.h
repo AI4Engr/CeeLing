@@ -8,6 +8,9 @@ namespace cling {
 class ASTBuilder {
 public:
     explicit ASTBuilder();
+    ~ASTBuilder() { ts_parser_delete(parser); }
+    ASTBuilder(const ASTBuilder&) = delete;
+    ASTBuilder& operator=(const ASTBuilder&) = delete;
     ProgramPtr buildProgram(const std::string& source);
 
 private:
