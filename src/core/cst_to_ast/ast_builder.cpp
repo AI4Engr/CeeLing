@@ -29,6 +29,15 @@ std::string makeNodeError(const char* prefix, TSNode node, const std::string& so
     if (!snippet.empty()) {
         oss << ", near: " << snippet;
     }
+
+    if (snippet.find(":=") != std::string::npos) {
+        oss << ". Suggestion: use '=' for assignment.";
+    } else if (!snippet.empty() && snippet.find(';') == std::string::npos &&
+               snippet.find('{') == std::string::npos && snippet.find('}') == std::string::npos) {
+        oss << ". Suggestion: check whether the statement is missing a trailing ';'.";
+    } else if (snippet.find("->") != std::string::npos || snippet.find('.') != std::string::npos) {
+        oss << ". Suggestion: check member-access syntax and make sure the full statement is supported.";
+    }
     return oss.str();
 }
 

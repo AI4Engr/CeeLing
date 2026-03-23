@@ -1,39 +1,164 @@
 #include "smart_pointer_analyzer.h"
-#include <iostream>
+
 #include <algorithm>
-#include <queue>
+#include <cctype>
+#include <iostream>
+#include <regex>
+#include <sstream>
 
 namespace cling {
 
 namespace {
+
 constexpr const char* kGlobalScope = "__global__";
+
+std::string trim(const std::string& text) {
+    size_t start = 0;
+    while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start]))) {
+        ++start;
+    }
+
+    size_t end = text.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        --end;
+    }
+
+    return text.substr(start, end - start);
 }
 
-void SmartPointerAnalyzer::analyzeProgram(const Program& program) {
-    // Clear previous analysis
+int countChar(const std::string& text, char needle) {
+    return static_cast<int>(std::count(text.begin(), text.end(), needle));
+}
+
+std::string makeMemberKey(const std::string& className, const std::string& memberName) {
+    return className + "." + memberName;
+}
+
+std::string makeSymbolKey(const std::string& scopeName, const std::string& symbolName) {
+    return scopeName + "|" + symbolName;
+}
+
+std::string pointerTypeName(PointerType type) {
+    switch (type) {
+        case PointerType::UNIQUE:
+            return "std::unique_ptr";
+        case PointerType::WEAK:
+            return "std::weak_ptr";
+        default:
+            return "std::shared_ptr";
+    }
+}
+
+bool isBackReferenceName(const std::string& memberName) {
+    return memberName == "prev" || memberName == "previous" ||
+           memberName == "parent" || memberName == "back" ||
+           memberName == "owner";
+}
+
+struct ParsedValue {
+    bool isNullptr = false;
+    bool isNewExpression = false;
+    bool isIdentifier = false;
+    bool isMemberAccess = false;
+    std::string identifier;
+    std::string objectName;
+    std::string memberName;
+    std::string newClassName;
+};
+
+ParsedValue parseValue(const std::string& rawText) {
+    ParsedValue parsed;
+    const std::string text = trim(rawText);
+    std::smatch match;
+
+    if (text == "nullptr") {
+        parsed.isNullptr = true;
+        return parsed;
+    }
+
+    if (std::regex_match(text, match, std::regex(R"(^new\s+([A-Za-z_][A-Za-z0-9_]*)\s*\()"))) {
+        parsed.isNewExpression = true;
+        parsed.newClassName = match[1].str();
+        return parsed;
+    }
+
+    if (std::regex_match(text, match, std::regex(R"(^([A-Za-z_][A-Za-z0-9_]*)$)"))) {
+        parsed.isIdentifier = true;
+        parsed.identifier = match[1].str();
+        return parsed;
+    }
+
+    if (std::regex_match(text, match, std::regex(R"(^([A-Za-z_][A-Za-z0-9_]*)\s*(?:\.|->)\s*([A-Za-z_][A-Za-z0-9_]*)$)"))) {
+        parsed.isMemberAccess = true;
+        parsed.objectName = match[1].str();
+        parsed.memberName = match[2].str();
+        return parsed;
+    }
+
+    return parsed;
+}
+
+PointerType parsePointerType(const std::string& rawType) {
+    const std::string type = trim(rawType);
+    if (type == "unique" || type == "unique_ptr") {
+        return PointerType::UNIQUE;
+    }
+    if (type == "weak" || type == "weak_ptr") {
+        return PointerType::WEAK;
+    }
+    return PointerType::SHARED;
+}
+
+std::string chooseMethodLikeScope(const std::string& currentClass, const std::string& currentFunction) {
+    if (!currentClass.empty() && !currentFunction.empty()) {
+        return currentClass + "::" + currentFunction;
+    }
+    if (!currentClass.empty()) {
+        return currentClass;
+    }
+    if (!currentFunction.empty()) {
+        return currentFunction;
+    }
+    return kGlobalScope;
+}
+
+} // namespace
+
+void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::string& source) {
     variableReferences.clear();
     classRelationships.clear();
     pointerDecisions.clear();
+    pointerReasons.clear();
     classNames.clear();
-    
-    // Two-pass analysis
+    explicitHints.clear();
+    explicitHintLines.clear();
+    classesNeedingSharedRoots.clear();
+    bidirectionalOwnerMembers.clear();
+    bidirectionalBackMembers.clear();
+    symbolTypesByScope.clear();
+    bidirectionalAssignmentSeeds.clear();
+    diagnostics.clear();
+    reportLines.clear();
+
     firstPassCollectReferences(program);
+    if (!source.empty()) {
+        scanSource(source);
+    }
     secondPassDeterminePointerTypes();
 }
 
 PointerType SmartPointerAnalyzer::getPointerType(const std::string& className, const std::string& variableName) const {
-    const std::string qualifiedSuffix = "|" + className + "." + variableName;
+    const std::string suffix = "|" + className + "." + variableName;
     bool found = false;
     PointerType resolved = PointerType::SHARED;
 
     for (const auto& [key, decision] : pointerDecisions) {
-        if (key.size() >= qualifiedSuffix.size() &&
-            key.compare(key.size() - qualifiedSuffix.size(), qualifiedSuffix.size(), qualifiedSuffix) == 0) {
+        if (key.size() >= suffix.size() &&
+            key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0) {
             if (!found) {
                 resolved = decision;
                 found = true;
             } else if (resolved != decision) {
-                // Conflicting scoped decisions should prefer conservative shared ownership.
                 return PointerType::SHARED;
             }
         }
@@ -43,36 +168,78 @@ PointerType SmartPointerAnalyzer::getPointerType(const std::string& className, c
         return resolved;
     }
 
-    // Default to shared_ptr if not analyzed (safer option)
+    if (classRequiresSharedRoot(className)) {
+        return PointerType::SHARED;
+    }
+
     return PointerType::SHARED;
 }
 
+PointerType SmartPointerAnalyzer::getPointerTypeForVariable(const std::string& variableName) const {
+    const std::string suffix = "." + variableName;
+    bool found = false;
+    PointerType resolved = PointerType::SHARED;
+
+    for (const auto& [key, decision] : pointerDecisions) {
+        if (key.size() >= suffix.size() &&
+            key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            if (!found) {
+                resolved = decision;
+                found = true;
+            } else if (resolved != decision) {
+                return PointerType::SHARED;
+            }
+        }
+    }
+
+    return found ? resolved : PointerType::SHARED;
+}
+
+std::string SmartPointerAnalyzer::buildAnalysisReport() const {
+    std::ostringstream oss;
+    oss << "CeeLing pointer analysis report\n";
+
+    if (reportLines.empty()) {
+        oss << "- No class pointer decisions were recorded.\n";
+    } else {
+        for (const auto& line : reportLines) {
+            oss << "- " << line << "\n";
+        }
+    }
+
+    if (!diagnostics.empty()) {
+        oss << "Warnings\n";
+        for (const auto& diagnostic : diagnostics) {
+            oss << "- line " << diagnostic.line << ": " << diagnostic.message;
+            if (!diagnostic.suggestion.empty()) {
+                oss << " Suggestion: " << diagnostic.suggestion;
+            }
+            oss << "\n";
+        }
+    }
+
+    return oss.str();
+}
+
+const std::vector<AnalysisDiagnostic>& SmartPointerAnalyzer::getDiagnostics() const {
+    return diagnostics;
+}
+
+bool SmartPointerAnalyzer::classRequiresSharedRoot(const std::string& className) const {
+    return classesNeedingSharedRoots.find(className) != classesNeedingSharedRoots.end();
+}
+
 void SmartPointerAnalyzer::firstPassCollectReferences(const Program& program) {
-    std::cerr << "=== FIRST PASS: Collecting Reference Relationships ===" << std::endl;
-    
-    // Collect all class names first
     for (const auto& stmt : program.statements) {
         if (auto classDecl = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
             classNames.insert(classDecl->name);
-            ClassRelationship relationship;
-            relationship.className = classDecl->name;
-            classRelationships[classDecl->name] = std::move(relationship);
+            classRelationships[classDecl->name].className = classDecl->name;
         }
     }
-    
-    // Analyze all statements to collect relationships
+
     for (const auto& stmt : program.statements) {
         analyzeStatement(*stmt);
     }
-    
-    // Debug output
-    std::cerr << "Found " << classNames.size() << " classes: ";
-    for (const auto& name : classNames) {
-        std::cerr << name << " ";
-    }
-    std::cerr << std::endl;
-    
-    std::cerr << "Found " << variableReferences.size() << " class variable references" << std::endl;
 }
 
 void SmartPointerAnalyzer::analyzeStatement(const Statement& stmt, const std::string& currentClass) {
@@ -83,285 +250,484 @@ void SmartPointerAnalyzer::analyzeStatement(const Statement& stmt, const std::st
     } else if (auto assignment = dynamic_cast<const AssignmentStatement*>(&stmt)) {
         analyzeAssignmentStatement(*assignment, currentClass);
     } else if (auto funcDecl = dynamic_cast<const FunctionDeclaration*>(&stmt)) {
-        // Analyze function body
         for (const auto& bodyStmt : funcDecl->body) {
-            analyzeStatement(*bodyStmt, currentClass);
+            analyzeStatement(*bodyStmt, funcDecl->name);
         }
     } else if (auto mainFunc = dynamic_cast<const MainFunction*>(&stmt)) {
-        // Analyze main function body
         for (const auto& bodyStmt : mainFunc->body) {
             analyzeStatement(*bodyStmt, "main");
         }
     } else if (auto ctorDecl = dynamic_cast<const ConstructorDeclaration*>(&stmt)) {
-        // Analyze constructor body
+        const std::string ctorScope = currentClass.empty() ? ctorDecl->name : currentClass + "::" + ctorDecl->name;
         for (const auto& bodyStmt : ctorDecl->body) {
-            analyzeStatement(*bodyStmt, currentClass);
+            analyzeStatement(*bodyStmt, ctorScope);
         }
     } else if (auto methodDecl = dynamic_cast<const MethodDeclaration*>(&stmt)) {
-        // Analyze method body
+        const std::string methodScope = currentClass.empty() ? methodDecl->name : currentClass + "::" + methodDecl->name;
         for (const auto& bodyStmt : methodDecl->body) {
-            analyzeStatement(*bodyStmt, currentClass);
+            analyzeStatement(*bodyStmt, methodScope);
         }
     }
 }
 
 void SmartPointerAnalyzer::analyzeVariableDeclaration(const VariableDeclaration& decl, const std::string& currentClass) {
-    // Check if this is a class type variable
-    if (classNames.find(decl.type) != classNames.end()) {
-        const std::string normalizedScope = normalizeScope(currentClass);
-        std::string key = makeKey(normalizedScope, decl.type, decl.identifier);
-        
-        VariableReference ref;
-        ref.className = decl.type;
-        ref.variableName = decl.identifier;
-        ref.containingClass = normalizedScope;
-        
-        // Check if it's initialized with another variable or new expression
-        if (decl.expression) {
-            if (auto identifier = dynamic_cast<const Identifier*>(decl.expression.get())) {
-                // Assignment from another variable: Node temp = head;
-                ref.isAssignedFrom = true;
-                ref.assignedFromVars.insert(identifier->name);
-                recordAssignment(identifier->name, decl.identifier, currentClass);
-            } else if (auto newExpr = dynamic_cast<const NewExpression*>(decl.expression.get())) {
-                // Assignment from new: Node newNode = new Node(value);
-                // This is a creation, not a sharing
-            }
-        }
-        
-        variableReferences[key] = ref;
-        
-        // Record class relationship
-        if (!currentClass.empty() && classRelationships.find(currentClass) != classRelationships.end()) {
-            classRelationships[currentClass].memberVariables.insert(decl.identifier);
-            classRelationships[currentClass].references.insert(decl.type);
-            classRelationships[decl.type].referencedBy.insert(currentClass);
-        }
-        
-        std::cerr << "Found class variable: " << decl.type << " " << decl.identifier 
-                  << " in " << (currentClass.empty() ? "global" : currentClass) << std::endl;
+    if (classNames.find(decl.type) == classNames.end()) {
+        return;
+    }
+
+    registerReference(currentClass, decl.type, decl.identifier, 0);
+    registerSymbolType(currentClass.empty() ? kGlobalScope : currentClass, decl.identifier, decl.type);
+
+    if (!decl.expression) {
+        return;
+    }
+
+    if (auto identifier = dynamic_cast<const Identifier*>(decl.expression.get())) {
+        const std::string key = buildKey(currentClass, decl.type, decl.identifier);
+        auto& ref = variableReferences[key];
+        ref.isAssignedFrom = true;
+        ref.assignedFromVars.insert(identifier->name);
     }
 }
 
 void SmartPointerAnalyzer::analyzeAssignmentStatement(const AssignmentStatement& stmt, const std::string& currentClass) {
-    // Analyze the expression to see what's being assigned
-    if (auto identifier = dynamic_cast<const Identifier*>(stmt.expression.get())) {
-        // Assignment from another variable: temp = temp.next;
-        recordAssignment(identifier->name, stmt.variable, currentClass);
-    } else if (auto memberAccess = dynamic_cast<const MemberAccess*>(stmt.expression.get())) {
-        // Assignment from member access: temp = temp.next;
-        if (auto objIdentifier = dynamic_cast<const Identifier*>(memberAccess->object.get())) {
-            std::string sourceVar = objIdentifier->name + "." + memberAccess->member;
-            recordAssignment(sourceVar, stmt.variable, currentClass);
+    const ParsedValue rhs = parseValue(stmt.expression ? stmt.expression->toString() : "");
+    if (!rhs.isIdentifier && !rhs.isMemberAccess) {
+        return;
+    }
 
-            // If a member is used as a source in assignments, it is likely shared/read by multiple owners.
-            for (auto& [key, ref] : variableReferences) {
-                if (ref.variableName == memberAccess->member) {
-                    ref.isAssignedTo = true;
-                    ref.assignedToVars.insert(stmt.variable);
-                }
-            }
+    const std::string scopeName = normalizeScope(currentClass);
+    for (auto& [key, ref] : variableReferences) {
+        if (ref.variableName == stmt.variable && ref.containingScope == scopeName) {
+            ref.isAssignedFrom = true;
+            ref.assignedFromVars.insert(rhs.isIdentifier ? rhs.identifier : rhs.memberName);
         }
-    } else if (auto newExpr = dynamic_cast<const NewExpression*>(stmt.expression.get())) {
-        // Assignment from new: left = new Node(value);
-        // This creates a new object, not sharing
     }
 }
 
 void SmartPointerAnalyzer::analyzeClassDeclaration(const ClassDeclaration& cls) {
-    // Analyze class members
+    classNames.insert(cls.name);
+    classRelationships[cls.name].className = cls.name;
+
     for (const auto& member : cls.members) {
         analyzeStatement(*member, cls.name);
     }
 }
 
-void SmartPointerAnalyzer::secondPassDeterminePointerTypes() {
-    std::cerr << "\n=== SECOND PASS: Determining Pointer Types ===" << std::endl;
+void SmartPointerAnalyzer::scanSource(const std::string& source) {
+    const std::regex classRegex(R"(^\s*class\s+([A-Za-z_][A-Za-z0-9_]*))");
+    const std::regex memberDeclRegex(R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;\s*$)");
+    const std::regex variableDeclRegex(R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+);\s*$)");
+    const std::regex assignmentRegex(R"(^\s*([A-Za-z_][A-Za-z0-9_]*(?:\s*(?:\.|->)\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*=\s*(.+);\s*$)");
+    const std::regex functionRegex(R"(^\s*(?:[A-Za-z_][A-Za-z0-9_]*\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(?:const)?\s*\{?\s*$)");
 
-    // First, detect back-references in classes with multiple same-type members
-    detectBackReferences();
+    std::istringstream lines(source);
+    std::string line;
+    std::string currentClass;
+    std::string currentFunction;
+    int braceDepth = 0;
+    int classBraceDepth = -1;
+    int functionBraceDepth = -1;
+    int lineNumber = 0;
 
-    for (const auto& [key, ref] : variableReferences) {
-        PointerType pointerType = PointerType::UNIQUE; // Default to unique_ptr (Rule A)
+    while (std::getline(lines, line)) {
+        ++lineNumber;
+        const std::string trimmedLine = trim(line);
+        std::smatch match;
 
-        // Rule C: Back-reference in bidirectional structure (e.g., prev in doubly linked list)
-        if (ref.isBackReference) {
-            pointerType = PointerType::WEAK;
-            std::cerr << "BACK-REFERENCE: " << key << " -> weak_ptr (Rule C)" << std::endl;
+        parseAnnotationLine(trimmedLine, lineNumber);
+
+        if (std::regex_search(trimmedLine, match, classRegex)) {
+            currentClass = match[1].str();
+            classBraceDepth = braceDepth;
+            classNames.insert(currentClass);
+            classRelationships[currentClass].className = currentClass;
+        } else if (trimmedLine.find('(') != std::string::npos &&
+                   trimmedLine.find(')') != std::string::npos &&
+                   trimmedLine.find(';') == std::string::npos &&
+                   trimmedLine.rfind("if", 0) != 0 &&
+                   trimmedLine.rfind("while", 0) != 0 &&
+                   trimmedLine.rfind("for", 0) != 0 &&
+                   trimmedLine.rfind("switch", 0) != 0 &&
+                   std::regex_match(trimmedLine, match, functionRegex)) {
+            currentFunction = match[1].str();
+            functionBraceDepth = braceDepth;
         }
-        // Rule B: Check for shared ownership (multiple variables point to same object)
-        else if (isSharedOwnership(ref.containingClass, ref.className, ref.variableName)) {
-            pointerType = PointerType::SHARED;
-            std::cerr << "SHARED OWNERSHIP: " << key << " -> shared_ptr (Rule B)" << std::endl;
+
+        const std::string scopeName = chooseMethodLikeScope(currentClass, currentFunction);
+
+        if (!currentClass.empty() && trimmedLine.find('(') == std::string::npos &&
+            std::regex_match(trimmedLine, match, memberDeclRegex)) {
+            const std::string memberType = match[1].str();
+            const std::string memberName = match[2].str();
+            if (classNames.find(memberType) != classNames.end()) {
+                registerReference(currentClass, memberType, memberName, lineNumber);
+                classRelationships[currentClass].memberVariables.insert(memberName);
+                classRelationships[currentClass].references.insert(memberType);
+                classRelationships[memberType].referencedBy.insert(currentClass);
+            }
         }
-        // Rule A: Parent-child / single ownership (default for class members)
-        else {
-            pointerType = PointerType::UNIQUE;
-            std::cerr << "SINGLE OWNERSHIP: " << key << " -> unique_ptr (Rule A)" << std::endl;
-        }
 
-        pointerDecisions[key] = pointerType;
-    }
-}
+        bool handledDeclaration = false;
+        if (std::regex_match(trimmedLine, match, variableDeclRegex)) {
+            const std::string declaredType = match[1].str();
+            const std::string declaredName = match[2].str();
+            const std::string rhsText = match[3].str();
 
-void SmartPointerAnalyzer::detectBackReferences() {
-    // For each class, find members that are back-references
-    // A back-reference is detected when:
-    // 1. A class has multiple members of the same type (e.g., next and prev both of type Node)
-    // 2. The member name suggests backward direction (prev, parent, back)
+            if (classNames.find(declaredType) != classNames.end()) {
+                registerReference(scopeName, declaredType, declaredName, lineNumber);
+                registerSymbolType(scopeName, declaredName, declaredType);
 
-    std::map<std::string, std::vector<std::string>> classMembersByType;
+                const ParsedValue rhs = parseValue(rhsText);
+                const std::string key = buildKey(scopeName, declaredType, declaredName);
+                auto& ref = variableReferences[key];
 
-    // Group variables by containing class and type
-    for (auto& [key, ref] : variableReferences) {
-        if (ref.containingClass != kGlobalScope && ref.containingClass != "main") {
-            std::string groupKey = ref.containingClass + ":" + ref.className;
-            classMembersByType[groupKey].push_back(ref.variableName);
-        }
-    }
-
-    // Check for back-references
-    for (const auto& [groupKey, members] : classMembersByType) {
-        if (members.size() >= 2) {
-            // Multiple members of same type - check for back-reference patterns
-            for (const auto& memberName : members) {
-                // Common back-reference names
-                if (memberName == "prev" || memberName == "previous" ||
-                    memberName == "parent" || memberName == "back" ||
-                    memberName == "owner") {
-                    // Find and mark this variable as back-reference
-                    for (auto& [key, ref] : variableReferences) {
-                        if (ref.variableName == memberName &&
-                            groupKey == ref.containingClass + ":" + ref.className) {
-                            ref.isBackReference = true;
-                            std::cerr << "Detected back-reference: " << ref.containingClass
-                                      << "." << memberName << std::endl;
+                if (rhs.isIdentifier) {
+                    ref.isAssignedFrom = true;
+                    ref.assignedFromVars.insert(rhs.identifier);
+                    for (auto& [otherKey, otherRef] : variableReferences) {
+                        if (otherRef.variableName == rhs.identifier) {
+                            otherRef.isAssignedTo = true;
+                            otherRef.assignedToVars.insert(declaredName);
+                        }
+                    }
+                } else if (rhs.isMemberAccess) {
+                    ref.isAssignedFrom = true;
+                    ref.assignedFromVars.insert(rhs.memberName);
+                    for (auto& [otherKey, otherRef] : variableReferences) {
+                        if (otherRef.variableName == rhs.memberName) {
+                            otherRef.isAssignedTo = true;
+                            otherRef.assignedToVars.insert(declaredName);
                         }
                     }
                 }
             }
+
+            handledDeclaration = true;
+        }
+
+        if (!handledDeclaration && std::regex_match(trimmedLine, match, assignmentRegex)) {
+            const std::string lhsText = trim(match[1].str());
+            const std::string rhsText = trim(match[2].str());
+            const ParsedValue lhs = parseValue(lhsText);
+            const ParsedValue rhs = parseValue(rhsText);
+
+            if (lhs.isMemberAccess) {
+                for (auto& [key, ref] : variableReferences) {
+                    if (ref.variableName == lhs.memberName) {
+                        ref.isAssignedFrom = ref.isAssignedFrom || rhs.isIdentifier || rhs.isMemberAccess;
+                        if (rhs.isIdentifier) {
+                            ref.assignedFromVars.insert(rhs.identifier);
+                        } else if (rhs.isMemberAccess) {
+                            ref.assignedFromVars.insert(rhs.memberName);
+                        }
+                    }
+                }
+
+                if (rhs.isIdentifier) {
+                    recordBidirectionalAssignment(lhs.objectName, lhs.memberName, rhs.identifier, lineNumber, scopeName);
+                }
+            } else if (lhs.isIdentifier && (rhs.isIdentifier || rhs.isMemberAccess)) {
+                for (auto& [key, ref] : variableReferences) {
+                    if (ref.variableName == lhs.identifier &&
+                        (ref.containingScope == normalizeScope(scopeName) ||
+                         (!currentClass.empty() && ref.containingScope == currentClass))) {
+                        ref.isAssignedFrom = true;
+                        ref.assignedFromVars.insert(rhs.isIdentifier ? rhs.identifier : rhs.memberName);
+                    }
+                }
+            }
+
+            if (lhs.isIdentifier) {
+                for (auto& [key, ref] : variableReferences) {
+                    if (ref.variableName == lhs.identifier &&
+                        (ref.containingScope == normalizeScope(scopeName) ||
+                         (!currentClass.empty() && ref.containingScope == currentClass))) {
+                        if (rhs.isIdentifier) {
+                            ref.assignedFromVars.insert(rhs.identifier);
+                        } else if (rhs.isMemberAccess) {
+                            ref.assignedFromVars.insert(rhs.memberName);
+                        }
+                    }
+                }
+            }
+
+            if (rhs.isIdentifier) {
+                for (auto& [key, ref] : variableReferences) {
+                    if (ref.variableName == rhs.identifier) {
+                        ref.isAssignedTo = true;
+                        ref.assignedToVars.insert(lhs.isIdentifier ? lhs.identifier : lhs.memberName);
+                    }
+                }
+            } else if (rhs.isMemberAccess) {
+                for (auto& [key, ref] : variableReferences) {
+                    if (ref.variableName == rhs.memberName) {
+                        ref.isAssignedTo = true;
+                        ref.assignedToVars.insert(lhs.isIdentifier ? lhs.identifier : lhs.memberName);
+                    }
+                }
+            }
+        }
+
+        braceDepth += countChar(line, '{');
+        braceDepth -= countChar(line, '}');
+
+        if (!currentFunction.empty() && functionBraceDepth >= 0 && braceDepth <= functionBraceDepth) {
+            currentFunction.clear();
+            functionBraceDepth = -1;
+        }
+        if (!currentClass.empty() && classBraceDepth >= 0 && braceDepth <= classBraceDepth) {
+            currentClass.clear();
+            classBraceDepth = -1;
+        }
+    }
+
+    for (auto& [key, ref] : variableReferences) {
+        if (ref.containingScope != ref.className) {
+            continue;
+        }
+
+        const std::regex memberAliasPattern(
+            "\\b" + ref.variableName +
+            R"(\s*=\s*(?!new\b)(?!nullptr\b)([A-Za-z_][A-Za-z0-9_]*(?:\s*(?:\.|->)\s*[A-Za-z_][A-Za-z0-9_]*)?)\s*;)");
+        std::smatch match;
+        if (std::regex_search(source, match, memberAliasPattern)) {
+            ref.isAssignedFrom = true;
+            ref.assignedFromVars.insert(match[1].str());
+        }
+    }
+
+    applyExplicitHints();
+}
+
+void SmartPointerAnalyzer::parseAnnotationLine(const std::string& trimmedLine, int lineNumber) {
+    std::smatch match;
+    if (!std::regex_match(trimmedLine, match,
+                          std::regex(R"(^//\s*@ptr\s+(unique|shared|weak)\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*$)"))) {
+        return;
+    }
+
+    const PointerType type = parsePointerType(match[1].str());
+    const std::string target = match[2].str();
+
+    auto it = explicitHints.find(target);
+    if (it != explicitHints.end() && it->second != type) {
+        addDiagnostic(lineNumber,
+                      "Conflicting pointer annotation for '" + target + "'.",
+                      "Keep a single @ptr hint per target.");
+    }
+
+    explicitHints[target] = type;
+    explicitHintLines[target] = lineNumber;
+}
+
+void SmartPointerAnalyzer::registerReference(const std::string& scopeName, const std::string& className,
+                                             const std::string& variableName, int lineNumber) {
+    const std::string key = buildKey(scopeName, className, variableName);
+    auto& ref = variableReferences[key];
+    ref.className = className;
+    ref.variableName = variableName;
+    ref.containingScope = normalizeScope(scopeName);
+    if (lineNumber != 0) {
+        ref.line = lineNumber;
+    }
+}
+
+void SmartPointerAnalyzer::registerSymbolType(const std::string& scopeName, const std::string& symbolName,
+                                              const std::string& className) {
+    symbolTypesByScope[makeSymbolKey(normalizeScope(scopeName), symbolName)] = className;
+    if (scopeName != kGlobalScope) {
+        symbolTypesByScope[makeSymbolKey(kGlobalScope, symbolName)] = className;
+    }
+}
+
+void SmartPointerAnalyzer::recordBidirectionalAssignment(const std::string& lhsObject, const std::string& lhsMember,
+                                                         const std::string& rhsObject, int lineNumber,
+                                                         const std::string& scopeName) {
+    const std::string scopedKey = normalizeScope(scopeName) + "|" + lhsObject + "|" + rhsObject;
+    const std::string reverseKey = normalizeScope(scopeName) + "|" + rhsObject + "|" + lhsObject;
+
+    const auto currentTypeIt = symbolTypesByScope.find(makeSymbolKey(normalizeScope(scopeName), lhsObject));
+    const auto reverseTypeIt = symbolTypesByScope.find(makeSymbolKey(normalizeScope(scopeName), rhsObject));
+    if (currentTypeIt == symbolTypesByScope.end() || reverseTypeIt == symbolTypesByScope.end()) {
+        return;
+    }
+
+    const std::string ownerMemberKey = makeMemberKey(currentTypeIt->second, lhsMember);
+
+    auto reverseIt = bidirectionalAssignmentSeeds.find(reverseKey);
+    if (reverseIt == bidirectionalAssignmentSeeds.end()) {
+        bidirectionalAssignmentSeeds[scopedKey] = {ownerMemberKey, lineNumber};
+        return;
+    }
+
+    const std::string reverseMemberKey = reverseIt->second.first;
+    const int reverseLine = reverseIt->second.second;
+    const std::string reverseMemberName = reverseMemberKey.substr(reverseMemberKey.find('.') + 1);
+
+    std::string backMemberKey = ownerMemberKey;
+    std::string forwardMemberKey = reverseMemberKey;
+
+    if (isBackReferenceName(reverseMemberName) && !isBackReferenceName(lhsMember)) {
+        backMemberKey = reverseMemberKey;
+        forwardMemberKey = ownerMemberKey;
+    } else if (!isBackReferenceName(reverseMemberName) && isBackReferenceName(lhsMember)) {
+        backMemberKey = ownerMemberKey;
+        forwardMemberKey = reverseMemberKey;
+    } else if (!isBackReferenceName(reverseMemberName) && !isBackReferenceName(lhsMember)) {
+        addDiagnostic(lineNumber,
+                      "Bidirectional assignment detected between '" + lhsObject + "." + lhsMember +
+                          "' and '" + rhsObject + "." + reverseMemberName + "'.",
+                      "Annotate the backward edge with //@ptr weak if you want a different choice.");
+    }
+
+    bidirectionalBackMembers.insert(backMemberKey);
+    bidirectionalOwnerMembers.insert(forwardMemberKey);
+    classesNeedingSharedRoots.insert(currentTypeIt->second);
+    classesNeedingSharedRoots.insert(reverseTypeIt->second);
+    classRelationships[currentTypeIt->second].hasBidirectionalAssignment = true;
+    classRelationships[reverseTypeIt->second].hasBidirectionalAssignment = true;
+
+    for (auto& [key, ref] : variableReferences) {
+        const std::string memberKey = makeMemberKey(ref.className, ref.variableName);
+        if (memberKey == backMemberKey) {
+            ref.isBackReference = true;
+            ref.participatesInBidirectionalAssignment = true;
+        } else if (memberKey == forwardMemberKey) {
+            ref.participatesInBidirectionalAssignment = true;
+        }
+    }
+
+    std::cerr << "Detected bidirectional assignment between lines "
+              << reverseLine << " and " << lineNumber << std::endl;
+}
+
+void SmartPointerAnalyzer::secondPassDeterminePointerTypes() {
+    detectBackReferences();
+    applyExplicitHints();
+    reportLines.clear();
+
+    for (auto& [key, ref] : variableReferences) {
+        PointerType pointerType = PointerType::UNIQUE;
+        std::string reason = "default unique ownership";
+
+        const std::string exactMemberKey = makeMemberKey(ref.className, ref.variableName);
+        const auto explicitIt = explicitHints.find(exactMemberKey);
+        const auto fallbackHintIt = explicitHints.find(ref.variableName);
+
+        if (explicitIt != explicitHints.end()) {
+            pointerType = explicitIt->second;
+            ref.hasExplicitHint = true;
+            reason = "explicit @ptr annotation";
+        } else if (fallbackHintIt != explicitHints.end()) {
+            pointerType = fallbackHintIt->second;
+            ref.hasExplicitHint = true;
+            reason = "explicit @ptr annotation";
+        } else if (ref.isBackReference || bidirectionalBackMembers.find(exactMemberKey) != bidirectionalBackMembers.end()) {
+            pointerType = PointerType::WEAK;
+            reason = ref.participatesInBidirectionalAssignment
+                ? "bidirectional assignment closed a cycle"
+                : "back-reference heuristic matched a backward edge";
+            classesNeedingSharedRoots.insert(ref.className);
+            classRelationships[ref.className].hasBackReference = true;
+        } else if (ref.participatesInBidirectionalAssignment ||
+                   bidirectionalOwnerMembers.find(exactMemberKey) != bidirectionalOwnerMembers.end()) {
+            pointerType = PointerType::SHARED;
+            reason = "bidirectional ownership needs a shared forward edge";
+            classesNeedingSharedRoots.insert(ref.className);
+        } else if (ref.containingScope == ref.className && ref.isAssignedFrom &&
+                   !ref.assignedFromVars.empty()) {
+            pointerType = PointerType::SHARED;
+            reason = "member receives an existing object reference, so ownership is shared";
+        } else if (classesNeedingSharedRoots.find(ref.className) != classesNeedingSharedRoots.end() &&
+                   ref.containingScope != ref.className) {
+            pointerType = PointerType::SHARED;
+            reason = "instances of this class participate in weak back-references";
+        } else if (isSharedOwnership(ref.containingScope, ref.className, ref.variableName)) {
+            pointerType = PointerType::SHARED;
+            reason = "data-flow analysis found multiple live aliases";
+        }
+
+        pointerDecisions[key] = pointerType;
+        pointerReasons[key] = reason;
+        ref.reason = reason;
+
+        std::ostringstream report;
+        report << ref.className << "." << ref.variableName
+               << " -> " << pointerTypeName(pointerType)
+               << " because " << reason;
+        if (ref.line > 0) {
+            report << " (line " << ref.line << ")";
+        }
+        reportLines.push_back(report.str());
+    }
+
+    std::sort(reportLines.begin(), reportLines.end());
+}
+
+void SmartPointerAnalyzer::detectBackReferences() {
+    std::map<std::string, std::vector<std::string>> classMembersByType;
+
+    for (const auto& [key, ref] : variableReferences) {
+        if (ref.containingScope == ref.className) {
+            classMembersByType[ref.containingScope + ":" + ref.className].push_back(ref.variableName);
+        }
+    }
+
+    for (auto& [key, ref] : variableReferences) {
+        const std::string groupKey = ref.containingScope + ":" + ref.className;
+        const auto groupIt = classMembersByType.find(groupKey);
+        if (groupIt != classMembersByType.end() && groupIt->second.size() >= 2 &&
+            isBackReferenceName(ref.variableName)) {
+            ref.isBackReference = true;
+            classRelationships[ref.className].hasBackReference = true;
         }
     }
 }
 
-bool SmartPointerAnalyzer::isParentChildRelationship(const std::string& containingClass, const std::string& className, const std::string& variableName) const {
-    std::string key = makeKey(containingClass, className, variableName);
-    auto it = variableReferences.find(key);
-    if (it == variableReferences.end()) return true; // Default assumption
-    
-    const auto& ref = it->second;
-    
-    // If this variable is only assigned to (never assigned from others), 
-    // it's likely a parent-child relationship
-    return !ref.isAssignedFrom && ref.assignedFromVars.empty();
-}
+bool SmartPointerAnalyzer::isSharedOwnership(const std::string& containingScope, const std::string& className,
+                                             const std::string& variableName) const {
+    const std::string key = buildKey(containingScope, className, variableName);
+    const auto it = variableReferences.find(key);
+    if (it == variableReferences.end()) {
+        return false;
+    }
 
-bool SmartPointerAnalyzer::isSharedOwnership(const std::string& containingClass, const std::string& className, const std::string& variableName) const {
-    std::string key = makeKey(containingClass, className, variableName);
-    auto it = variableReferences.find(key);
-    if (it == variableReferences.end()) return false;
-    
     const auto& ref = it->second;
-    
-    // Multiple variables are assigned from this one, or this is assigned from multiple sources
-    return (ref.assignedToVars.size() > 1) || (ref.assignedFromVars.size() > 1) || 
+    return ref.assignedToVars.size() > 1 || ref.assignedFromVars.size() > 1 ||
            (ref.isAssignedFrom && ref.isAssignedTo);
 }
 
-bool SmartPointerAnalyzer::isPartOfCycle(const std::string& containingClass, const std::string& className, const std::string& variableName) const {
-    // Check if the class this variable references has a back-reference to the containing class
-    std::string key = makeKey(containingClass, className, variableName);
-    auto it = variableReferences.find(key);
-    if (it == variableReferences.end()) return false;
-    
-    const auto& ref = it->second;
-    
-    // Simple cycle detection: if class A references class B, and class B references class A
-    return detectCycleBetweenClasses(ref.containingClass, className);
-}
-
-bool SmartPointerAnalyzer::detectCycleBetweenClasses(const std::string& class1, const std::string& class2) const {
-    if (class1.empty() || class2.empty() || class1 == class2) return false;
-    
-    auto it1 = classRelationships.find(class1);
-    auto it2 = classRelationships.find(class2);
-    
-    if (it1 == classRelationships.end() || it2 == classRelationships.end()) return false;
-    
-    // Direct cycle: class1 references class2 AND class2 references class1
-    bool class1ToClass2 = it1->second.references.find(class2) != it1->second.references.end();
-    bool class2ToClass1 = it2->second.references.find(class1) != it2->second.references.end();
-    
-    if (class1ToClass2 && class2ToClass1) {
-        std::cerr << "Direct cycle detected between " << class1 << " and " << class2 << std::endl;
-        return true;
-    }
-    
-    // Enhanced cycle detection using DFS to find indirect cycles
-    std::set<std::string> visited;
-    std::set<std::string> recursionStack;
-    
-    return hasCycleDFS(class1, class2, visited, recursionStack);
-}
-
-bool SmartPointerAnalyzer::hasCycleDFS(const std::string& current, const std::string& target, 
-                                      std::set<std::string>& visited, std::set<std::string>& recursionStack) const {
-    if (current == target && !recursionStack.empty()) {
-        return true; // Found cycle back to target
-    }
-    
-    if (visited.find(current) != visited.end()) {
-        return false; // Already visited this node
-    }
-    
-    visited.insert(current);
-    recursionStack.insert(current);
-    
-    auto it = classRelationships.find(current);
-    if (it != classRelationships.end()) {
-        for (const std::string& referenced : it->second.references) {
-            if (recursionStack.find(referenced) != recursionStack.end()) {
-                // Found a cycle in recursion stack
-                if (referenced == target) {
-                    std::cerr << "Indirect cycle detected: " << current << " -> " << referenced << std::endl;
-                    return true;
-                }
-            } else if (hasCycleDFS(referenced, target, visited, recursionStack)) {
-                return true;
+void SmartPointerAnalyzer::applyExplicitHints() {
+    for (const auto& [target, line] : explicitHintLines) {
+        bool matched = false;
+        for (auto& [key, ref] : variableReferences) {
+            const std::string memberKey = makeMemberKey(ref.className, ref.variableName);
+            if (target == ref.variableName || target == memberKey) {
+                ref.hasExplicitHint = true;
+                matched = true;
             }
         }
-    }
-    
-    recursionStack.erase(current);
-    return false;
-}
 
-std::string SmartPointerAnalyzer::normalizeScope(const std::string& containingClass) const {
-    return containingClass.empty() ? kGlobalScope : containingClass;
-}
-
-std::string SmartPointerAnalyzer::makeKey(const std::string& containingClass, const std::string& className, const std::string& variableName) const {
-    return normalizeScope(containingClass) + "|" + className + "." + variableName;
-}
-
-void SmartPointerAnalyzer::recordAssignment(const std::string& fromVar, const std::string& toVar, const std::string& currentClass) {
-    const std::string normalizedScope = normalizeScope(currentClass);
-
-    // Find variable references in the current scope.
-    for (auto& [key, ref] : variableReferences) {
-        if (ref.variableName == toVar && ref.containingClass == normalizedScope) {
-            ref.isAssignedFrom = true;
-            ref.assignedFromVars.insert(fromVar);
-        }
-        
-        if (ref.variableName == fromVar && ref.containingClass == normalizedScope) {
-            ref.isAssignedTo = true;
-            ref.assignedToVars.insert(toVar);
+        if (!matched) {
+            addDiagnostic(line,
+                          "Pointer hint for '" + target + "' did not match any discovered class pointer.",
+                          "Use //@ptr <type> Class.member or //@ptr <type> member.");
         }
     }
-    
-    std::cerr << "Recorded assignment: " << fromVar << " -> " << toVar 
-              << " in scope " << normalizedScope << std::endl;
+}
+
+void SmartPointerAnalyzer::addDiagnostic(int line, const std::string& message, const std::string& suggestion) {
+    diagnostics.push_back({line, message, suggestion});
+}
+
+std::string SmartPointerAnalyzer::buildKey(const std::string& containingScope, const std::string& className,
+                                           const std::string& variableName) const {
+    return normalizeScope(containingScope) + "|" + className + "." + variableName;
+}
+
+std::string SmartPointerAnalyzer::normalizeScope(const std::string& containingScope) const {
+    return containingScope.empty() ? kGlobalScope : containingScope;
 }
 
 } // namespace cling

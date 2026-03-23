@@ -139,6 +139,22 @@ if(NOT EMSCRIPTEN)
         ${CMAKE_SOURCE_DIR}/tests/new_expression_paths.clg
         ${CMAKE_BINARY_DIR}/test_output_new_expression_paths.cpp
         ${CMAKE_BINARY_DIR}/test_output_new_expression_paths.exe)
+    add_transpile_compile_test(
+        cling_test_bidirectional_analysis
+        ${CMAKE_SOURCE_DIR}/tests/bidirectional_analysis.clg
+        ${CMAKE_BINARY_DIR}/test_output_bidirectional_analysis.cpp
+        ${CMAKE_BINARY_DIR}/test_output_bidirectional_analysis.exe)
+
+    add_test(NAME cling_test_bidirectional_analysis_report
+        COMMAND ${CMAKE_COMMAND}
+            -DFILE=${CMAKE_BINARY_DIR}/test_output_bidirectional_analysis.cpp
+            -DNEEDLE1=CeeLing\ pointer\ analysis\ report
+            -DNEEDLE2=std::shared_ptr<Node>\ next
+            -DNEEDLE3=std::weak_ptr<Node>\ prev
+            -DNEEDLE4=std::move(second)
+            -P ${CMAKE_SOURCE_DIR}/tests/assert_contains.cmake)
+    set_tests_properties(cling_test_bidirectional_analysis_report PROPERTIES
+        DEPENDS cling_test_bidirectional_analysis)
 
     # Unsupported/legacy syntax should fail fast instead of silently succeeding.
     add_test(NAME cling_test_legacy_syntax_rejected

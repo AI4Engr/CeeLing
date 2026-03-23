@@ -1,0 +1,26 @@
+#include <iostream>
+
+class Node {
+public:
+    int data;
+    //@ptr shared Node.next
+    Node next;
+    //@ptr weak Node.prev
+    Node prev;
+
+    Node(int value) {
+        data = value;
+        next = nullptr;
+        prev = nullptr;
+    }
+};
+
+int main() {
+    Node first = new Node(1);
+    Node second = new Node(2);
+    first.next = second;
+    second.prev = first;
+    Node tail = second;
+    std::cout << "done";
+    return 0;
+}
