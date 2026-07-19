@@ -112,35 +112,44 @@ ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
     return program;
 }
 
+// Stamp a node's source position from its originating CST node (1-based).
+static void stampLoc(ASTNode* astNode, TSNode tsNode) {
+    if (astNode == nullptr) return;
+    const TSPoint p = ts_node_start_point(tsNode);
+    astNode->loc.line = static_cast<int>(p.row) + 1;
+    astNode->loc.column = static_cast<int>(p.column) + 1;
+}
+
 StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) {
     const char* node_type = ts_node_type(node);
 
+    StatementPtr result;
     if (strcmp(node_type, "variable_declaration") == 0) {
-        return buildVariableDeclaration(node, source);
+        result = buildVariableDeclaration(node, source);
     } else if (strcmp(node_type, "assignment_statement") == 0) {
-        return buildAssignmentStatement(node, source);
+        result = buildAssignmentStatement(node, source);
     } else if (strcmp(node_type, "print_statement") == 0) {
-        return buildPrintStatement(node, source);
+        result = buildPrintStatement(node, source);
     } else if (strcmp(node_type, "comment_statement") == 0) {
-        return buildCommentStatement(node, source);
+        result = buildCommentStatement(node, source);
     } else if (strcmp(node_type, "include_statement") == 0) {
-        return buildIncludeStatement(node, source);
+        result = buildIncludeStatement(node, source);
     } else if (strcmp(node_type, "function_declaration") == 0) {
-        return buildFunctionDeclaration(node, source);
+        result = buildFunctionDeclaration(node, source);
     } else if (strcmp(node_type, "class_declaration") == 0) {
-        return buildClassDeclaration(node, source);
+        result = buildClassDeclaration(node, source);
     } else if (strcmp(node_type, "constructor_declaration") == 0) {
-        return buildConstructorDeclaration(node, source);
+        result = buildConstructorDeclaration(node, source);
     } else if (strcmp(node_type, "method_declaration") == 0) {
-        return buildMethodDeclaration(node, source);
+        result = buildMethodDeclaration(node, source);
     } else if (strcmp(node_type, "member_variable_declaration") == 0) {
-        return buildMemberVariableDeclaration(node, source);
+        result = buildMemberVariableDeclaration(node, source);
     } else if (strcmp(node_type, "main_function") == 0) {
-        return buildMainFunction(node, source);
+        result = buildMainFunction(node, source);
     } else if (strcmp(node_type, "return_statement") == 0) {
-        return buildReturnStatement(node, source);
+        result = buildReturnStatement(node, source);
     } else if (strcmp(node_type, "if_statement") == 0) {
-        return buildIfStatement(node, source);
+        result = buildIfStatement(node, source);
     } else if (strcmp(node_type, "statement") == 0) {
         // If we get a generic "statement" node, look at its first child
         if (ts_node_child_count(node) > 0) {
@@ -149,8 +158,8 @@ StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) 
         }
     }
 
-    // If we get here, we have an unrecognized node type
-    return nullptr;
+    stampLoc(result.get(), node);
+    return result;
 }
 
 StatementPtr ASTBuilder::buildVariableDeclaration(TSNode node, const std::string& source) {
@@ -201,18 +210,19 @@ StatementPtr ASTBuilder::buildCommentStatement(TSNode node, const std::string& s
 ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source) {
     const char* node_type = ts_node_type(node);
 
+    ExpressionPtr result;
     if (strcmp(node_type, "identifier") == 0) {
-        return buildIdentifier(node, source);
+        result = buildIdentifier(node, source);
     } else if (strcmp(node_type, "number") == 0) {
-        return buildNumber(node, source);
+        result = buildNumber(node, source);
     } else if (strcmp(node_type, "function_call") == 0) {
-        return buildFunctionCall(node, source);
+        result = buildFunctionCall(node, source);
     } else if (strcmp(node_type, "new_expression") == 0) {
-        return buildNewExpression(node, source);
+        result = buildNewExpression(node, source);
     } else if (strcmp(node_type, "binary_expression") == 0) {
-        return buildBinaryExpression(node, source);
+        result = buildBinaryExpression(node, source);
     } else if (strcmp(node_type, "member_access") == 0) {
-        return buildMemberAccess(node, source);
+        result = buildMemberAccess(node, source);
     } else if (strcmp(node_type, "primary_expression") == 0) {
         // If we get a primary_expression node, look at its first child
         if (ts_node_child_count(node) > 0) {
@@ -227,7 +237,8 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
         }
     }
 
-    return nullptr;
+    stampLoc(result.get(), node);
+    return result;
 }
 
 ExpressionPtr ASTBuilder::buildIdentifier(TSNode node, const std::string& source) {

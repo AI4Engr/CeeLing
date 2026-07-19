@@ -1,0 +1,21 @@
+//@ expect: reject
+//@ reason: `a` is reassigned to a fresh object; observer `b` still points at the old one.
+//
+// New-syntax fixture. Reassigning an owner frees the object it previously held. Any
+// observer of the old object dangles.
+//
+// Plain-move / `&`-observer analog of legacy tests/borrow_owner_reassign_use.clg.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    ref Node b = a;  // observer of the first object
+    a = new Node(2); // old Node(1) freed; b now dangles
+    print(b.v);      // ERROR: b observes a destroyed object
+    return 0;
+}

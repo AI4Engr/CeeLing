@@ -161,6 +161,19 @@ if(NOT EMSCRIPTEN)
         COMMAND cling --cpp ${CMAKE_BINARY_DIR}/test_output_legacy.cpp ${CMAKE_SOURCE_DIR}/regression/fixtures/example.clg)
     set_tests_properties(cling_test_legacy_syntax_rejected PROPERTIES WILL_FAIL TRUE)
 
+    # Memory-safety contract suite (Phase 0 harness). The runner scans fixtures tagged
+    # with `//@ expect: reject|accept`, runs cling, and asserts the exit code. Missed
+    # rejects are XFAIL (analysis not yet implemented) so the baseline stays green;
+    # over-rejection of a valid program is a hard FAIL. Pass --strict once the dangling
+    # / use-after-move analysis lands to make missed rejects count as failures.
+    find_program(BASH_PROGRAM bash)
+    if(BASH_PROGRAM)
+        add_test(NAME cling_safety_contract_baseline
+            COMMAND ${BASH_PROGRAM}
+                ${CMAKE_SOURCE_DIR}/tests/safety/run_safety_tests.sh
+                $<TARGET_FILE:cling>)
+    endif()
+
     # Custom target for running tests
     add_custom_target(run_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure

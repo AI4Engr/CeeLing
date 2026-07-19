@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ reason: observer `b` is used while its owner `a` is still alive and in scope.
+//
+// New-syntax positive control. This is the safe, common case and MUST keep compiling.
+// It guards against an over-aggressive dangling check (false positives are bugs too).
+//
+// Plain-move / `&`-observer analog of legacy tests/borrow_owner_alive_ok.clg.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    ref Node b = a;  // observer
+    print(b.v);      // a is still alive here → safe
+    return 0;
+}

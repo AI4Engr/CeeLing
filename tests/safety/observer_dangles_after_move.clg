@@ -1,0 +1,26 @@
+//@ expect: reject
+//@ reason: `b` observes `a`; after `a` is moved into sink(), `b` dangles.
+//
+// New-syntax fixture. A non-owning observer is written with the `ref` keyword:
+//   ref Node b = a;   // b observes a, does NOT take ownership
+// When `a`'s object is moved away, every observer of it dangles. Using `b` after the
+// move must be rejected.
+//
+// Plain-move / `&`-observer analog of legacy tests/borrow_owner_moved_use.clg.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) {
+}
+
+int main() {
+    Node a = new Node(1);
+    ref Node b = a;  // observer: b references a, no ownership transfer
+    sink(a);         // a moved away → the object b observes is gone
+    print(b.v);      // ERROR: b dangles
+    return 0;
+}

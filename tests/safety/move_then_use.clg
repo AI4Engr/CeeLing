@@ -1,0 +1,24 @@
+//@ expect: reject
+//@ reason: `a` is moved into sink(); using `a` afterward is use-after-move.
+//
+// New-syntax fixture (no owned<>/borrowed<> annotations). Plain assignment/argument
+// passing transfers ownership (default move), so after `sink(a)` the local `a` is
+// moved-from. Using it on the next line must be rejected.
+//
+// This is the plain-move analog of the legacy tests/borrow_owner_moved_use.clg.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) {
+}
+
+int main() {
+    Node a = new Node(1);
+    sink(a);         // ownership of a transfers into sink (move)
+    print(a.v);      // ERROR: use of moved-from `a`
+    return 0;
+}

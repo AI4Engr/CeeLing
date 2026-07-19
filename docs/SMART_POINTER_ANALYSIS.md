@@ -1,5 +1,10 @@
 # Smart Pointer Analysis - Two-Pass Algorithm
 
+> **Merged into the Language Guide.** This content now lives, in the
+> "problem → solution → proof" format, in
+> [Language Guide Ch. 10 — Smart-Pointer Inference](language-guide/10-smart-pointer-inference.md).
+> This file is retained as the detailed algorithm reference.
+
 ## Overview
 
 CeeLing uses a sophisticated two-pass analysis algorithm to automatically determine the optimal smart pointer type (`unique_ptr`, `shared_ptr`, or `weak_ptr`) for each class variable. This ensures memory safety while maximizing performance.

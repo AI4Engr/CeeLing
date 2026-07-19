@@ -1,0 +1,34 @@
+//@ expect: reject
+//@ legacy: uses owned<>/borrowed<> scaffolding syntax; superseded by tests/safety/*.clg
+// B1 acceptance fixture — the canonical dangling-borrow the whole feature exists to reject,
+// transliterated from the Rust example:
+//
+//     let n = root.find_or_append();   // n borrows into root
+//     drop(root.next);                 // owner (root) is dropped
+//     n.key = "hello";                 // ← Rust: compile error
+//
+// Here `borrow(root)` returns a borrow into `root`; then `root` is moved away (dropped as
+// an owner); then the borrow is used. CeeLing MUST reject this at compile time — otherwise
+// it offers no safety over plain C++ smart pointers.
+#include <memory>
+
+class Node {
+public:
+    int key;
+    Node(int k) { key = k; }
+};
+
+borrowed<Node> borrow(borrowed<Node> owner) {
+    return owner;
+}
+
+void drop(owned<Node> n) {
+}
+
+int main() {
+    owned<Node> root = new Node(1);
+    borrowed<Node> n = borrow(root);
+    drop(root);
+    print(n.key);
+    return 0;
+}

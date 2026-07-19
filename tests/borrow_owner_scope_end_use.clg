@@ -1,0 +1,22 @@
+//@ expect: reject
+//@ legacy: uses owned<>/borrowed<> scaffolding syntax; superseded by tests/safety/*.clg
+// B1 negative fixture (scenario C): a borrow captures an owner declared in an inner scope;
+// after that scope ends the owner is destroyed, but the borrow is used afterwards. The
+// borrowed object is gone — CeeLing must reject this at compile time.
+#include <memory>
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    borrowed<Node> b = nullptr;
+    if (1) {
+        owned<Node> inner = new Node(1);
+        b = inner;
+    }
+    print(b.v);
+    return 0;
+}

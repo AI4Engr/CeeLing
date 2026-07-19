@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ legacy: uses owned<>/borrowed<> scaffolding syntax; superseded by tests/safety/*.clg
+// B1 control fixture (scenario D): a borrow is used while its owner is still alive and in
+// scope. This is the safe, common case and MUST continue to compile — it guards against a
+// dangling-borrow check that is too aggressive (false positives).
+#include <memory>
+#include <iostream>
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    owned<Node> a = new Node(1);
+    borrowed<Node> b = a;
+    std::cout << b.v << "\n";
+    return 0;
+}

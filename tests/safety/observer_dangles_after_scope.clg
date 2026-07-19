@@ -1,0 +1,23 @@
+//@ expect: reject
+//@ reason: observer captures an inner-scope owner; used after that scope ends.
+//
+// New-syntax fixture. An owner declared in an inner scope is destroyed when the scope
+// ends. An observer captured from it and used afterward dangles.
+//
+// Plain-move / `&`-observer analog of legacy tests/borrow_owner_scope_end_use.clg.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    ref Node b = nullptr;
+    if (1) {
+        Node inner = new Node(1);
+        b = inner;   // observer captures inner
+    }                // inner destroyed here
+    print(b.v);      // ERROR: b observes a destroyed object
+    return 0;
+}

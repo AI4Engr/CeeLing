@@ -8,10 +8,20 @@
 
 namespace cling {
 
+// Source position of a node, 1-based line/column. line == 0 means "unknown"
+// (e.g. synthesized nodes). Populated by the AST builder from the Tree-sitter CST;
+// used by the safety analysis to point diagnostics at the originating .clg line.
+struct SourceLoc {
+    int line = 0;
+    int column = 0;
+};
+
 class ASTNode {
 public:
     virtual ~ASTNode() = default;
     virtual std::string toString() const = 0;
+
+    SourceLoc loc;  // source position; line == 0 if unset
 };
 
 using ASTNodePtr = std::unique_ptr<ASTNode>;
