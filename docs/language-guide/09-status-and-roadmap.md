@@ -2,21 +2,34 @@
 
 ## Honest current state
 
-The safety features described in this guide are **specification, not yet
-implemented** — with the exception of the Phase 0 test harness, which is done.
+Most safety features in this guide are still **specification**, but Phase 0 (harness)
+and the first slice of Phase 2 (dangling analysis) are now real.
 
-- The analyzer currently performs **only smart-pointer type selection**
-  (`unique_ptr` / `shared_ptr` / `weak_ptr`). It does **no** lifetime / dangling
-  checking.
-- Every dangling / use-after-move fixture currently **passes through** the compiler —
-  false negatives against the safety contract, tracked as XFAIL in the Phase 0 suite.
-- `src/core/` contains **zero safety-enforcement logic**: no raw-pointer ban, no
-  `.get()` / cast enforcement, no dangling analysis.
-- Generated C++ still leaks `print` tokens and mishandles `ref` observer locals (the
-  `ref` keyword is passed through instead of lowering to `Node& n = *a;`) — not valid
-  C++ yet.
+**Working today** (see [Chapter 18](18-implementation-notes.md)):
+- **Use-after-move** — using a value after it was moved (into a function or another
+  variable) is rejected, with a `.clg` line number.
+- **Observer dangling** — a `ref` observer used after its owner is moved away is
+  rejected.
+- **Observer-parameter ban** — `void sink(ref Node n)` is rejected at parse time
+  (observers are local-only).
+- **Reassignment kills observers** — after `a = new Node(2);`, an observer of the old
+  object is rejected on use.
+- **Scope-exit kills observers** — an owner declared inside a `{ }` block dies when the
+  block ends; an observer of it is rejected on use afterward.
+- Safety suite: **PASS=7, XFAIL=5, FAIL=0**. **All new-syntax dangling fixtures now
+  pass**; the 5 remaining XFAIL are the legacy `owned<>/borrowed<>` fixtures, kept for
+  regression only.
 
-This chapter is the plan; do not read it as "already works."
+**Not yet done:**
+- The analyzer still also runs the older **smart-pointer type selection**
+  (`unique_ptr`/`shared_ptr`/`weak_ptr`), not yet unified onto the new engine.
+- No escape-hatch bans yet (`.get()`, casts, raw pointers) — Phase 1.
+- Remaining dangling cases (scope-exit, reassignment, branch merges, library
+  summaries) are still XFAIL.
+- Generated C++ still leaks `print` and does not yet lower `ref` locals to
+  `Node& n = *a;`.
+
+This chapter is the plan; only the "working today" list above is done.
 
 ## Implementation order
 

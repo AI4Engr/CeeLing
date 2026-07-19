@@ -120,6 +120,25 @@ static void stampLoc(ASTNode* astNode, TSNode tsNode) {
     astNode->loc.column = static_cast<int>(p.column) + 1;
 }
 
+// Observers (`ref`) are local-only: they may not appear as function parameters.
+// A `ref` in a parameter list is a hard error (the language subset forbids passing
+// observers into functions — arguments always move ownership).
+static void rejectObserverParams(TSNode paramList) {
+    const uint32_t n = ts_node_child_count(paramList);
+    for (uint32_t j = 0; j < n; ++j) {
+        TSNode child = ts_node_child(paramList, j);
+        if (strcmp(ts_node_type(child), "observer_qualifier") == 0) {
+            const TSPoint p = ts_node_start_point(child);
+            std::ostringstream err;
+            err << "error[semantic/observer_param]: `ref` observers cannot be function "
+                   "parameters (line " << (p.row + 1) << ", column " << (p.column + 1)
+                << "). Function arguments always transfer ownership (move); pass by value "
+                   "and let the caller keep observers local.";
+            throw std::runtime_error(err.str());
+        }
+    }
+}
+
 StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) {
     const char* node_type = ts_node_type(node);
 
@@ -130,6 +149,8 @@ StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) 
         result = buildAssignmentStatement(node, source);
     } else if (strcmp(node_type, "print_statement") == 0) {
         result = buildPrintStatement(node, source);
+    } else if (strcmp(node_type, "expression_statement") == 0) {
+        result = buildExpressionStatement(node, source);
     } else if (strcmp(node_type, "comment_statement") == 0) {
         result = buildCommentStatement(node, source);
     } else if (strcmp(node_type, "include_statement") == 0) {
@@ -163,16 +184,25 @@ StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) 
 }
 
 StatementPtr ASTBuilder::buildVariableDeclaration(TSNode node, const std::string& source) {
-    // variable_declaration: type identifier "=" expression ";"
-    TSNode type_node = ts_node_child(node, 0);
-    TSNode identifier_node = ts_node_child(node, 1);
-    TSNode expression_node = ts_node_child(node, 3); // Skip "="
+    // variable_declaration: optional("ref") type identifier "=" expression ";"
+    // The optional `ref` observer_qualifier shifts subsequent child indices by one.
+    uint32_t base = 0;
+    bool isObserver = false;
+    if (ts_node_child_count(node) > 0 &&
+        strcmp(ts_node_type(ts_node_child(node, 0)), "observer_qualifier") == 0) {
+        isObserver = true;
+        base = 1;
+    }
+
+    TSNode type_node = ts_node_child(node, base + 0);
+    TSNode identifier_node = ts_node_child(node, base + 1);
+    TSNode expression_node = ts_node_child(node, base + 3); // Skip "="
 
     std::string type = getNodeText(type_node, source);
     std::string identifier = getNodeText(identifier_node, source);
     auto expr = buildExpression(expression_node, source);
 
-    return std::make_unique<VariableDeclaration>(type, identifier, std::move(expr));
+    return std::make_unique<VariableDeclaration>(type, identifier, std::move(expr), isObserver);
 }
 
 StatementPtr ASTBuilder::buildAssignmentStatement(TSNode node, const std::string& source) {
@@ -192,6 +222,16 @@ StatementPtr ASTBuilder::buildPrintStatement(TSNode node, const std::string& sou
     auto expr = buildExpression(expression_node, source);
 
     return std::make_unique<PrintStatement>(std::move(expr));
+}
+
+StatementPtr ASTBuilder::buildExpressionStatement(TSNode node, const std::string& source) {
+    // expression_statement: expression ";"
+    TSNode expression_node = ts_node_child(node, 0);
+    auto expr = buildExpression(expression_node, source);
+    if (!expr) {
+        return nullptr;
+    }
+    return std::make_unique<ExpressionStatement>(std::move(expr));
 }
 
 StatementPtr ASTBuilder::buildCommentStatement(TSNode node, const std::string& source) {
@@ -252,8 +292,9 @@ ExpressionPtr ASTBuilder::buildNumber(TSNode node, const std::string& source) {
 }
 
 StatementPtr ASTBuilder::buildFunctionDeclaration(TSNode node, const std::string& source) {
-    // function_declaration: "fn" identifier "(" optional(parameter_list) ")" "{" repeat(statement) "}"
-    std::string funcName = getNodeText(ts_node_child(node, 1), source); // Skip "fn"
+    // function_declaration: type identifier "(" optional(parameter_list) ")" "{" ... "}"
+    // C++-style: child(0) is the return type, child(1) is the function name.
+    std::string funcName = getNodeText(ts_node_child(node, 1), source);
     
     std::vector<std::string> parameters;
     std::vector<StatementPtr> body;
@@ -265,6 +306,7 @@ StatementPtr ASTBuilder::buildFunctionDeclaration(TSNode node, const std::string
         const char* childType = ts_node_type(child);
         
         if (strcmp(childType, "parameter_list") == 0) {
+            rejectObserverParams(child);
             uint32_t paramCount = ts_node_child_count(child);
             for (uint32_t j = 0; j < paramCount; j++) {
                 TSNode paramNode = ts_node_child(child, j);
@@ -469,6 +511,7 @@ StatementPtr ASTBuilder::buildConstructorDeclaration(TSNode node, const std::str
         const char* childType = ts_node_type(child);
 
         if (strcmp(childType, "parameter_list") == 0) {
+            rejectObserverParams(child);
             // Parse parameters: seq(type, identifier), repeat(seq(',', type, identifier))
             uint32_t paramCount = ts_node_child_count(child);
             for (uint32_t j = 0; j < paramCount; j += 2) { // Skip commas
@@ -570,6 +613,7 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
         const char* childType = ts_node_type(child);
 
         if (strcmp(childType, "parameter_list") == 0) {
+            rejectObserverParams(child);
             // Parse parameters: seq(type, identifier), repeat(seq(',', type, identifier))
             uint32_t paramCount = ts_node_child_count(child);
             for (uint32_t j = 0; j < paramCount; j += 2) { // Skip commas

@@ -1,11 +1,13 @@
-//## Basic Function Example
+// Basic Function Example (valid CeeLing syntax)
 
-fn test(a, b)
-{
-    c := 1;
+int test(int a, int b) {
+    int c = 1;
     return a + b + c;
 }
 
-x := test(5, 3);
-//Results:
-print(x);
+int main() {
+    int x = test(5, 3);
+    // Results:
+    print(x);
+    return 0;
+}

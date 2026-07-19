@@ -21,6 +21,7 @@ private:
     StatementPtr buildMemberVariableDeclaration(TSNode node, const std::string& source);
     StatementPtr buildAssignmentStatement(TSNode node, const std::string& source);
     StatementPtr buildPrintStatement(TSNode node, const std::string& source);
+    StatementPtr buildExpressionStatement(TSNode node, const std::string& source);
     StatementPtr buildCommentStatement(TSNode node, const std::string& source);
     StatementPtr buildIncludeStatement(TSNode node, const std::string& source);
     StatementPtr buildFunctionDeclaration(TSNode node, const std::string& source);

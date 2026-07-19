@@ -1,6 +1,8 @@
 #include "core/cst_to_ast/ast.h"
 #include "core/generator/cpp_generator.h"
+#include "core/generator/dangling_checker.h"
 #include <iostream>
+#include <vector>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -129,6 +131,23 @@ int main(int argc, char* argv[]) {
 #else
         throw std::runtime_error("This build was configured without Tree-sitter support. Rebuild with -DWITH_TREE_SITTER=ON.");
 #endif
+
+        // Memory-safety analysis: reject dangling / use-after-move before generating C++.
+        DanglingChecker danglingChecker;
+        std::vector<DanglingError> danglingErrors = danglingChecker.check(*program);
+        if (!danglingErrors.empty()) {
+            for (const auto& err : danglingErrors) {
+                std::cerr << "error[semantic/use-after-move]: " << err.message << "\n";
+                if (err.line > 0) {
+                    std::cerr << "  --> " << inputFile << ":" << err.line << ":" << err.column << "\n";
+                }
+                if (!err.help.empty()) {
+                    std::cerr << "  help: " << err.help << "\n";
+                }
+            }
+            pauseIfNeeded();
+            return 1;
+        }
 
         // Generate C++ code
         CppGenerator generator;

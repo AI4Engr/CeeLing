@@ -96,12 +96,15 @@ public:
     std::string type;
     std::string identifier;
     ExpressionPtr expression;
+    bool isObserver = false;  // true if declared with `ref` (non-owning observer)
 
-    VariableDeclaration(const std::string& t, const std::string& id, ExpressionPtr expr)
-        : type(t), identifier(id), expression(std::move(expr)) {}
+    VariableDeclaration(const std::string& t, const std::string& id, ExpressionPtr expr,
+                        bool observer = false)
+        : type(t), identifier(id), expression(std::move(expr)), isObserver(observer) {}
 
     std::string toString() const override {
-        return type + " " + identifier + " = " + expression->toString() + ";";
+        return std::string(isObserver ? "ref " : "") + type + " " + identifier +
+               " = " + expression->toString() + ";";
     }
 };
 
@@ -115,6 +118,20 @@ public:
 
     std::string toString() const override {
         return variable + " := " + expression->toString() + ";";
+    }
+};
+
+// A bare expression used as a statement, e.g. `sink(a);`. Its main role for the
+// safety analysis is to make move events at call sites visible to the checker.
+class ExpressionStatement : public Statement {
+public:
+    ExpressionPtr expression;
+
+    explicit ExpressionStatement(ExpressionPtr expr)
+        : expression(std::move(expr)) {}
+
+    std::string toString() const override {
+        return expression->toString() + ";";
     }
 };
 

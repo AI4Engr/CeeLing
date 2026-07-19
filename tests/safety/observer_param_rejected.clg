@@ -1,0 +1,21 @@
+//@ expect: reject
+//@ reason: `ref` observers may not be function parameters; arguments always move.
+//
+// New-syntax fixture. Observers (`ref`) are local-only in the CeeLing subset. Passing
+// an observer into a function would let a borrow escape the caller and outlive its
+// owner, so it is forbidden at the language level: a `ref` parameter is a hard error.
+// Function arguments always transfer ownership (move).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(ref Node n) {   // ERROR: observer cannot be a function parameter
+}
+
+int main() {
+    Node a = new Node(1);
+    return 0;
+}

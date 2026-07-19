@@ -18,7 +18,14 @@ module.exports = grammar({
       $.main_function,
       $.class_declaration,
       $.include_statement,
-      $.if_statement
+      $.if_statement,
+      $.expression_statement
+    ),
+
+    // A bare expression used as a statement, e.g. `sink(a);`.
+    expression_statement: $ => seq(
+      $.expression,
+      ';'
     ),
 
     assignment_statement: $ => seq(
@@ -29,6 +36,7 @@ module.exports = grammar({
     ),
 
     variable_declaration: $ => seq(
+      optional($.observer_qualifier),
       $.type,
       $.identifier,
       '=',
@@ -36,7 +44,13 @@ module.exports = grammar({
       ';'
     ),
 
+    // `ref` marks a non-owning observer: `ref Node b = a;`. Observers are local-only
+    // (they must not appear as function parameters) and are watched by the dangling
+    // checker for use-after-owner-death.
+    observer_qualifier: $ => 'ref',
+
     type: $ => choice(
+      'void',
       'int',
       'float',
       'double',
@@ -69,8 +83,10 @@ module.exports = grammar({
       ';'
     ),
 
+    // C++-style function declaration: `returnType name(params) { ... }`.
+    // (There is no `fn` keyword; functions read like ordinary C++.)
     function_declaration: $ => seq(
-      'fn',
+      $.type,
       $.identifier,
       '(',
       optional($.parameter_list),
@@ -80,7 +96,10 @@ module.exports = grammar({
       '}'
     ),
 
-    main_function: $ => seq(
+    // `main` is just a function whose name is "main"; kept as its own rule (higher
+    // precedence) so it is recognized specifically even though it also matches the
+    // general function_declaration shape.
+    main_function: $ => prec(1, seq(
       $.type,
       'main',
       '(',
@@ -88,7 +107,7 @@ module.exports = grammar({
       '{',
       repeat($.statement),
       '}'
-    ),
+    )),
 
     class_declaration: $ => seq(
       'class',
@@ -130,8 +149,8 @@ module.exports = grammar({
     ),
 
     parameter_list: $ => seq(
-      seq($.type, $.identifier),
-      repeat(seq(',', $.type, $.identifier))
+      seq(optional($.observer_qualifier), $.type, $.identifier),
+      repeat(seq(',', optional($.observer_qualifier), $.type, $.identifier))
     ),
 
     if_statement: $ => seq(

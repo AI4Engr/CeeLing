@@ -39,6 +39,7 @@ include_directories(
 set(CORE_SOURCES
     src/core/generator/cpp_generator.cpp
     src/core/generator/smart_pointer_analyzer.cpp
+    src/core/generator/dangling_checker.cpp
 )
 
 # Optional Tree-sitter support
@@ -156,10 +157,9 @@ if(NOT EMSCRIPTEN)
     set_tests_properties(cling_test_bidirectional_analysis_report PROPERTIES
         DEPENDS cling_test_bidirectional_analysis)
 
-    # Unsupported/legacy syntax should fail fast instead of silently succeeding.
-    add_test(NAME cling_test_legacy_syntax_rejected
-        COMMAND cling --cpp ${CMAKE_BINARY_DIR}/test_output_legacy.cpp ${CMAKE_SOURCE_DIR}/regression/fixtures/example.clg)
-    set_tests_properties(cling_test_legacy_syntax_rejected PROPERTIES WILL_FAIL TRUE)
+    # Basic function example in valid CeeLing syntax should transpile successfully.
+    add_test(NAME cling_test_example_transpiles
+        COMMAND cling --cpp ${CMAKE_BINARY_DIR}/test_output_example.cpp ${CMAKE_SOURCE_DIR}/regression/fixtures/example.clg)
 
     # Memory-safety contract suite (Phase 0 harness). The runner scans fixtures tagged
     # with `//@ expect: reject|accept`, runs cling, and asserts the exit code. Missed

@@ -43,6 +43,7 @@ Each chapter: *the C++ problem → how CeeLing solves it → proof by example.*
 15. [Iterator Invalidation](15-iterator-invalidation.md) — the C++-specific trap
 16. [Dangling Views: `string_view`, `span`, Eigen](16-views-and-eigen.md)
 17. [Sealed Escape Hatches](17-escape-hatches.md) — `.get()`, casts, raw `new`
+18. [Implementation Notes](18-implementation-notes.md) — what is actually built, and how
 
 ## Part III — Context
 
