@@ -280,10 +280,26 @@ text-matching approach could produce reliably for chains like this, no matter ho
 special cases were added, because the question it needs answered ("what type is this
 expression?") isn't one text patterns can answer.
 
+### Linking vs. handing off
+
+`a.b = x;` (storing into a field, like linking a node into a list) and `a = x;`
+(assigning a plain variable) look similar but mean different things. The second one
+hands ownership of `x` over — `x` shouldn't be used again afterward. The first one
+just links `x` in; the caller may well keep using `x` right after, which is completely
+normal for structures like linked lists (`node.next = other; other.prev = node;`). The
+generator treats these differently: only the plain-variable case triggers an automatic
+move.
+
+Getting this distinction wrong at first caused a real bug: a value handed off inside
+one branch of an `if`/`else` was briefly treated as unusable even in code paths where
+that branch never ran, which wrongly rejected valid programs. That's fixed now — a
+move that happens conditionally, inside just one branch, isn't assumed to have
+happened once you're past the `if`.
+
 ### Status
 
 The new generator is available today as an opt-in mode; the older text-based generator
-is still the default while a few remaining gaps are closed (assigning to a field
-through a chain, returning objects by value, and a couple of smaller cases). Both
-generators agree on what the safety checker accepts or rejects — this is purely about
-how accepted code gets turned into C++.
+is still the default while a few remaining gaps are closed (returning objects by
+value, and a couple of smaller cases). Both generators agree on what the safety
+checker accepts or rejects — this is purely about how accepted code gets turned into
+C++.

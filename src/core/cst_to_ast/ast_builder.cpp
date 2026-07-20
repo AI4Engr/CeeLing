@@ -206,13 +206,27 @@ StatementPtr ASTBuilder::buildVariableDeclaration(TSNode node, const std::string
 }
 
 StatementPtr ASTBuilder::buildAssignmentStatement(TSNode node, const std::string& source) {
-    // assignment_statement: identifier ":=" expression ";"
-    TSNode identifier_node = ts_node_child(node, 0);
-    TSNode expression_node = ts_node_child(node, 2);
-
-    std::string varName = getNodeText(identifier_node, source);
+    // assignment_statement: (identifier | member_access) "=" expression ";"
+    TSNode lhs_node = ts_node_child(node, 0);
+    TSNode expression_node = ts_node_child(node, 2);  // skip "="
     auto expr = buildExpression(expression_node, source);
 
+    if (strcmp(ts_node_type(lhs_node), "member_access") == 0) {
+        // Member target `a.b = ...`. Keep the whole MemberAccess as `target`; the root
+        // object name (leftmost identifier) goes to `variable` for the analysis passes.
+        auto target = buildMemberAccess(lhs_node, source);
+        std::string rootName;
+        for (const Expression* e = target.get(); e != nullptr; ) {
+            if (auto id = dynamic_cast<const Identifier*>(e)) { rootName = id->name; break; }
+            if (auto m = dynamic_cast<const MemberAccess*>(e)) { e = m->object.get(); continue; }
+            break;
+        }
+        auto stmt = std::make_unique<AssignmentStatement>(rootName, std::move(expr));
+        stmt->target = std::move(target);
+        return stmt;
+    }
+
+    std::string varName = getNodeText(lhs_node, source);
     return std::make_unique<AssignmentStatement>(varName, std::move(expr));
 }
 

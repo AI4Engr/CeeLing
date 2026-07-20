@@ -18,7 +18,8 @@ now real — plus a new AST-driven code generator running alongside the old one.
   covered.
 - **A new code generator** (opt-in today) produces correct C++ for cases the old one
   couldn't handle reliably — field access inside methods, chained access like
-  `a.b.c()`, and automatic `std::move`. See Chapter 18, Step 6.
+  `a.b.c()`, assigning into a field (`a.b = x;`), and automatic `std::move`. See
+  Chapter 18, Step 6.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**
@@ -26,9 +27,9 @@ now real — plus a new AST-driven code generator running alongside the old one.
 - No escape-hatch bans yet (`.get()`, casts, raw pointers) — Phase 1.
 - Branch merges (`if`/`else` arms are checked independently, not merged), library
   summaries, iterator invalidation, `string_view`/Eigen dangling — still open.
-- `AstEmitter` is not yet the default generator: member-target assignment (`a.b = x;`),
-  return-value moves, and custom `#include` passthrough are still missing. The regex
-  `CppGenerator` remains the default until parity is reached.
+- `AstEmitter` is not yet the default generator: returning objects by value and custom
+  `#include` passthrough are still missing. The regex `CppGenerator` remains the
+  default until parity is reached.
 
 This chapter is the plan; only the "working today" list above is done.
 
@@ -77,8 +78,9 @@ required because C++'s `.`/`->` choice, `this->` field access, and ownership-tra
 points cannot be determined from source text alone (see Chapter 18, Step 6 for the
 concrete failures this caused). Opt-in via `--emit-ast`; coexists with the regex
 generator until coverage matches. Working: classes/functions/main, if/else,
-comparisons, `ref`->reference, `this->`, chained member/method access, auto-move.
-Open: member-target assignment, return-value move, custom includes.
+comparisons, `ref`->reference, `this->`, chained member/method access,
+member-target assignment (`a.b = x;`), auto-move. Open: return-value move, custom
+includes.
 
 ### Phase 4 — Runtime backstops
 Compiler-inserted bounds checks (#11) and null checks (#9) that panic/throw.

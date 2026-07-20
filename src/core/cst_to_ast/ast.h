@@ -114,14 +114,19 @@ public:
 
 class AssignmentStatement : public Statement {
 public:
+    // For a bare-name target (`a = ...`), `variable` holds the name and `target` is
+    // null. For a member target (`a.b = ...`), `target` holds the MemberAccess and
+    // `variable` holds the root object name (`a`) for the analysis passes.
     std::string variable;
     ExpressionPtr expression;
+    ExpressionPtr target;  // non-null iff the LHS is a member access
 
     AssignmentStatement(const std::string& var, ExpressionPtr expr)
         : variable(var), expression(std::move(expr)) {}
 
     std::string toString() const override {
-        return variable + " := " + expression->toString() + ";";
+        std::string lhs = target ? target->toString() : variable;
+        return lhs + " := " + expression->toString() + ";";
     }
 };
 

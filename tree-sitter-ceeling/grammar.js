@@ -28,8 +28,9 @@ module.exports = grammar({
       ';'
     ),
 
+    // Assignment target is a bare name (`a = ...`) or a member (`a.b = ...`).
     assignment_statement: $ => seq(
-      $.identifier,
+      choice($.identifier, $.member_access),
       '=',
       $.expression,
       ';'

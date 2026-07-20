@@ -216,13 +216,25 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
                 << emitExpression(decl->expression.get()) << ";\n";
         }
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
-        const std::string lhs = isCurrentField(assign->variable)
-                                    ? "this->" + assign->variable
-                                    : assign->variable;
+        // Left-hand side: a member target (`a.b = ...`) is emitted via the member-access
+        // path (so `.`/`->` and this-> resolve); a bare name gets this-> if it's a field.
+        std::string lhs;
+        std::string ptrVar = assign->variable;  // name used to pick the target's ptr kind
+        const bool memberTarget = dynamic_cast<const MemberAccess*>(assign->target.get()) != nullptr;
+        if (auto m = dynamic_cast<const MemberAccess*>(assign->target.get())) {
+            lhs = emitExpression(m);
+            ptrVar = m->member;  // the field being assigned
+        } else {
+            lhs = isCurrentField(assign->variable) ? "this->" + assign->variable
+                                                   : assign->variable;
+        }
         std::string rhs;
         if (auto neww = dynamic_cast<const NewExpression*>(assign->expression.get())) {
-            // `field = new T(...)` -> field = make_*<T>(...) with the field's ptr kind.
-            rhs = factoryFor(neww->className, assign->variable, neww->arguments);
+            // `target = new T(...)` -> make_*<T>(...) with the target field's ptr kind.
+            rhs = factoryFor(neww->className, ptrVar, neww->arguments);
+        } else if (memberTarget) {
+            // `a.b = obj;` links/shares into a field — it does not consume `obj`.
+            rhs = emitExpression(assign->expression.get());
         } else {
             // `x = a;` transfers ownership of an object local.
             rhs = emitMovedArg(assign->expression.get());

@@ -170,7 +170,14 @@ void DanglingChecker::processStatement(const Statement* stmt) {
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
         checkExpressionUses(assign->expression.get());
 
-        if (observerNames_.find(assign->variable) != observerNames_.end()) {
+        if (assign->target) {
+            // Member target `a.b = ...`: this stores into / links a field. It does NOT
+            // reassign or move the root object, and it does NOT consume the RHS — storing
+            // an object into a field is a link/share, not an ownership handoff that
+            // abandons the source (a linked-list node is used again right after linking).
+            // Just check the receiver and RHS aren't already dead.
+            checkExpressionUses(assign->target.get());
+        } else if (observerNames_.find(assign->variable) != observerNames_.end()) {
             // Assigning to an observer rebinds what it observes: `b = inner;`.
             danglingObservers_.erase(assign->variable);
             if (std::string owner = asObjectLocalName(assign->expression.get());
@@ -203,9 +210,15 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         checkExpressionUses(ret->expression.get());
     } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
         checkExpressionUses(ifs->condition.get());
-        // Each branch is its own nested block: reuse the enclosing scope so outer
-        // observers stay visible, then kill owners declared inside the branch when it
-        // ends. Branches are analyzed independently (no path merging yet).
+        // A branch runs conditionally, so a *move* that happens inside a branch is not
+        // certain on the path after the `if`. We snapshot moved-from state before the
+        // branches and restore it afterward, so a conditional move (e.g. `head = newNode`
+        // in one arm) does not leak out and wrongly flag a later use of `newNode`. (This
+        // errs toward acceptance across branches; a precise path-merge is future work.)
+        // We deliberately do NOT roll back dangling-observer state: an owner dying at a
+        // branch's scope exit is a real death, and a later use of an observer of it must
+        // still be rejected (conservative — see the scope-exit fixture).
+        const std::set<std::string> movedBefore = movedFrom_;
         {
             const std::set<std::string> ownersBefore = objectLocals_;
             for (const auto& inner : ifs->body) {
@@ -220,6 +233,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             }
             endBlockScope(ownersBefore);
         }
+        movedFrom_ = movedBefore;
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         // A bare expression statement, e.g. `sink(a);`. First check uses, then
         // apply move effects: a user function call moves its object-typed args.

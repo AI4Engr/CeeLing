@@ -25,12 +25,13 @@ namespace cling {
 // Known gaps (verified against fixtures; each is a follow-up increment):
 //   * custom `#include` lines are dropped (only std headers are emitted)
 //   * native C++ stream output (`std::cout << x`) is not parsed — use `print(x)`
-//   * member-target assignment `a.b = x;` is not parsed (grammar: lhs must be a name)
+//   * return-value move for functions that return an object
 // Done: functions/classes/main, if/else, comparisons, methods with `this->` field
-//   access, nested member access and method calls (`a.b->c(...)`), ref->reference,
-//   print->cout, new->make_*, smart-pointer types, and auto-`std::move` of object
-//   arguments (safe because the dangling checker forbids use-after-move). Programs
-//   without the gaps above emit COMPILABLE C++ (verified with g++).
+//   access, nested member access and method calls (`a.b->c(...)`), member-target
+//   assignment (`a.b = x;`), ref->reference, print->cout, new->make_*, smart-pointer
+//   types, and auto-`std::move` of object arguments (safe because the dangling checker
+//   forbids use-after-move). Programs without the gaps above emit COMPILABLE C++
+//   (verified with g++).
 class AstEmitter {
 public:
     explicit AstEmitter(const SmartPointerAnalyzer& analyzer) : analyzer_(analyzer) {}
