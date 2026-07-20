@@ -203,13 +203,23 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         checkExpressionUses(ret->expression.get());
     } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
         checkExpressionUses(ifs->condition.get());
-        // Nested block: reuse the enclosing scope so outer observers stay visible,
-        // then kill owners declared inside the block when it ends.
-        const std::set<std::string> ownersBefore = objectLocals_;
-        for (const auto& inner : ifs->body) {
-            processStatement(inner.get());
+        // Each branch is its own nested block: reuse the enclosing scope so outer
+        // observers stay visible, then kill owners declared inside the branch when it
+        // ends. Branches are analyzed independently (no path merging yet).
+        {
+            const std::set<std::string> ownersBefore = objectLocals_;
+            for (const auto& inner : ifs->body) {
+                processStatement(inner.get());
+            }
+            endBlockScope(ownersBefore);
         }
-        endBlockScope(ownersBefore);
+        if (!ifs->elseBody.empty()) {
+            const std::set<std::string> ownersBefore = objectLocals_;
+            for (const auto& inner : ifs->elseBody) {
+                processStatement(inner.get());
+            }
+            endBlockScope(ownersBefore);
+        }
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         // A bare expression statement, e.g. `sink(a);`. First check uses, then
         // apply move effects: a user function call moves its object-typed args.

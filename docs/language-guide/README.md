@@ -19,9 +19,11 @@ Every **problem chapter** (10–17) follows the same three-part structure:
 
 ## Status
 
-These safety features are the **design target**, not the current state. As of now the
-compiler only performs smart-pointer *type selection* and does **no** lifetime
-checking. See [Chapter 9](09-status-and-roadmap.md).
+Most safety features here are still the **design target**, but a real slice works
+today: using a moved-away or dangling `ref` observer is caught at compile time, and a
+new code generator is producing correct C++ for cases the original one couldn't. See
+[Chapter 9](09-status-and-roadmap.md) for the honest breakdown and
+[Chapter 18](18-implementation-notes.md) for how it works.
 
 ## Part I — Foundations
 

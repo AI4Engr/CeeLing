@@ -40,6 +40,7 @@ set(CORE_SOURCES
     src/core/generator/cpp_generator.cpp
     src/core/generator/smart_pointer_analyzer.cpp
     src/core/generator/dangling_checker.cpp
+    src/core/generator/ast_emitter.cpp
 )
 
 # Optional Tree-sitter support

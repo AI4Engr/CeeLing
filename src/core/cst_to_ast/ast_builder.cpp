@@ -294,26 +294,32 @@ ExpressionPtr ASTBuilder::buildNumber(TSNode node, const std::string& source) {
 StatementPtr ASTBuilder::buildFunctionDeclaration(TSNode node, const std::string& source) {
     // function_declaration: type identifier "(" optional(parameter_list) ")" "{" ... "}"
     // C++-style: child(0) is the return type, child(1) is the function name.
+    std::string returnType = getNodeText(ts_node_child(node, 0), source);
     std::string funcName = getNodeText(ts_node_child(node, 1), source);
-    
-    std::vector<std::string> parameters;
+
+    std::vector<std::pair<std::string, std::string>> parameters;
     std::vector<StatementPtr> body;
-    
-    // Parse parameters if they exist
+
     uint32_t childCount = ts_node_child_count(node);
     for (uint32_t i = 0; i < childCount; i++) {
         TSNode child = ts_node_child(node, i);
         const char* childType = ts_node_type(child);
-        
+
         if (strcmp(childType, "parameter_list") == 0) {
             rejectObserverParams(child);
+            // Pair each `type` node with the following `identifier` node.
             uint32_t paramCount = ts_node_child_count(child);
+            std::string pendingType;
             for (uint32_t j = 0; j < paramCount; j++) {
                 TSNode paramNode = ts_node_child(child, j);
-                if (strcmp(ts_node_type(paramNode), "identifier") == 0) {
-                    parameters.push_back(getNodeText(paramNode, source));
+                const char* pt = ts_node_type(paramNode);
+                if (strcmp(pt, "type") == 0) {
+                    pendingType = getNodeText(paramNode, source);
+                } else if (strcmp(pt, "identifier") == 0 && !pendingType.empty()) {
+                    parameters.push_back({pendingType, getNodeText(paramNode, source)});
+                    pendingType.clear();
                 }
-                // Skip comma tokens
+                // Skip commas / observer_qualifier (already rejected).
             }
         } else if (strcmp(childType, "statement") == 0) {
             auto stmt = buildStatement(child, source);
@@ -322,35 +328,44 @@ StatementPtr ASTBuilder::buildFunctionDeclaration(TSNode node, const std::string
             }
         }
     }
-    
-    return std::make_unique<FunctionDeclaration>(funcName, std::move(parameters), std::move(body));
+
+    return std::make_unique<FunctionDeclaration>(returnType, funcName,
+                                                 std::move(parameters), std::move(body));
 }
 
 ExpressionPtr ASTBuilder::buildFunctionCall(TSNode node, const std::string& source) {
-    // function_call: identifier "(" optional(argument_list) ")"
-    std::string funcName = getNodeText(ts_node_child(node, 0), source);
+    // function_call: (identifier | member_access) "(" optional(argument_list) ")"
+    TSNode calleeNode = ts_node_child(node, 0);
+    const bool isMethodCall = strcmp(ts_node_type(calleeNode), "member_access") == 0;
+
     std::vector<ExpressionPtr> arguments;
-    
     uint32_t childCount = ts_node_child_count(node);
     for (uint32_t i = 0; i < childCount; i++) {
         TSNode child = ts_node_child(node, i);
-        const char* childType = ts_node_type(child);
-        
-        if (strcmp(childType, "argument_list") == 0) {
+        if (strcmp(ts_node_type(child), "argument_list") == 0) {
             uint32_t argCount = ts_node_child_count(child);
             for (uint32_t j = 0; j < argCount; j++) {
                 TSNode argNode = ts_node_child(child, j);
                 if (strcmp(ts_node_type(argNode), "expression") == 0) {
-                    auto expr = buildExpression(argNode, source);
-                    if (expr) {
+                    if (auto expr = buildExpression(argNode, source)) {
                         arguments.push_back(std::move(expr));
                     }
                 }
-                // Skip comma tokens
             }
         }
     }
-    
+
+    if (isMethodCall) {
+        // `recv.method(args)` — keep the receiver MemberAccess as `callee`.
+        auto callee = buildMemberAccess(calleeNode, source);
+        // function_name is the method name (the member), for readers that ignore callee.
+        std::string method = getNodeText(ts_node_child(calleeNode, 2), source);
+        auto fc = std::make_unique<FunctionCall>(method, std::move(arguments));
+        fc->callee = std::move(callee);
+        return fc;
+    }
+
+    std::string funcName = getNodeText(calleeNode, source);
     return std::make_unique<FunctionCall>(funcName, std::move(arguments));
 }
 
@@ -552,37 +567,36 @@ StatementPtr ASTBuilder::buildMemberVariableDeclaration(TSNode node, const std::
 }
 
 StatementPtr ASTBuilder::buildIfStatement(TSNode node, const std::string& source) {
-    // if_statement: "if" "(" expression ")" "{" repeat(statement) "}"
+    // if_statement: "if" "(" expression ")" "{" stmts "}"
+    //               [ "else" ( if_statement | "{" stmts "}" ) ]
     TSNode condition_node = ts_node_child(node, 2); // Skip "if" and "("
     auto condition = buildExpression(condition_node, source);
 
     std::vector<StatementPtr> body;
+    std::vector<StatementPtr> elseBody;
 
-    // Parse all children to find statements in the body
+    // The token `else` separates the then-statements from the else-branch. Statements
+    // (and a nested if_statement for `else if`) before it go to body, after it to else.
     uint32_t childCount = ts_node_child_count(node);
-    bool inBody = false;
+    bool afterElse = false;
     for (uint32_t i = 0; i < childCount; i++) {
         TSNode child = ts_node_child(node, i);
         const char* childType = ts_node_type(child);
-        std::string childText = getNodeText(child, source);
 
-        if (childText == "{") {
-            inBody = true;
-            continue;
-        }
-        if (childText == "}") {
-            break;
-        }
+        if (getNodeText(child, source) == "else") { afterElse = true; continue; }
 
-        if (inBody && strcmp(childType, "statement") == 0) {
-            auto stmt = buildStatement(child, source);
-            if (stmt) {
-                body.push_back(std::move(stmt));
-            }
-        }
+        const bool isStmt = strcmp(childType, "statement") == 0;
+        const bool isNestedIf = strcmp(childType, "if_statement") == 0;  // `else if`
+        if (!isStmt && !isNestedIf) continue;
+
+        auto built = buildStatement(child, source);
+        if (!built) continue;
+        (afterElse ? elseBody : body).push_back(std::move(built));
     }
 
-    return std::make_unique<IfStatement>(std::move(condition), std::move(body));
+    auto result = std::make_unique<IfStatement>(std::move(condition), std::move(body));
+    result->elseBody = std::move(elseBody);
+    return result;
 }
 
 ExpressionPtr ASTBuilder::buildMemberAccess(TSNode node, const std::string& source) {

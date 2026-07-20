@@ -115,8 +115,13 @@ module.exports = grammar({
       '{',
       'public',
       ':',
-      repeat(choice($.member_variable_declaration, $.method_declaration)),
-      $.constructor_declaration,
+      // Members, methods and constructors may appear in any order (a constructor is
+      // no longer required to be last), matching ordinary C++ class bodies.
+      repeat(choice(
+        $.member_variable_declaration,
+        $.method_declaration,
+        $.constructor_declaration
+      )),
       '}',
       optional(';')
     ),
@@ -153,15 +158,22 @@ module.exports = grammar({
       repeat(seq(',', optional($.observer_qualifier), $.type, $.identifier))
     ),
 
-    if_statement: $ => seq(
+    if_statement: $ => prec.right(seq(
       'if',
       '(',
       $.expression,
       ')',
       '{',
       repeat($.statement),
-      '}'
-    ),
+      '}',
+      optional(seq(
+        'else',
+        choice(
+          $.if_statement,                          // else if ...
+          seq('{', repeat($.statement), '}')       // else { ... }
+        )
+      ))
+    )),
 
     expression: $ => choice(
       $.binary_expression,
@@ -171,7 +183,11 @@ module.exports = grammar({
       $.primary_expression
     ),
 
-    binary_expression: $ => prec.left(1, seq($.primary_expression, choice('+', '-'), $.primary_expression)),
+    binary_expression: $ => prec.left(1, seq(
+      $.primary_expression,
+      choice('+', '-', '==', '!=', '<', '>', '<=', '>='),
+      $.primary_expression
+    )),
 
     new_expression: $ => seq(
       'new',
@@ -187,9 +203,12 @@ module.exports = grammar({
       seq('(', $.expression, ')')
     ),
 
+    // Member access is written with `.` in CeeLing source (Java-like). `->` is also
+    // accepted for compatibility. The generator lowers `.` on smart-pointer objects
+    // to `->` in the emitted C++.
     member_access: $ => seq(
       $.primary_expression,
-      '->',
+      choice('.', '->'),
       $.identifier
     ),
 

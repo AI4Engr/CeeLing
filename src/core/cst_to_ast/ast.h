@@ -75,6 +75,10 @@ class FunctionCall : public Expression {
 public:
     std::string function_name;
     std::vector<ExpressionPtr> arguments;
+    // For method calls `recv.method(args)`, `callee` holds the `recv.method`
+    // MemberAccess so the receiver's access operator can be lowered correctly.
+    // Null for a plain call `f(args)` (use function_name).
+    ExpressionPtr callee;
 
     FunctionCall(const std::string& name, std::vector<ExpressionPtr> args)
         : function_name(name), arguments(std::move(args)) {}
@@ -173,20 +177,24 @@ public:
 
 class FunctionDeclaration : public Statement {
 public:
+    std::string returnType;
     std::string name;
-    std::vector<std::string> parameters;
+    // (type, name) pairs, like MethodDeclaration. C++-style: `int f(int a, Node b)`.
+    std::vector<std::pair<std::string, std::string>> parameters;
     std::vector<StatementPtr> body;
 
-    FunctionDeclaration(const std::string& func_name,
-                       std::vector<std::string> params,
-                       std::vector<StatementPtr> statements)
-        : name(func_name), parameters(std::move(params)), body(std::move(statements)) {}
+    FunctionDeclaration(const std::string& retType,
+                        const std::string& func_name,
+                        std::vector<std::pair<std::string, std::string>> params,
+                        std::vector<StatementPtr> statements)
+        : returnType(retType), name(func_name),
+          parameters(std::move(params)), body(std::move(statements)) {}
 
     std::string toString() const override {
-        std::string result = "fn " + name + "(";
+        std::string result = returnType + " " + name + "(";
         for (size_t i = 0; i < parameters.size(); ++i) {
             if (i > 0) result += ", ";
-            result += parameters[i];
+            result += parameters[i].first + " " + parameters[i].second;
         }
         result += ") {\n";
         for (const auto& stmt : body) {
@@ -251,6 +259,9 @@ class IfStatement : public Statement {
 public:
     ExpressionPtr condition;
     std::vector<StatementPtr> body;
+    // `else` branch. For `else if`, this holds a single nested IfStatement; for a
+    // plain `else { ... }`, it holds that block's statements. Empty if no else.
+    std::vector<StatementPtr> elseBody;
 
     IfStatement(ExpressionPtr cond, std::vector<StatementPtr> statements)
         : condition(std::move(cond)), body(std::move(statements)) {}
@@ -261,6 +272,13 @@ public:
             result += "    " + stmt->toString() + "\n";
         }
         result += "}";
+        if (!elseBody.empty()) {
+            result += " else {\n";
+            for (const auto& stmt : elseBody) {
+                result += "    " + stmt->toString() + "\n";
+            }
+            result += "}";
+        }
         return result;
     }
 };

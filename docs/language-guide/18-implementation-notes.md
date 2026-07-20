@@ -141,8 +141,6 @@ Now two things fall out naturally, reusing the same "who is alive" tracking:
 This is the "restricted subset" philosophy in action: **the cheapest way to make a
 danger safe is to remove it from the language**, not to detect it.
 
-## What is deliberately not done yet
-
 ## Step 5 — Scope-exit deaths
 
 The last new-syntax case: an owner declared inside a `{ }` block dies when the block
@@ -179,3 +177,113 @@ handle:
 
 Each of these lights up one more of the red fixtures, using the same small engine —
 no rewrite, just more cases fed into the same "who is alive" table.
+
+## Step 6 — Generating C++ from structure, not from text
+
+Everything above is the *checker* — the part that decides accept/reject. This step is
+about the *generator* — the part that turns accepted CeeLing into C++.
+
+### The problem: C++ can't be generated correctly by find-and-replace
+
+The first version of the generator didn't look at the parsed program at all — it
+edited the *source text* directly, using pattern-matching rules like "find
+`ClassName varName;` and replace it with `std::unique_ptr<ClassName> varName;`."
+
+Text patterns can't see *meaning*, and C++ needs meaning to translate correctly:
+
+- `next.grow(x)` (a method call) and `next.v` (a field read) look identical as text
+  — "word, dot, word" — but a chain like `a.b.c()` needs `->` inserted at the right
+  spots, which depends on knowing what type each piece is.
+- The same word means different things in different places: `next` inside a class's
+  own method is a field (`this->next`); the same word elsewhere is just a variable.
+  Text search has no idea which one it's looking at.
+- Deciding when to hand off ownership (`std::move`) depends on whether something is an
+  object or a plain number — information the text itself doesn't carry.
+
+The old approach patched around this with growing lists of special cases, and it could
+never fully solve the general problem, because "what type is this?" isn't something
+you can answer by matching text patterns — it requires understanding the program's
+structure.
+
+### How CeeLing solves it: generate from the parsed structure
+
+The new generator (`AstEmitter`) works on the same parsed representation of the
+program that the safety checker uses, instead of raw text. Because it knows the real
+structure — what class a method belongs to, what type each variable is, what a field
+resolves to — it can answer the questions text-matching couldn't:
+
+- It knows which bare names are fields of the current class, so it can correctly add
+  `this->` only where needed.
+- It can follow a chain of accesses (`a.b.c`) and resolve each step's type, so `->`
+  gets inserted correctly at arbitrary depth — not just for one hop.
+- It knows when an argument is being handed off to another function, so it can safely
+  insert `std::move` — safely, because the checker has already proven the value isn't
+  used again afterward.
+
+### Proof by example
+
+Take a small linked structure with a method that recurses on a field:
+
+```cpp
+// CeeLing
+class Node {
+public:
+    int v;
+    Node next;
+    Node(int x) { v = x; }
+    void grow(int x) {
+        if (next) {
+            next.grow(x);
+        } else {
+            next = new Node(x);
+        }
+    }
+};
+
+int main() {
+    Node a = new Node(1);
+    a.grow(2);
+    return 0;
+}
+```
+
+The AST-driven emitter produces:
+
+```cpp
+class Node {
+public:
+    int v;
+    std::unique_ptr<Node> next;
+Node(int x) {
+    this->v = x;
+}
+void grow(int x) {
+    if (this->next) {
+        this->next->grow(x);
+    } else {
+        this->next = std::make_unique<Node>(x);
+    }
+}
+};
+
+int main() {
+    std::unique_ptr<Node> a = std::make_unique<Node>(1);
+    a->grow(2);
+    return 0;
+}
+```
+
+`next` becomes `this->next` because the generator knows it's inside `Node`'s method.
+`next.grow(x)` becomes `this->next->grow(x)` because it resolves `next`'s type at both
+steps of the chain. This is real C++ that compiles as-is — not something the old
+text-matching approach could produce reliably for chains like this, no matter how many
+special cases were added, because the question it needs answered ("what type is this
+expression?") isn't one text patterns can answer.
+
+### Status
+
+The new generator is available today as an opt-in mode; the older text-based generator
+is still the default while a few remaining gaps are closed (assigning to a field
+through a chain, returning objects by value, and a couple of smaller cases). Both
+generators agree on what the safety checker accepts or rejects — this is purely about
+how accepted code gets turned into C++.

@@ -1,6 +1,8 @@
 #include "core/cst_to_ast/ast.h"
 #include "core/generator/cpp_generator.h"
 #include "core/generator/dangling_checker.h"
+#include "core/generator/ast_emitter.h"
+#include "core/generator/smart_pointer_analyzer.h"
 #include <iostream>
 #include <vector>
 #include <fstream>
@@ -71,11 +73,14 @@ int main(int argc, char* argv[]) {
     std::string inputFile;
     std::string outputFile;
     bool compileToCpp = false;
+    bool useAstEmitter = false;  // experimental AST-driven codegen (opt-in)
 
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--cpp") {
+        if (arg == "--emit-ast") {
+            useAstEmitter = true;
+        } else if (arg == "--cpp") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: --cpp requires an output filename" << std::endl;
                 showUsage(argv[0]);
@@ -150,8 +155,17 @@ int main(int argc, char* argv[]) {
         }
 
         // Generate C++ code
-        CppGenerator generator;
-        std::string cppCode = generator.generateCpp(*program, source);
+        std::string cppCode;
+        if (useAstEmitter) {
+            // Experimental AST-driven generator (the new architecture).
+            SmartPointerAnalyzer analyzer;
+            analyzer.analyzeProgram(*program, source);
+            AstEmitter emitter(analyzer);
+            cppCode = emitter.emit(*program);
+        } else {
+            CppGenerator generator;
+            cppCode = generator.generateCpp(*program, source);
+        }
 
         // Write to output file
         std::ofstream outFile(outputFile);
