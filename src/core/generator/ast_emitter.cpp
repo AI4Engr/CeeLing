@@ -140,10 +140,10 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
                 out << indentStr(1) << var->type << " " << var->identifier << ";\n";
             }
         } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
-            emitFunction("", ctor->name, ctor->parameters, ctor->body, out, cls.name);
+            emitFunction("", ctor->name, ctor->parameters, ctor->body, out, cls.name, 1);
         } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
             emitFunction(method->returnType, method->name, method->parameters, method->body,
-                         out, cls.name);
+                         out, cls.name, 1);
         }
     }
     out << "};\n\n";
@@ -152,7 +152,7 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
 void AstEmitter::emitFunction(const std::string& returnType, const std::string& name,
                               const std::vector<std::pair<std::string, std::string>>& params,
                               const std::vector<StatementPtr>& body, std::ostringstream& out,
-                              const std::string& ownerClass) {
+                              const std::string& ownerClass, int baseIndent) {
     // Each function has its own local variable scope; `currentClass_` enables `this->`
     // for field access inside a method/constructor.
     varKinds_.clear();
@@ -182,11 +182,14 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
         }
     }
     sig += ")";
-    out << sig << " {\n";
+    // Class members are indented one level; free functions sit at column 0.
+    const std::string pad = indentStr(baseIndent);
+    out << pad << sig << " {\n";
     for (const auto& stmt : body) {
-        emitStatement(stmt.get(), out, 1);
+        emitStatement(stmt.get(), out, baseIndent + 1);
     }
-    out << "}\n\n";
+    out << pad << "}\n";
+    if (baseIndent == 0) out << "\n";  // blank line only between top-level definitions
 
     currentClass_ = savedClass;
 }
@@ -339,6 +342,10 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         }
         return "(" + emitExpression(bin->left.get()) + " " + bin->operator_str + " "
                + emitExpression(bin->right.get()) + ")";
+    }
+    if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+        // Prefix operator: `!x`, `-x`.
+        return un->operator_str + emitExpression(un->operand.get());
     }
     if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
         // `new T(...)` outside a typed declaration: default to make_shared.

@@ -91,6 +91,20 @@ public:
     }
 };
 
+// A unary prefix expression, e.g. `!left` or `-x`.
+class UnaryExpression : public Expression {
+public:
+    std::string operator_str;
+    ExpressionPtr operand;
+
+    UnaryExpression(const std::string& op, ExpressionPtr expr)
+        : operator_str(op), operand(std::move(expr)) {}
+
+    std::string toString() const override {
+        return operator_str + operand->toString();
+    }
+};
+
 class FunctionCall : public Expression {
 public:
     std::string function_name;

@@ -38,6 +38,7 @@ private:
     ExpressionPtr buildFunctionCall(TSNode node, const std::string& source);
     ExpressionPtr buildNewExpression(TSNode node, const std::string& source);
     ExpressionPtr buildBinaryExpression(TSNode node, const std::string& source);
+    ExpressionPtr buildUnaryExpression(TSNode node, const std::string& source);
     ExpressionPtr buildMemberAccess(TSNode node, const std::string& source);
 
     std::string getNodeText(TSNode node, const std::string& source);

@@ -269,6 +269,8 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
         result = buildNewExpression(node, source);
     } else if (strcmp(node_type, "binary_expression") == 0) {
         result = buildBinaryExpression(node, source);
+    } else if (strcmp(node_type, "unary_expression") == 0) {
+        result = buildUnaryExpression(node, source);
     } else if (strcmp(node_type, "member_access") == 0) {
         result = buildMemberAccess(node, source);
     } else if (strcmp(node_type, "primary_expression") == 0) {
@@ -304,6 +306,18 @@ ExpressionPtr ASTBuilder::buildStringLiteral(TSNode node, const std::string& sou
     // string_literal: a double-quoted token; keep it verbatim (quotes included).
     std::string text = getNodeText(node, source);
     return std::make_unique<StringLiteral>(text);
+}
+
+ExpressionPtr ASTBuilder::buildUnaryExpression(TSNode node, const std::string& source) {
+    // unary_expression: operator operand. The operator token ('!' or '-') is inlined,
+    // so the only named child is the operand; recover the operator from the leading text.
+    TSNode operand_node = ts_node_child(node, ts_node_child_count(node) - 1);
+    auto operand = buildExpression(operand_node, source);
+    if (!operand) return nullptr;
+
+    std::string full = getNodeText(node, source);
+    std::string op = full.empty() ? "!" : std::string(1, full[0]);
+    return std::make_unique<UnaryExpression>(op, std::move(operand));
 }
 
 ExpressionPtr ASTBuilder::buildNumber(TSNode node, const std::string& source) {

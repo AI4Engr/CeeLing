@@ -22,10 +22,6 @@
         },
         {
           "type": "SYMBOL",
-          "name": "comment_statement"
-        },
-        {
-          "type": "SYMBOL",
           "name": "function_declaration"
         },
         {
@@ -175,7 +171,7 @@
         }
       ]
     },
-    "comment_statement": {
+    "comment": {
       "type": "TOKEN",
       "content": {
         "type": "SEQ",
@@ -671,6 +667,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "unary_expression"
+        },
+        {
+          "type": "SYMBOL",
           "name": "function_call"
         },
         {
@@ -692,13 +692,13 @@
       "members": [
         {
           "type": "PREC_LEFT",
-          "value": 2,
+          "value": 3,
           "content": {
             "type": "SEQ",
             "members": [
               {
                 "type": "SYMBOL",
-                "name": "primary_expression"
+                "name": "expression"
               },
               {
                 "type": "CHOICE",
@@ -710,7 +710,29 @@
                   {
                     "type": "STRING",
                     "value": "-"
-                  },
+                  }
+                ]
+              },
+              {
+                "type": "SYMBOL",
+                "name": "expression"
+              }
+            ]
+          }
+        },
+        {
+          "type": "PREC_LEFT",
+          "value": 2,
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "expression"
+              },
+              {
+                "type": "CHOICE",
+                "members": [
                   {
                     "type": "STRING",
                     "value": "=="
@@ -739,7 +761,7 @@
               },
               {
                 "type": "SYMBOL",
-                "name": "primary_expression"
+                "name": "expression"
               }
             ]
           }
@@ -769,6 +791,32 @@
           }
         }
       ]
+    },
+    "unary_expression": {
+      "type": "PREC",
+      "value": 4,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "STRING",
+                "value": "!"
+              },
+              {
+                "type": "STRING",
+                "value": "-"
+              }
+            ]
+          },
+          {
+            "type": "SYMBOL",
+            "name": "expression"
+          }
+        ]
+      }
     },
     "new_expression": {
       "type": "SEQ",
@@ -992,6 +1040,10 @@
     {
       "type": "PATTERN",
       "value": "\\s"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "comment"
     }
   ],
   "conflicts": [],

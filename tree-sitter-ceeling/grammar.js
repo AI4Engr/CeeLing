@@ -2,7 +2,11 @@ module.exports = grammar({
   name: 'cling',
 
   extras: $ => [
-    /\s/
+    /\s/,
+    // Line comments are skippable anywhere (like whitespace), so a trailing `// ...`
+    // after a member declaration, statement, etc. never breaks parsing. Comments are
+    // dropped from the generated C++, so they carry no AST node.
+    $.comment
   ],
 
   rules: {
@@ -11,7 +15,6 @@ module.exports = grammar({
     statement: $ => choice(
       $.assignment_statement,
       $.variable_declaration,
-      $.comment_statement,
       $.function_declaration,
       $.return_statement,
       $.main_function,
@@ -60,7 +63,7 @@ module.exports = grammar({
       $.identifier  // Add support for custom types (class names)
     ),
 
-    comment_statement: $ => token(seq('//', /.*/)),
+    comment: $ => token(seq('//', /.*/)),
 
     include_statement: $ => seq(
       '#include',
@@ -170,6 +173,7 @@ module.exports = grammar({
 
     expression: $ => choice(
       $.binary_expression,
+      $.unary_expression,
       $.function_call,
       $.new_expression,
       $.member_access,
@@ -177,21 +181,22 @@ module.exports = grammar({
     ),
 
     binary_expression: $ => choice(
-      // Arithmetic / comparison: two operands, precedence 2 (above stream `<<`).
-      prec.left(2, seq(
-        $.primary_expression,
-        choice('+', '-', '==', '!=', '<', '>', '<=', '>='),
-        $.primary_expression
-      )),
+      // Arithmetic `+ -`: highest, left-associative, so `a + b + c` chains. Operands are
+      // full expressions (not just primaries), enabling nesting like `(a + b) - c`.
+      prec.left(3, seq($.expression, choice('+', '-'), $.expression)),
+      // Comparison/equality: below arithmetic (so `a + b == c` groups as `(a+b) == c`).
+      prec.left(2, seq($.expression, choice('==', '!=', '<', '>', '<=', '>='), $.expression)),
       // Stream output `a << b << c`: n-ary left-associative chaining, precedence 1
       // (below arithmetic, matching C++ so `std::cout << a + b` groups as `<< (a+b)`).
       // `<<` is tokenized explicitly so it never mis-lexes as two `<` comparisons.
-      prec.left(1, seq(
-        $.expression,
-        token('<<'),
-        $.expression
-      ))
+      prec.left(1, seq($.expression, token('<<'), $.expression))
     ),
+
+    // Unary prefix operators: `!x`, `-x`. Higher precedence than any binary operator.
+    unary_expression: $ => prec(4, seq(
+      choice('!', '-'),
+      $.expression
+    )),
 
     new_expression: $ => seq(
       'new',

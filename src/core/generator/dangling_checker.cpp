@@ -96,6 +96,10 @@ void DanglingChecker::checkExpressionUses(const Expression* expr) {
         checkExpressionUses(bin->right.get());
         return;
     }
+    if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+        checkExpressionUses(un->operand.get());
+        return;
+    }
     if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
         for (const auto& arg : neww->arguments) {
             checkExpressionUses(arg.get());
