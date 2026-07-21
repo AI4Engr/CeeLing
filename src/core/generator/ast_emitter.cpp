@@ -8,10 +8,22 @@ std::string AstEmitter::emit(const Program& program) {
     collectClassNames(program);
 
     std::ostringstream out;
-    // Standard headers for the constructs we lower to.
-    out << "#include <memory>\n";
-    out << "#include <utility>\n";
-    out << "#include <iostream>\n\n";
+    // Headers the lowered constructs always need (smart pointers, std::move, cout),
+    // plus any #include the source itself declared — emitted once, de-duplicated so a
+    // source `#include <memory>` doesn't collide with the one we require.
+    std::set<std::string> emittedIncludes;
+    for (const std::string& hdr : {"#include <memory>", "#include <utility>",
+                                   "#include <iostream>"}) {
+        if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
+    }
+    for (const auto& stmt : program.statements) {
+        if (auto inc = dynamic_cast<const IncludeStatement*>(stmt.get())) {
+            if (emittedIncludes.insert(inc->includeFile).second) {
+                out << inc->includeFile << "\n";
+            }
+        }
+    }
+    out << "\n";
 
     for (const auto& stmt : program.statements) {
         emitTopLevel(stmt.get(), out);
@@ -109,9 +121,8 @@ void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
     } else if (auto mn = dynamic_cast<const MainFunction*>(stmt)) {
         emitFunction(mn->returnType, "main", {}, mn->body, out);
     } else if (dynamic_cast<const IncludeStatement*>(stmt)) {
-        // Standard headers are emitted once at the top of emit(); source-level
-        // include lines are dropped to avoid duplication. (Custom includes are a
-        // known gap for the AST emitter.)
+        // All includes (required std headers + any the source declared) are collected
+        // and emitted once, de-duplicated, at the top of emit(). Nothing to do here.
     } else if (dynamic_cast<const CommentStatement*>(stmt)) {
         // Comments are dropped in the AST-driven output for now.
     }
@@ -149,8 +160,14 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     const std::string savedClass = currentClass_;
     currentClass_ = ownerClass;
 
-    // Signature. Object-typed parameters are passed as shared_ptr (ownership handoff).
-    std::string sig = returnType.empty() ? "" : returnType + " ";
+    // Signature. An object return type is lowered to a smart pointer so the body's
+    // owning local (a smart pointer) can be returned directly (unique_ptr by default:
+    // the callee constructs the object and hands sole ownership back to the caller).
+    std::string sig;
+    if (!returnType.empty()) {
+        sig += isClassType(returnType) ? "std::unique_ptr<" + returnType + "> "
+                                       : returnType + " ";
+    }
     sig += name + "(";
     for (size_t i = 0; i < params.size(); ++i) {
         if (i > 0) sig += ", ";
@@ -244,7 +261,25 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         out << pad << "std::cout << (" << emitExpression(print->expression.get())
             << ") << std::endl;\n";
     } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
-        out << pad << "return " << emitExpression(ret->expression.get()) << ";\n";
+        // Returning an object hands ownership back to the caller. A `new T(...)`
+        // becomes a factory; an owning local is std::move'd out (a smart pointer is
+        // move-only, so this is required, and the dangling checker has proven the
+        // local is not used after the return). Non-object returns (`return 0;`,
+        // `return a.value;`) fall through unchanged.
+        std::string rhs;
+        if (auto neww = dynamic_cast<const NewExpression*>(ret->expression.get())) {
+            // Force make_unique to match the lowered return type (unique_ptr<T>),
+            // rather than asking the analyzer for a named-variable decision.
+            rhs = "std::make_unique<" + neww->className + ">(";
+            for (size_t i = 0; i < neww->arguments.size(); ++i) {
+                if (i > 0) rhs += ", ";
+                rhs += emitExpression(neww->arguments[i].get());
+            }
+            rhs += ")";
+        } else {
+            rhs = emitMovedArg(ret->expression.get());
+        }
+        out << pad << "return " << rhs << ";\n";
     } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
         out << pad << "if (" << emitExpression(ifs->condition.get()) << ") {\n";
         for (const auto& inner : ifs->body) {

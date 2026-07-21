@@ -19,12 +19,27 @@ differentiator. It is **out of scope for v1**. Consequence: **under multithreadi
 memory-safety promise does not hold, and the compiler will not stop you.** This is the
 largest gap, and it is by design.
 
-### 2. Aliasing guarantees — not attempted
+### 2. Aliasing guarantees — deliberately not attempted
 
 Rust's `&mut` exclusivity gives (a) aggressive `noalias` optimization and (b)
 prevention of mutable-aliasing logic bugs. CeeLing allows multiple aliases and gets
-neither. Not fatal to memory safety (liveness checks cover dangling), but it is part
-of Rust's *correctness* story that CeeLing lacks.
+neither — and this is **a design choice, not a gap CeeLing failed to close.**
+
+In single-threaded code, two references pointing at the same object is normal, not
+exceptional: a linked list's `next`/`prev`, a cache entry and the collection that owns
+it, an observer watching a shared node — these all *depend* on aliasing to work.
+Rust's `&mut` exclusivity forces even single-threaded programs to route around this
+(`RefCell`, `Rc<RefCell<...>>`) to express something that was never unsafe to begin
+with. CeeLing's position: whether two live references point at the same object is a
+**program-design decision**, the same as it is in Java, Python, or JavaScript — not a
+memory-safety question, and not the compiler's to police.
+
+What CeeLing still guarantees regardless of aliasing: every reference the analyzer
+lets you use points at a **live** object (that's the dangling contract, unaffected by
+who else also points there). What aliasing checks would add on top is catching
+*surprising mutation through a second alias* — a logic bug, not memory corruption —
+plus the `noalias` optimization win. CeeLing trades both away for a language where
+shared, mutable, single-threaded data structures stay easy to write.
 
 ### 3. Maturity / soundness — an engineering gap, but real
 
@@ -54,9 +69,9 @@ use-after-move). CeeLing simulates Rust's effect with static use-after-move chec
 > Implementing dangling / bounds / null / use-after-move / sealed hatches yields a
 > **single-threaded memory-safe modern-C++ subset** — far stronger than raw C++, and
 > genuinely useful. Versus Rust the gaps are three kinds: **by design** (data races,
-> aliasing), **by maturity** (self-built analyzer vs. a decade-validated `rustc`), and
-> **by ecosystem** (C++ libraries are unsafe by nature vs. Rust's safe-by-default
-> crates).
+> aliasing — both intentionally out of scope, not overlooked), **by maturity**
+> (self-built analyzer vs. a decade-validated `rustc`), and **by ecosystem** (C++
+> libraries are unsafe by nature vs. Rust's safe-by-default crates).
 
 CeeLing is **not** catching up to Rust. It is **trading a bounded amount of safety for
 the C++ ecosystem** — a real position for people who need Eigen *and* more safety than

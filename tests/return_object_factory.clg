@@ -1,0 +1,23 @@
+// Factory function returning an object: exercises the AST emitter's return-value move.
+// The returned owning local must be std::move'd out and the return type lowered to a
+// smart pointer, so this compiles under a real C++ compiler.
+class Node {
+public:
+    int value;
+    Node next;
+
+    Node(int v) {
+        value = v;
+    }
+}
+
+Node makeNode(int v) {
+    Node n = new Node(v);
+    return n;
+}
+
+int main() {
+    Node a = makeNode(5);
+    print(a.value);
+    return 0;
+}

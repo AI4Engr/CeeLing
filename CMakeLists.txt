@@ -162,6 +162,26 @@ if(NOT EMSCRIPTEN)
     add_test(NAME cling_test_example_transpiles
         COMMAND cling --cpp ${CMAKE_BINARY_DIR}/test_output_example.cpp ${CMAKE_SOURCE_DIR}/regression/fixtures/example.clg)
 
+    # AST-driven generator (--emit-ast): a factory function returning an object must
+    # lower the return type to a smart pointer and std::move the owning local out, so
+    # the result compiles under a real C++ compiler. Guards the return-value-move path.
+    add_test(NAME cling_test_ast_return_object
+        COMMAND cling --emit-ast --cpp ${CMAKE_BINARY_DIR}/test_output_ast_return_object.cpp
+            ${CMAKE_SOURCE_DIR}/tests/return_object_factory.clg)
+    if(MSVC)
+        add_test(NAME cling_test_ast_return_object_compile
+            COMMAND ${CMAKE_CXX_COMPILER} /nologo /EHsc /std:c++17
+                ${CMAKE_BINARY_DIR}/test_output_ast_return_object.cpp
+                /Fe:${CMAKE_BINARY_DIR}/test_output_ast_return_object.exe)
+    else()
+        add_test(NAME cling_test_ast_return_object_compile
+            COMMAND ${CMAKE_CXX_COMPILER} -std=c++17
+                ${CMAKE_BINARY_DIR}/test_output_ast_return_object.cpp
+                -o ${CMAKE_BINARY_DIR}/test_output_ast_return_object.exe)
+    endif()
+    set_tests_properties(cling_test_ast_return_object_compile PROPERTIES
+        DEPENDS cling_test_ast_return_object)
+
     # Memory-safety contract suite (Phase 0 harness). The runner scans fixtures tagged
     # with `//@ expect: reject|accept`, runs cling, and asserts the exit code. Missed
     # rejects are XFAIL (analysis not yet implemented) so the baseline stays green;
