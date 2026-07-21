@@ -34,14 +34,14 @@ so the deref is unguarded.
 
 ```
 Node n = new Node(1);    // freshly constructed, non-null
-print(n.key);            // ✅ direct access, no runtime check
+std::cout << n.key << std::endl;            // ✅ direct access, no runtime check
 ```
 
 ### Runtime-guarded — possibly empty
 
 ```
 Node n = maybeGet();     // may return empty
-print(n.key);            // ✅ compiles; null at runtime → panic, not UB
+std::cout << n.key << std::endl;            // ✅ compiles; null at runtime → panic, not UB
 ```
 
 ### Back-reference must be checked
@@ -49,7 +49,7 @@ print(n.key);            // ✅ compiles; null at runtime → panic, not UB
 ```
 // prev is a weak_ptr (Rule C). Access forces a checked lock:
 Node p = node.prev;      // lowers to: auto p = node->prev.lock();
-print(p.key);            // guarded — if the parent is gone, panic instead of UB
+std::cout << p.key << std::endl;            // guarded — if the parent is gone, panic instead of UB
 ```
 
 The guarantee: a null dereference is caught statically or turned into a clean panic —

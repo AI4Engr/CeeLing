@@ -12,8 +12,8 @@ std::string AstEmitter::emit(const Program& program) {
     // plus any #include the source itself declared — emitted once, de-duplicated so a
     // source `#include <memory>` doesn't collide with the one we require.
     std::set<std::string> emittedIncludes;
-    for (const std::string& hdr : {"#include <memory>", "#include <utility>",
-                                   "#include <iostream>"}) {
+    for (const char* hdr : {"#include <memory>", "#include <utility>",
+                            "#include <iostream>"}) {
         if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
     }
     for (const auto& stmt : program.statements) {
@@ -257,9 +257,6 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
             rhs = emitMovedArg(assign->expression.get());
         }
         out << pad << lhs << " = " << rhs << ";\n";
-    } else if (auto print = dynamic_cast<const PrintStatement*>(stmt)) {
-        out << pad << "std::cout << (" << emitExpression(print->expression.get())
-            << ") << std::endl;\n";
     } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
         // Returning an object hands ownership back to the caller. A `new T(...)`
         // becomes a factory; an owning local is std::move'd out (a smart pointer is
@@ -327,7 +324,19 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
     if (auto num = dynamic_cast<const Number*>(expr)) {
         return num->original_text;
     }
+    if (auto scoped = dynamic_cast<const ScopedIdentifier*>(expr)) {
+        // `std::cout`, `std::endl`, etc. — emitted verbatim.
+        return scoped->qualifiedName;
+    }
+    if (auto str = dynamic_cast<const StringLiteral*>(expr)) {
+        return str->original_text;
+    }
     if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+        // Stream `<<` chains are left-associative and need no grouping parens — emit them
+        // flat (`std::cout << a << b`). Other operators keep parens to preserve grouping.
+        if (bin->operator_str == "<<") {
+            return emitExpression(bin->left.get()) + " << " + emitExpression(bin->right.get());
+        }
         return "(" + emitExpression(bin->left.get()) + " " + bin->operator_str + " "
                + emitExpression(bin->right.get()) + ")";
     }

@@ -203,9 +203,6 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                 movedFrom_.insert(src);
             }
         }
-    } else if (auto print = dynamic_cast<const PrintStatement*>(stmt)) {
-        // print is a builtin sink for output: it USES its argument but does NOT move it.
-        checkExpressionUses(print->expression.get());
     } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
         checkExpressionUses(ret->expression.get());
     } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {

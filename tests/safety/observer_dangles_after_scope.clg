@@ -18,6 +18,6 @@ int main() {
         Node inner = new Node(1);
         b = inner;   // observer captures inner
     }                // inner destroyed here
-    print(b.v);      // ERROR: b observes a destroyed object
+    std::cout << b.v << std::endl;      // ERROR: b observes a destroyed object
     return 0;
 }

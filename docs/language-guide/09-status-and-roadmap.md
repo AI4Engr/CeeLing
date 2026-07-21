@@ -27,10 +27,10 @@ now real — plus a new AST-driven code generator running alongside the old one.
 - No escape-hatch bans yet (`.get()`, casts, raw pointers) — Phase 1.
 - Branch merges (`if`/`else` arms are checked independently, not merged), library
   summaries, iterator invalidation, `string_view`/Eigen dangling — still open.
-- `AstEmitter` is not yet the default generator: custom `#include` passthrough and
-  native `std::cout <<` stream input are still missing. (Returning an object from a
-  function now works — the return type is lowered to a smart pointer and the value is
-  moved out.) The regex `CppGenerator` remains the default until parity is reached.
+- `AstEmitter` is not yet the default generator, though its coverage now includes
+  returning an object by value, custom `#include` passthrough, and native
+  `std::cout << ...` stream output (the custom `print` is gone). The regex
+  `CppGenerator` remains the default until full parity is reached.
 
 This chapter is the plan; only the "working today" list above is done.
 
@@ -50,9 +50,10 @@ Without a red/green baseline none of the later phases can be verified.
   `owned<>`/`borrowed<>`. Legacy annotated fixtures are tagged `//@ legacy:`.
 - ✅ **Baseline snapshot** — `tests/safety/BASELINE.md` (PASS=2, XFAIL=9, FAIL=0).
 - ✅ **CTest integration** — `cling_safety_contract_baseline`.
-- ⏳ **Legal-C++ output check** (remaining) — generated C++ still leaks `print` and
-  mishandles `&` locals; gate output on "compiles under a real C++ compiler." Folded
-  into Phase 1/2 where that codegen is fixed.
+- ✅ **Legal-C++ output check** (for the AST generator) — the `--emit-ast` path now
+  emits compilable C++ (verified under g++ via `cling_test_ast_return_object_compile`);
+  the custom `print` is gone in favor of native `std::cout << ...`. The legacy regex
+  generator is still the default and not held to this bar yet.
 
 ### Phase 1 — Seal escape hatches (simplest + foundational)
 Forbid raw `T*`, raw `new`/`delete`, `.get()`, `reinterpret_cast` / C-style casts,
@@ -81,8 +82,9 @@ concrete failures this caused). Opt-in via `--emit-ast`; coexists with the regex
 generator until coverage matches. Working: classes/functions/main, if/else,
 comparisons, `ref`->reference, `this->`, chained member/method access,
 member-target assignment (`a.b = x;`), auto-move, return-value move (object return
-type lowered to a smart pointer, owning local moved out). Open: custom includes,
-native stream output.
+type lowered to a smart pointer, owning local moved out), custom `#include`
+passthrough, and native `std::cout << ...` stream output. Open: switching the default
+generator away from the legacy regex path.
 
 ### Phase 4 — Runtime backstops
 Compiler-inserted bounds checks (#11) and null checks (#9) that panic/throw.

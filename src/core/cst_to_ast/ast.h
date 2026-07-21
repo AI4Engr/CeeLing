@@ -57,6 +57,26 @@ public:
     std::string toString() const override { return original_text; }
 };
 
+// A qualified name like `std::cout`, `std::endl`, `std::vector`. Stored as the full
+// joined text; the generator emits it verbatim.
+class ScopedIdentifier : public Expression {
+public:
+    std::string qualifiedName;
+
+    explicit ScopedIdentifier(const std::string& name) : qualifiedName(name) {}
+    std::string toString() const override { return qualifiedName; }
+};
+
+// A double-quoted string literal, e.g. `" "` in `std::cout << " ";`. Holds the
+// original text including the quotes; emitted verbatim.
+class StringLiteral : public Expression {
+public:
+    std::string original_text;
+
+    explicit StringLiteral(const std::string& text) : original_text(text) {}
+    std::string toString() const override { return original_text; }
+};
+
 class BinaryExpression : public Expression {
 public:
     ExpressionPtr left;
@@ -141,18 +161,6 @@ public:
 
     std::string toString() const override {
         return expression->toString() + ";";
-    }
-};
-
-class PrintStatement : public Statement {
-public:
-    ExpressionPtr expression;
-
-    explicit PrintStatement(ExpressionPtr expr)
-        : expression(std::move(expr)) {}
-
-    std::string toString() const override {
-        return "print(" + expression->toString() + ");";
     }
 };
 

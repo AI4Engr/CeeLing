@@ -16,22 +16,23 @@ namespace cling {
 //   * object variables      -> the smart-pointer type chosen by SmartPointerAnalyzer
 //   * `new T(...)`           -> std::make_unique / std::make_shared<T>(...)
 //   * `ref T x = y;`         -> `T& x = *y;`   (observer = native reference)
-//   * `print(e);`            -> `std::cout << (e) << std::endl;`
+//   * `std::cout << e;`      -> emitted verbatim (native stream output, no `print`)
 //   * member access `a.b`    -> `a->b` for smart-pointer objects
 //
 // EXPERIMENTAL / opt-in via the `--emit-ast` CLI flag; the regex-based CppGenerator
 // remains the default. Introduced incrementally.
 //
 // Known gaps (verified against fixtures; each is a follow-up increment):
-//   * custom `#include` lines are dropped (only std headers are emitted)
-//   * native C++ stream output (`std::cout << x`) is not parsed — use `print(x)`
+//   * custom `#include` lines beyond std headers are passed through, but arbitrary
+//     `a + b + c` (3+ operand chains) are a pre-existing grammar limit, not emitter.
 // Done: functions/classes/main, if/else, comparisons, methods with `this->` field
 //   access, nested member access and method calls (`a.b->c(...)`), member-target
-//   assignment (`a.b = x;`), ref->reference, print->cout, new->make_*, smart-pointer
-//   types, auto-`std::move` of object arguments (safe because the dangling checker
-//   forbids use-after-move), and return-value move for object-returning functions
-//   (return type lowered to a smart pointer; the owning local is std::move'd out).
-//   Programs without the gaps above emit COMPILABLE C++ (verified with g++).
+//   assignment (`a.b = x;`), ref->reference, native `std::cout << ...` stream output
+//   (`::` scope resolution + `<<` chaining), new->make_*, smart-pointer types,
+//   auto-`std::move` of object arguments (safe because the dangling checker forbids
+//   use-after-move), and return-value move for object-returning functions (return type
+//   lowered to a smart pointer; the owning local is std::move'd out). Programs without
+//   the gaps above emit COMPILABLE C++ (verified with g++).
 class AstEmitter {
 public:
     explicit AstEmitter(const SmartPointerAnalyzer& analyzer) : analyzer_(analyzer) {}

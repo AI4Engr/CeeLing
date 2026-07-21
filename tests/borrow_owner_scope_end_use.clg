@@ -17,6 +17,6 @@ int main() {
         owned<Node> inner = new Node(1);
         b = inner;
     }
-    print(b.v);
+    std::cout << b.v << std::endl;
     return 0;
 }

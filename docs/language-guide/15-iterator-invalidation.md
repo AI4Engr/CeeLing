@@ -49,7 +49,7 @@ provenance is that container. Any subsequent use of such an iterator is **reject
 Vector<int> v = {1, 2, 3};
 Iter it = v.begin();     // provenance: it <= v
 v.push_back(4);          // summary: push_back invalidates iterators of v → it DEAD
-print(deref(it));        // ❌ REJECT: use of invalidated iterator `it`
+std::cout << deref(it) << std::endl;        // ❌ REJECT: use of invalidated iterator `it`
 ```
 
 ### Rejected — erase-in-loop
@@ -67,7 +67,7 @@ Fix the analyzer suggests: use the value returned by `erase`, or collect-then-re
 Vector<int> v = {1, 2, 3};
 v.push_back(4);          // mutate first
 Iter it = v.begin();     // fetch AFTER the mutation → provenance fresh → ✅ ACCEPT
-print(deref(it));
+std::cout << deref(it) << std::endl;
 ```
 
 The same mechanism that catches dangling references catches iterator invalidation —

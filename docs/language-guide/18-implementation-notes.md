@@ -39,7 +39,7 @@ Why it matters: without it, the compiler could say "there is a use-after-move
 
 A surprise came up: a bare call like `sink(a);` on its own line was **not something
 the parser recognized as a valid statement.** It only understood declarations,
-assignments, `print`, `return`, `if`, and so on — not "just call a function."
+assignments, `return`, `if`, and so on — not "just call a function."
 
 That mattered because *the move happens at that call*. If the parser can't see the
 statement, the checker can't see the move. So we taught the grammar one new shape:
@@ -68,15 +68,15 @@ that line is fine. It is the *next* line that gets flagged:
 ```
 Node a = new Node(1);
 sink(a);        // a is read, then moved — OK, this is the normal auto-move
-print(a.v);     // a is read again, but it's moved-from now → ERROR
+std::cout << a.v << std::endl;     // a is read again, but it's moved-from now → ERROR
 ```
 
 Two small but important details:
 
 - **Reassignment revives a variable.** After `a = new Node(2);`, `a` is a fresh object
   again and comes off the *moved-from* list — using it is fine.
-- **`print` reads but does not move.** It is an output sink, so its argument is used,
-  not consumed. Only real function calls move their arguments.
+- **`std::cout << x` reads but does not move.** Stream output uses its operands, it
+  does not consume them. Only real function calls move their arguments.
 
 ## Why this is not just "use smart pointers"
 
@@ -120,7 +120,7 @@ Now two things fall out naturally, reusing the same "who is alive" tracking:
    Node a = new Node(1);
    ref Node b = a;   // b observes a
    sink(a);          // a is moved → gone
-   print(b.v);       // ERROR: b's owner is gone
+   std::cout << b.v << std::endl;       // ERROR: b's owner is gone
    ```
    ```
    error[semantic/use-after-move]: use of dangling observer `b` (its owner `a` is gone)
@@ -155,7 +155,7 @@ if (1) {
     Node inner = new Node(1);
     b = inner;        // b observes inner
 }                     // inner dies here
-print(b.v);           // ERROR: b's owner is gone
+std::cout << b.v << std::endl;           // ERROR: b's owner is gone
 ```
 
 This also taught the checker that an observer can be **rebound** by assignment

@@ -56,23 +56,23 @@ public:
     }
     
     void printForward() {
-        print("Forward: ");
+        std::cout << "Forward: " << std::endl;
         Node current = head;
         while (current) {
-            print(current.data + " ");
+            std::cout << current.data + " " << std::endl;
             current = current.next;
         }
-        print("");
+        std::cout << "" << std::endl;
     }
     
     void printBackward() {
-        print("Backward: ");
+        std::cout << "Backward: " << std::endl;
         Node current = tail;
         while (current) {
-            print(current.data + " ");
+            std::cout << current.data + " " << std::endl;
             current = current.prev;    // Using backward reference
         }
-        print("");
+        std::cout << "" << std::endl;
     }
     
     void deleteNode(int value) {
@@ -123,12 +123,12 @@ public:
     }
     
     void traverse() {
-        print("Graph traversal starting from A:");
+        std::cout << "Graph traversal starting from A:" << std::endl;
         Node current = nodeA;
         int steps = 0;
         
         while (current && steps < 10) {  // Prevent infinite loop
-            print("Node: " + current.data);
+            std::cout << "Node: " + current.data << std::endl;
             current = current.next;
             steps = steps + 1;
         }

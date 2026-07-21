@@ -65,7 +65,7 @@ At each use of a reference, look up its provenance; if the owner is dead, **reje
 owned<Node> root = new Node(1);   // root: owner, live
 borrowed<Node> n = borrow(root);  // A: return aliases param → B: n <= root
 drop(root);                       // A: param is moved       → C: root = DEAD
-print(n.key);                     // use n → n <= root, root DEAD → REJECT
+std::cout << n.key << std::endl;                     // use n → n <= root, root DEAD → REJECT
 ```
 
 ## Eigen with no knowledge of Eigen internals

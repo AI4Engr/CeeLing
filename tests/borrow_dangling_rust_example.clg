@@ -29,6 +29,6 @@ int main() {
     owned<Node> root = new Node(1);
     borrowed<Node> n = borrow(root);
     drop(root);
-    print(n.key);
+    std::cout << n.key << std::endl;
     return 0;
 }

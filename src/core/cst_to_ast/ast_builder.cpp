@@ -147,8 +147,6 @@ StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) 
         result = buildVariableDeclaration(node, source);
     } else if (strcmp(node_type, "assignment_statement") == 0) {
         result = buildAssignmentStatement(node, source);
-    } else if (strcmp(node_type, "print_statement") == 0) {
-        result = buildPrintStatement(node, source);
     } else if (strcmp(node_type, "expression_statement") == 0) {
         result = buildExpressionStatement(node, source);
     } else if (strcmp(node_type, "comment_statement") == 0) {
@@ -230,14 +228,6 @@ StatementPtr ASTBuilder::buildAssignmentStatement(TSNode node, const std::string
     return std::make_unique<AssignmentStatement>(varName, std::move(expr));
 }
 
-StatementPtr ASTBuilder::buildPrintStatement(TSNode node, const std::string& source) {
-    // print_statement: "print" "(" expression ")" ";"
-    TSNode expression_node = ts_node_child(node, 2);
-    auto expr = buildExpression(expression_node, source);
-
-    return std::make_unique<PrintStatement>(std::move(expr));
-}
-
 StatementPtr ASTBuilder::buildExpressionStatement(TSNode node, const std::string& source) {
     // expression_statement: expression ";"
     TSNode expression_node = ts_node_child(node, 0);
@@ -267,6 +257,10 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
     ExpressionPtr result;
     if (strcmp(node_type, "identifier") == 0) {
         result = buildIdentifier(node, source);
+    } else if (strcmp(node_type, "scoped_identifier") == 0) {
+        result = buildScopedIdentifier(node, source);
+    } else if (strcmp(node_type, "string_literal") == 0) {
+        result = buildStringLiteral(node, source);
     } else if (strcmp(node_type, "number") == 0) {
         result = buildNumber(node, source);
     } else if (strcmp(node_type, "function_call") == 0) {
@@ -298,6 +292,18 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
 ExpressionPtr ASTBuilder::buildIdentifier(TSNode node, const std::string& source) {
     std::string name = getNodeText(node, source);
     return std::make_unique<Identifier>(name);
+}
+
+ExpressionPtr ASTBuilder::buildScopedIdentifier(TSNode node, const std::string& source) {
+    // scoped_identifier: identifier ("::" identifier)+ — keep the whole `std::cout` text.
+    std::string name = getNodeText(node, source);
+    return std::make_unique<ScopedIdentifier>(name);
+}
+
+ExpressionPtr ASTBuilder::buildStringLiteral(TSNode node, const std::string& source) {
+    // string_literal: a double-quoted token; keep it verbatim (quotes included).
+    std::string text = getNodeText(node, source);
+    return std::make_unique<StringLiteral>(text);
 }
 
 ExpressionPtr ASTBuilder::buildNumber(TSNode node, const std::string& source) {

@@ -18,6 +18,6 @@ int main() {
     owned<Node> a = new Node(1);
     borrowed<Node> b = a;
     sink(a);
-    print(b.v);
+    std::cout << b.v << std::endl;
     return 0;
 }

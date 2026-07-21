@@ -33,7 +33,7 @@ public:
         if (left) {
             left.printInOrder();
         }
-        print(data);
+        std::cout << data << std::endl;
         if (right) {
             right.printInOrder();
         }
@@ -49,7 +49,7 @@ int main() {
     root.insert(60);
     root.insert(80);
     
-    print("Binary Tree (in-order): ");
+    std::cout << "Binary Tree (in-order): " << std::endl;
     root.printInOrder();
     
     return 0;

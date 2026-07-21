@@ -76,7 +76,7 @@ int x = reinterpret_cast<int>(f);   // ❌ REJECT: reinterpret_cast is forbidden
 
 ```
 int n;                   // declared, not initialized
-print(n);                // ❌ REJECT: `n` read before initialization
+std::cout << n << std::endl;                // ❌ REJECT: `n` read before initialization
 ```
 
 ## Why this comes first

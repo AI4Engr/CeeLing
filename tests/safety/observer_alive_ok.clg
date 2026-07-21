@@ -15,6 +15,6 @@ public:
 int main() {
     Node a = new Node(1);
     ref Node b = a;  // observer
-    print(b.v);      // a is still alive here → safe
+    std::cout << b.v << std::endl;      // a is still alive here → safe
     return 0;
 }

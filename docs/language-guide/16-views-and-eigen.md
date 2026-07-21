@@ -59,7 +59,7 @@ Eigen::operator+(a:&, b:&)          -> expression borrowing a, b
 
 ```
 StringView sv = makeString();   // temporary dies at end of statement
-print(sv);                      // ❌ REJECT: `sv` views a destroyed temporary
+std::cout << sv << std::endl;                      // ❌ REJECT: `sv` views a destroyed temporary
 ```
 
 ### Rejected — Eigen expression outlives an operand
@@ -86,7 +86,7 @@ Matrix r = e;         // ✅ ACCEPT
 Matrix m = ...;
 auto blk = m.block(0, 0, 2, 2);   // view borrows m
 m = bigger;                        // m's storage replaced → blk DEAD
-print(blk);                        // ❌ REJECT
+std::cout << blk << std::endl;                        // ❌ REJECT
 ```
 
 The lesson: CeeLing treats "looks like a value but is actually a reference" uniformly

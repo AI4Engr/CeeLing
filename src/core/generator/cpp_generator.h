@@ -20,7 +20,6 @@ private:
     void generateStatement(const Statement& stmt);
     void generateVariableDeclaration(const VariableDeclaration& decl);
     void generateAssignmentStatement(const AssignmentStatement& stmt);
-    void generatePrintStatement(const PrintStatement& stmt);
     void generateCommentStatement(const CommentStatement& stmt);
     void generateFunctionDeclaration(const FunctionDeclaration& func);
     void generateMethodDeclaration(const MethodDeclaration& method);

@@ -18,6 +18,6 @@ Node makeNode(int v) {
 
 int main() {
     Node a = makeNode(5);
-    print(a.value);
+    std::cout << a.value << std::endl;
     return 0;
 }

@@ -65,7 +65,7 @@ public:
 int main() {
     Node root = new Node(1);   // reads like Java
     root.next = new Node(2);   // ownership inferred, std::move inserted as needed
-    print(root.next.key);
+    std::cout << root.next.key << std::endl;
     return 0;
 }
 ```

@@ -15,6 +15,6 @@ int main() {
     owned<Node> a = new Node(1);
     borrowed<Node> b = a;
     a = new Node(2);
-    print(b.v);
+    std::cout << b.v << std::endl;
     return 0;
 }

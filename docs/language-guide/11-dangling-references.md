@@ -54,7 +54,7 @@ Three components (full detail in [Chapter 5](05-how-analysis-works.md)):
 owned<Node> root = new Node(1);   // root: owner, live
 borrowed<Node> n = borrow(root);  // provenance: n <= root
 drop(root);                       // death: root = DEAD
-print(n.key);                     // use n → root DEAD → ❌ REJECT
+std::cout << n.key << std::endl;                     // use n → root DEAD → ❌ REJECT
 ```
 
 Error (target form):
@@ -64,7 +64,7 @@ error[semantic/dangling]: `n` is used after its owner `root` was moved away
   --> prog.clg:30:11
    |
 29 |     drop(root);      // root moved here
-30 |     print(n.key);    // n still references root
+30 |     std::cout << n.key << std::endl;    // n still references root
    |           ^ `n` references `root`, which no longer has a live owner
 help: use `n` before `root` is moved, or copy the value out first
 ```

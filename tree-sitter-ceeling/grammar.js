@@ -11,7 +11,6 @@ module.exports = grammar({
     statement: $ => choice(
       $.assignment_statement,
       $.variable_declaration,
-      $.print_statement,
       $.comment_statement,
       $.function_declaration,
       $.return_statement,
@@ -57,15 +56,8 @@ module.exports = grammar({
       'double',
       'string',
       'bool',
+      $.scoped_identifier,  // qualified names like std::vector (Phase 2.6 containers)
       $.identifier  // Add support for custom types (class names)
-    ),
-
-    print_statement: $ => seq(
-      'print',
-      '(',
-      $.expression,
-      ')',
-      ';'
     ),
 
     comment_statement: $ => token(seq('//', /.*/)),
@@ -184,11 +176,22 @@ module.exports = grammar({
       $.primary_expression
     ),
 
-    binary_expression: $ => prec.left(1, seq(
-      $.primary_expression,
-      choice('+', '-', '==', '!=', '<', '>', '<=', '>='),
-      $.primary_expression
-    )),
+    binary_expression: $ => choice(
+      // Arithmetic / comparison: two operands, precedence 2 (above stream `<<`).
+      prec.left(2, seq(
+        $.primary_expression,
+        choice('+', '-', '==', '!=', '<', '>', '<=', '>='),
+        $.primary_expression
+      )),
+      // Stream output `a << b << c`: n-ary left-associative chaining, precedence 1
+      // (below arithmetic, matching C++ so `std::cout << a + b` groups as `<< (a+b)`).
+      // `<<` is tokenized explicitly so it never mis-lexes as two `<` comparisons.
+      prec.left(1, seq(
+        $.expression,
+        token('<<'),
+        $.expression
+      ))
+    ),
 
     new_expression: $ => seq(
       'new',
@@ -199,10 +202,22 @@ module.exports = grammar({
     ),
 
     primary_expression: $ => choice(
+      $.scoped_identifier,
       $.identifier,
       $.number,
+      $.string_literal,
       seq('(', $.expression, ')')
     ),
+
+    // Qualified name like `std::cout`, `std::endl`, `std::vector`. General `::` scope
+    // resolution — usable in both expression and type position.
+    scoped_identifier: $ => prec.left(seq(
+      $.identifier,
+      repeat1(seq('::', $.identifier))
+    )),
+
+    // A double-quoted string literal, e.g. `std::cout << " ";`.
+    string_literal: $ => token(seq('"', /[^"]*/, '"')),
 
     // Member access is written with `.` in CeeLing source (Java-like). `->` is also
     // accepted for compatibility. The generator lowers `.` on smart-pointer objects

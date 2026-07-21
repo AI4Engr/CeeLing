@@ -21,6 +21,6 @@ int main() {
     Node a = new Node(1);
     ref Node b = a;  // observer: b references a, no ownership transfer
     sink(a);         // a moved away → the object b observes is gone
-    print(b.v);      // ERROR: b dangles
+    std::cout << b.v << std::endl;      // ERROR: b dangles
     return 0;
 }

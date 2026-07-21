@@ -19,6 +19,6 @@ void sink(Node n) {
 int main() {
     Node a = new Node(1);
     sink(a);         // ownership of a transfers into sink (move)
-    print(a.v);      // ERROR: use of moved-from `a`
+    std::cout << a.v << std::endl;      // ERROR: use of moved-from `a`
     return 0;
 }

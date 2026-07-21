@@ -30,7 +30,7 @@ annotations, **not** the intended user-facing syntax, which stays plain Java-lik
 owned<Node> root = new Node(1);   // root: owner, live
 borrowed<Node> n = borrow(root);  // summary: return aliases param → provenance: n <= root
 drop(root);                       // summary: param is moved       → death: root = DEAD
-print(n.key);                     // use n → n <= root, root DEAD  → REJECT
+std::cout << n.key << std::endl;                     // use n → n <= root, root DEAD  → REJECT
 ```
 
 ## Why the contract is more than "use smart pointers"

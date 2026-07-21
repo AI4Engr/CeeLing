@@ -53,7 +53,7 @@ a[3] = 1;                // ❌ REJECT: index 3 out of bounds for length 3
 ```
 Vector<int> v = {1, 2, 3};
 int i = readInt();       // value unknown at compile time
-print(v[i]);             // ✅ compiles; if i >= 3 at runtime → panic, not UB
+std::cout << v[i] << std::endl;             // ✅ compiles; if i >= 3 at runtime → panic, not UB
 ```
 
 Result: an out-of-bounds access can never silently corrupt memory — it is either

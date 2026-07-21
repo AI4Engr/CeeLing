@@ -14,18 +14,22 @@ int main() {
     std::cout << "Testing CLing Core Components..." << std::endl;
 
     try {
-        // Create mock AST for: x1 := 42; print(x1);
+        // Create mock AST for: x1 := 42; std::cout << x1 << std::endl;
         auto program = std::make_unique<Program>();
 
         // x1 := 42;
-        auto number42 = std::make_unique<Number>(42);
+        auto number42 = std::make_unique<Number>("42");
         auto assignment = std::make_unique<AssignmentStatement>("x1", std::move(number42));
         program->addStatement(std::move(assignment));
 
-        // print(x1);
-        auto identifier = std::make_unique<Identifier>("x1");
-        auto print_stmt = std::make_unique<PrintStatement>(std::move(identifier));
-        program->addStatement(std::move(print_stmt));
+        // std::cout << x1 << std::endl;  (built as a `<<` chain expression statement)
+        auto coutX1 = std::make_unique<BinaryExpression>(
+            std::make_unique<ScopedIdentifier>("std::cout"),
+            "<<",
+            std::make_unique<Identifier>("x1"));
+        auto chain = std::make_unique<BinaryExpression>(
+            std::move(coutX1), "<<", std::make_unique<ScopedIdentifier>("std::endl"));
+        program->addStatement(std::make_unique<ExpressionStatement>(std::move(chain)));
 
         std::cout << "AST created successfully" << std::endl;
         std::cout << "Program: " << program->toString() << std::endl;

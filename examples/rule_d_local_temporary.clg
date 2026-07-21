@@ -9,11 +9,11 @@ public:
     DataProcessor(int identifier, string processName) {
         id = identifier;
         name = processName;
-        print("Created processor: " + name);
+        std::cout << "Created processor: " + name << std::endl;
     }
     
     void process(int data) {
-        print("Processing data " + data + " with " + name);
+        std::cout << "Processing data " + data + " with " + name << std::endl;
     }
     
     int calculate(int input) {
@@ -29,7 +29,7 @@ public:
     TempFile(string name) {
         filename = name;
         content = "";
-        print("Created temp file: " + filename);
+        std::cout << "Created temp file: " + filename << std::endl;
     }
     
     void write(string data) {
@@ -37,7 +37,7 @@ public:
     }
     
     void cleanup() {
-        print("Cleaning up temp file: " + filename);
+        std::cout << "Cleaning up temp file: " + filename << std::endl;
         content = "";
     }
 };
@@ -49,7 +49,7 @@ void processData(int value) {
     // Use the processor locally
     processor.process(value);
     int result = processor.calculate(value);
-    print("Result: " + result);
+    std::cout << "Result: " + result << std::endl;
     
     // processor automatically cleaned up when function exits
 }
@@ -63,7 +63,7 @@ void fileOperation(string data) {
     tempFile.write("\nTimestamp: " + getCurrentTime());
     
     // Process the file content
-    print("File content length: " + tempFile.content.length());
+    std::cout << "File content length: " + tempFile.content.length() << std::endl;
     
     // Cleanup
     tempFile.cleanup();
@@ -84,7 +84,7 @@ public:
             workFile.write("Step " + i + ": " + workProcessor.calculate(i) + "\n");
         }
         
-        print("Work completed, files and processors cleaned up automatically");
+        std::cout << "Work completed, files and processors cleaned up automatically" << std::endl;
         
         // Both objects automatically cleaned up when method exits
     }
@@ -103,7 +103,7 @@ string getCurrentTime() {
 }
 
 int main() {
-    print("=== Rule D Examples: Local/Temporary Ownership ===");
+    std::cout << "=== Rule D Examples: Local/Temporary Ownership ===" << std::endl;
     
     // Example 1: Function-local objects
     processData(100);
@@ -128,6 +128,6 @@ int main() {
         // loopProcessor cleaned up at end of each loop iteration
     }
     
-    print("All temporary and local objects handled safely!");
+    std::cout << "All temporary and local objects handled safely!" << std::endl;
     return 0;
 }

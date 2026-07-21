@@ -16,6 +16,6 @@ int main() {
     Node a = new Node(1);
     ref Node b = a;  // observer of the first object
     a = new Node(2); // old Node(1) freed; b now dangles
-    print(b.v);      // ERROR: b observes a destroyed object
+    std::cout << b.v << std::endl;      // ERROR: b observes a destroyed object
     return 0;
 }

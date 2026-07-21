@@ -11,7 +11,7 @@ public:
         filename = file;
         width = 1024;
         height = 768;
-        print("Loading texture: " + filename);
+        std::cout << "Loading texture: " + filename << std::endl;
     }
 };
 
@@ -39,8 +39,8 @@ public:
     }
     
     void render() {
-        print("Rendering mesh with " + vertexCount + " vertices");
-        print("Using texture: " + material.diffuseTexture.filename);
+        std::cout << "Rendering mesh with " + vertexCount + " vertices" << std::endl;
+        std::cout << "Using texture: " + material.diffuseTexture.filename << std::endl;
     }
 };
 
