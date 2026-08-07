@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ reason: the function declares a `ref` observer locally, but returns the OWNER
+//@ reason: (`n`, not `b`); the owner is what's being moved out, which is legal.
+//
+// Positive control for return_local_ref_rejected.clg: proves the new return-local-
+// reference check only flags returning the OBSERVER by name, not merely having one
+// declared in the same body. Returning the owning local itself is the ordinary,
+// already-supported factory pattern (see tests/return_object_factory.clg).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+Node makeNode() {
+    Node n = new Node(1);
+    ref Node b = n;
+    std::cout << b.v << std::endl;
+    return n;
+}
+
+int main() {
+    Node result = makeNode();
+    std::cout << result.v << std::endl;
+    return 0;
+}

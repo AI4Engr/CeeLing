@@ -1,0 +1,24 @@
+//@ expect: reject
+//@ reason: `b` is a `ref` observer of a function-local owner; returning it would
+//@ reason: hand the caller a reference into this function's own (gone) stack frame.
+//
+// Return-local-reference (#2). CeeLing has no `ref` return type, so a function's
+// return is always owning -- there is no legal way to hand a borrow back to the
+// caller. `n` lives only inside makeDangling()'s stack frame; `b` observes it, and
+// `return b;` would escape that observation past the frame's lifetime.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+Node makeDangling() {
+    Node n = new Node(1);
+    ref Node b = n;
+    return b;
+}
+
+int main() {
+    return 0;
+}

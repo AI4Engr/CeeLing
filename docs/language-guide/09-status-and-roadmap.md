@@ -42,12 +42,20 @@ real.
   provenance (alias → observer of the argument, same machinery as `ref`; fresh → new
   owner) instead of assuming every call returns something brand new. See
   `tests/safety/summary_return_aliases_param.clg` / `summary_return_alias_dangles.clg`.
+- **Return-local-reference** (#2) — CeeLing has no `ref` return type, so a function's
+  return is always owning; `return b;` is rejected whenever `b` is a `ref` observer
+  declared in that function's own body (it can only be observing something local,
+  since `ref` parameters are already banned). See
+  `tests/safety/return_local_ref_rejected.clg` /
+  `return_owner_not_observer_accepted.clg`.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**
   (`unique_ptr`/`shared_ptr`/`weak_ptr`), not yet unified onto the new engine.
 - **Default-reject unknown library calls** (the remaining Phase 1 item) — no
   library-summary allow-list exists yet; tracked under Phase 2.
+- **Reference-stored-in-field escape** (#3) — storing a `ref` observer into a
+  longer-lived field is not yet checked.
 - **Library/std/Eigen summaries** — only CeeLing's own functions get an auto-derived
   summary today.
 - Branch merges (`if`/`else` arms are checked independently, not merged), iterator
@@ -83,13 +91,13 @@ Forbid raw `T*`, raw `new`/`delete`, `.get()`, `reinterpret_cast` / C-style cast
 Chapter 17 for the mechanism and worked diagnostic text. Still open: default-reject
 unknown library calls (needs the Phase 2 library-summary allow-list first).
 
-### Phase 2 — Dangling-reference analysis (core)  ✅ new-syntax fixtures + auto summaries done
+### Phase 2 — Dangling-reference analysis (core)  ✅ new-syntax fixtures + auto summaries + #2 done
 Provenance table, death events, use-site check are implemented and cover all 5
 new-syntax dangling fixtures (owner moved/reassigned/scope-exited, observer-parameter
 ban), plus auto-derived return-provenance summaries (CLAUDE.md component A — scoped to
-return-value aliasing, since parameters are always-moved by construction; see
-"Working today" above). Still open: library summaries, return-local-reference (#2),
-field escape (#3), iterator invalidation (#4), `string_view`/`span` (#5),
+return-value aliasing, since parameters are always-moved by construction) and
+return-local-reference (#2) (see "Working today" above). Still open: library
+summaries, field escape (#3), iterator invalidation (#4), `string_view`/`span` (#5),
 `auto`-vs-concrete provenance (#6), lambda `[&]` escape (#7), dangling temporaries
 (#8), Eigen summaries, branch-merge precision. The legacy `borrow_*.clg`
 (`owned<>/borrowed<>`) fixtures are superseded by the new syntax and kept only for

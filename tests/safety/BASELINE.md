@@ -77,7 +77,7 @@ suite: PASS=16, XFAIL=0, FAIL=0.
   used while its owner is alive" is `safety/observer_alive_ok.clg`, which still PASSes.
 
 Phase 2's auto-derived function summaries (return-provenance) added 2 more fixtures:
-**PASS=18, XFAIL=0, FAIL=0.**
+PASS=18, XFAIL=0, FAIL=0.
 
 - `summary_return_aliases_param.clg` — a function whose summary says its return value
   aliases a parameter (`Node pick(Node a, Node b) { return a; }`) is used safely at the
@@ -87,3 +87,15 @@ Phase 2's auto-derived function summaries (return-provenance) added 2 more fixtu
   explicit `ref` observer would be. This is the new catch the summary mechanism
   enables -- without it, `Node r = pick(x, y);` registered no provenance at all, so
   this dangling use previously went undetected.
+
+Phase 2's return-local-reference check (#2) added 2 more fixtures:
+**PASS=20, XFAIL=0, FAIL=0.**
+
+- `return_local_ref_rejected.clg` — a function declares a `ref` observer of its own
+  local owner, then returns the observer. CeeLing has no `ref` return type, so this
+  would hand the caller a reference into a stack frame that's already gone; rejected
+  with a `.clg`-level diagnostic rather than left to surface as a confusing (and
+  coincidental, not guaranteed) C++ compile error downstream.
+- `return_owner_not_observer_accepted.clg` — the same function shape, but returning
+  the *owner* (not the observer): proves the check only flags returning the observer
+  by name, not merely having one declared somewhere in the body.

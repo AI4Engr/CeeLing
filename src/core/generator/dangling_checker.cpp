@@ -164,6 +164,22 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
     }
 }
 
+void DanglingChecker::checkReturnedReference(const Expression* expr) {
+    auto id = dynamic_cast<const Identifier*>(expr);
+    if (id == nullptr) return;
+    if (observerNames_.find(id->name) == observerNames_.end()) return;
+
+    DanglingError e;
+    e.line = expr->loc.line;
+    e.column = expr->loc.column;
+    e.message = "returning observer `" + id->name + "` (a `ref`) escapes its function";
+    e.help = "`" + id->name + "` is a non-owning reference into this function's own "
+             "stack frame; CeeLing has no `ref` return type, so the caller would "
+             "receive a reference to an object that no longer exists. Return the "
+             "owner itself, or restructure so the caller creates its own observer.";
+    errors_.push_back(e);
+}
+
 void DanglingChecker::checkExpressionUses(const Expression* expr) {
     if (expr == nullptr) return;
 
@@ -386,6 +402,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         }
     } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
         checkExpressionUses(ret->expression.get());
+        checkReturnedReference(ret->expression.get());
     } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
         checkExpressionUses(ifs->condition.get());
         // A branch runs conditionally, so a *move* that happens inside a branch is not

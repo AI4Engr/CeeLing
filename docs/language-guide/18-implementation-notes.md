@@ -463,3 +463,40 @@ by the receiver's statically-known class) and returns the `(class, name)` of the
 parameter at that argument position; `emitMovedArg` uses it to pick the right factory
 (`make_unique` vs `make_shared`) for a literal `new` argument instead of a
 context-free default.
+
+## Step 9 — Return-local-reference (#2)
+
+CeeLing's grammar has no `ref`-qualified return type — a function's `returnType` is
+always a plain type name, which the emitter always lowers to an owning smart pointer
+(or a value type). That's a real structural guarantee, but it only covers the
+*declared* return type; nothing stopped the checker from accepting a `return`
+statement whose *expression* was a `ref` observer:
+
+```
+Node makeDangling() {
+    Node n = new Node(1);
+    ref Node b = n;
+    return b;      // b observes n, which is about to stop existing
+}
+```
+
+`n` lives only inside `makeDangling`'s own stack frame. `b` observes it. The instant
+the function returns, that frame is gone, and `b` — along with whatever the caller
+would receive — refers to nothing. In this particular repro, C++'s own type system
+happens to reject the generated code too (`unique_ptr<Node>` has no implicit
+conversion from `Node&`), but that's incidental to the return type chosen for *this*
+function, not a guarantee: it's exactly the kind of thing that should be a clear
+`.clg`-level diagnostic, not a mystery error several layers downstream in generated
+code the user never wrote by hand.
+
+The fix doesn't need new machinery. Every observer already has a name in
+`observerNames_`, populated at the point of its `ref` declaration. `checkReturnedReference`
+just asks: is the returned expression a bare identifier, and is that identifier in
+`observerNames_`? If so, reject. There's no need to separately ask "does it observe a
+parameter or a local" — `ref` parameters are already banned at parse time (Step 4), so
+any observer name reachable inside a function body was necessarily declared *in that
+body*, making it unconditionally local. Returning the *owner* itself (`return n;`) is
+untouched — that's the existing, already-supported factory pattern.
+`tests/safety/return_local_ref_rejected.clg` (reject) and
+`return_owner_not_observer_accepted.clg` (accept — same function shape, but returning
+the owner) pin down the boundary.

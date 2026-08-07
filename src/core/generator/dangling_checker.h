@@ -31,8 +31,11 @@ struct DanglingError {
 // computes this once per function/method before the main check; call sites that
 // assign a call result consult it to register the right provenance instead of
 // assuming "always fresh".
-// Not yet handled: library/std/Eigen summaries, field-escape (#3), dedicated
-// return-local-reference checks (#2) beyond what falls out of the above, reassignment
+// Return-local-reference (#2) is also handled: CeeLing has no `ref` return type, so
+// returning an observer name always hands back a reference into the returning
+// function's own stack frame -- rejected by checkReturnedReference regardless of
+// whether the generated C++ would happen to also fail to compile.
+// Not yet handled: library/std/Eigen summaries, field-escape (#3), reassignment
 // revival across branches (branch-merge precision). Those arrive in later increments.
 //
 // Conservative by construction: it only flags a use that provably follows a move on
@@ -108,6 +111,14 @@ private:
     // callee (CeeLing bans `ref` parameters, so a call always consumes its object
     // arguments). No-op for non-call expressions.
     void applyCallArgMoves(const Expression* expr);
+
+    // Return-local-reference check (#2): CeeLing has no `ref` return type, so a
+    // function's return is always owning -- returning a `ref` observer hands back a
+    // reference into THIS function's own stack frame, which is gone the instant the
+    // function returns. Rejects `return b;` when `b` is an observer declared in the
+    // current body (parameters can't be observers -- `ref` params are already banned
+    // at parse time -- so any observer name here was necessarily declared locally).
+    void checkReturnedReference(const Expression* expr);
 
     std::set<std::string> classNames_;
     // Qualified summary key (summaryKey()) -> derived summary.
