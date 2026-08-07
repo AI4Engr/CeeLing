@@ -1,0 +1,30 @@
+//@ expect: reject
+//@ reason: the two branches rebind `obs` to DIFFERENT owners (`b` in the `if`, `a`
+//@ reason: in the `else`); a use after the `if` can't know which one is live, so it
+//@ reason: must be rejected even though both `a` and `b` are individually alive.
+//
+// Positive control for branch_merge_no_false_positive_accepted.clg's fix: proves the
+// branch-merge precision improvement doesn't over-correct into accepting genuinely
+// ambiguous cases. Per CLAUDE.md's "ambiguous inference -> conservative reject" rule,
+// ANY disagreement between the two branches about what an observer points at must
+// still be rejected, not just the case where one branch definitely kills the owner.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    ref Node obs = a;
+    bool cond = true;
+    if (cond) {
+        obs = b;
+    } else {
+        obs = a;
+    }
+    std::cout << obs.v << std::endl;   // ERROR: ambiguous which owner obs observes
+    return 0;
+}

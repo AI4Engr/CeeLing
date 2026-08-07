@@ -541,3 +541,85 @@ check produces a dedicated diagnostic naming the actual rule being enforced. See
 `tests/safety/ref_field_rejected.clg` (reject) and `field_stores_owner_accepted.clg`
 (accept — proves the ban doesn't touch the ordinary moved-parameter-into-field
 pattern).
+
+## Step 11 — Branch-merge precision, and a real false positive it fixed
+
+"Linking vs. handing off" and Step 7's second bug both talk about `movedFrom_`
+specifically: a move inside one `if`/`else` branch shouldn't leak past the `if`, and
+shouldn't leak into the *sibling* branch either. Both fixes were scoped to
+`movedFrom_` alone. The observer-tracking state — `observerOf_` (who does an observer
+point at), `danglingObservers_` (which observers are known-dead), `aliasObservers_`,
+`observerNames_` — never got the same treatment. It was additive across both
+branches with no snapshot/restore at all.
+
+That gap is real, not hypothetical:
+
+```
+Node a = new Node(1);
+Node b = new Node(2);
+ref Node obs = a;
+if (cond) {
+    obs = b;           // rebind: obs now observes b
+    b = new Node(3);   // reassigning b kills the object obs (in this branch) observes
+} else {
+    std::cout << obs.v << std::endl;   // obs still observes a here -- a is alive!
+}
+```
+
+The `else` branch never touches `obs` at all — on that path, `obs` is exactly what it
+was before the `if`: an observer of `a`, which is alive. But the checker rejected it,
+because processing the `if` branch first mutated `observerOf_["obs"]` to `"b"`, and
+that mutation was still sitting there when the `else` branch got checked next — the
+`else` branch's `std::cout << obs.v` looked up `obs`'s owner and found `b`, which the
+`if` branch (which never ran, on this path) had just killed.
+
+The fix generalizes the `movedFrom_` snapshot/restore pattern into one `BranchState`
+struct covering all five pieces of state, plus a `mergeBranchStates` step that
+replaces the old "just restore and move on" flow:
+
+- **`movedFrom_`, `danglingObservers_`, `aliasObservers_`, `observerNames_`**: still a
+  simple union — a name affected in *either* branch stays affected after the merge,
+  same reasoning as before (a later use can't know which branch ran).
+- **`observerOf_`** needs more care, because it's not a boolean flag but a *binding*
+  (which owner does this observer point at). For every observer name either branch
+  touched: if both branches agree on the owner (or only one branch touched it and the
+  other implicitly kept the pre-`if` binding), that binding is certain either way —
+  keep it. If the branches disagree — rebound to different owners, e.g. `obs = b;` in
+  one arm and nothing in the other where `obs` was already bound to something else —
+  the merge can't know which binding survives, so it's marked dangling. This is the
+  same "ambiguous → conservative reject" principle CLAUDE.md states for the analysis
+  generally, just applied to observer bindings specifically. `while` loops get the
+  same treatment, modeled as a two-way branch against "the loop body never runs".
+
+One easy way to get this subtly wrong: in the ambiguous-disagreement case, it's
+tempting to *only* mark the name dangling and leave `observerOf_` without an entry for
+it. That silently breaks the fix, because the use-site check
+(`checkExpressionUses`) only consults `danglingObservers_` for a name that already
+*has* an `observerOf_` entry — it needs an owner name to put in the diagnostic. Without
+an entry, the whole dangling branch of the check is skipped and the ambiguous case
+would wrongly pass. The fix keeps a (possibly stale, but only used for the message)
+owner name in `observerOf_` even in the disagreement case, so the existing
+`danglingObservers_` lookup still fires.
+
+`tests/safety/branch_merge_no_false_positive_accepted.clg` pins down the false
+positive above; `branch_merge_ambiguous_rejected.clg` is the positive control proving
+the fix doesn't over-correct — the same rebind pattern but with *both* branches
+rebinding `obs` (to different owners) must still be rejected, since that really is
+ambiguous.
+
+### A separate gap this surfaced, not fixed here: `ref` rebinding has no C++ lowering
+
+Writing the false-positive fixture above surfaced an unrelated, pre-existing problem:
+`obs = b;` (rebinding a `ref` observer to a different owner) cannot be emitted as
+valid C++ at all. `AstEmitter` lowers `ref T x = y;` to a native reference, `T& x =
+*y;` — and a native C++ reference is bound for its entire lifetime; there is no syntax
+to make an existing `T&` refer to something else afterward. `obs = b;` in the
+generated code is unavoidably interpreted by C++ as *assignment through* the
+reference (copying `b`'s contents into whatever `obs` already refers to), which is not
+what CeeLing's rebind semantics mean and typically doesn't even type-check (a smart
+pointer has no `operator=` accepting another smart pointer's pointee). The dangling
+checker's model of rebinding is correct — proven by the two fixtures above, which only
+assert `cling.exe`'s own exit code and don't require the emitted C++ to compile — but
+`AstEmitter`'s `ref`-to-`T&` lowering needs a different representation (most likely a
+pointer or an `optional<reference_wrapper<T>>`-shaped construct) to actually support
+rebinding. Tracked separately in `TODO.md`; not attempted in this pass.

@@ -101,7 +101,7 @@ PASS=20, XFAIL=0, FAIL=0.
   by name, not merely having one declared somewhere in the body.
 
 Phase 2's reference-stored-in-field escape check (#3) added 2 more fixtures:
-**PASS=22, XFAIL=0, FAIL=0.**
+PASS=22, XFAIL=0, FAIL=0.
 
 - `ref_field_rejected.clg` — a class field declared `ref` (`ref Node r;`). Sealed by
   construction, the same mechanism as raw pointers/casts (Ch. 17): the grammar has no
@@ -109,3 +109,16 @@ Phase 2's reference-stored-in-field escape check (#3) added 2 more fixtures:
 - `field_stores_owner_accepted.clg` — a method stores a moved-in parameter into a
   plain (non-`ref`) field: ordinary ownership transfer, not a borrow, and must still
   be accepted.
+
+Phase 2's branch-merge precision fix added 2 more fixtures:
+**PASS=24, XFAIL=0, FAIL=0.**
+
+- `branch_merge_no_false_positive_accepted.clg` — an observer is rebound inside the
+  `if` branch only; the `else` branch uses it observing its original, still-alive
+  owner. Before the fix, observer-tracking state leaked across sibling branches (only
+  `movedFrom_` was snapshotted/restored per branch, not the observer maps), so this
+  was wrongly rejected using state left over from the `if` branch.
+- `branch_merge_ambiguous_rejected.clg` — the two branches rebind the same observer to
+  *different* owners. Positive control proving the fix doesn't over-correct: this case
+  is genuinely ambiguous (a later use can't know which branch ran) and must stay
+  rejected, per CLAUDE.md's conservative-reject rule.

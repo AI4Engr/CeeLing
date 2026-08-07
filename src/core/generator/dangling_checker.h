@@ -91,6 +91,31 @@ private:
     // them from the live set. `ownersBefore` is the object-local set captured on entry.
     void endBlockScope(const std::set<std::string>& ownersBefore);
 
+    // Snapshot of every piece of state a branch body can mutate that must NOT leak
+    // into a sibling branch that didn't run (only one branch of an `if`/`else` ever
+    // executes). `movedFrom_` was already snapshotted/restored per branch; the
+    // observer-tracking maps were not, which let a rebind inside one branch (e.g.
+    // `obs = b;`) pollute the OTHER branch's view of what `obs` observes -- the same
+    // class of bug fixed for `movedFrom_` earlier, just not extended to these fields.
+    struct BranchState {
+        std::set<std::string> movedFrom;
+        std::set<std::string> observerNames;
+        std::map<std::string, std::string> observerOf;
+        std::set<std::string> danglingObservers;
+        std::set<std::string> aliasObservers;
+    };
+    BranchState snapshotBranchState() const;
+    void restoreBranchState(const BranchState& state);
+    // Conservative union-merge of two branch outcomes into the current state (used
+    // after both an `if` and its `else` have been independently analyzed from the
+    // same starting snapshot). A name/observer affected in EITHER branch keeps that
+    // effect afterward (can't know which branch ran) -- same "ambiguous ->
+    // conservative reject" rule already used for movedFrom_, extended to observers:
+    // if the two branches disagree about what an observer observes (or one killed it
+    // and the other didn't), the observer is dangling after the merge point.
+    void mergeBranchStates(const BranchState& before, const BranchState& thenState,
+                            const BranchState& elseState);
+
     // Record which locals are object-typed (only those participate in move tracking).
     // Returns true if `type` names a known class.
     bool isObjectType(const std::string& type) const;

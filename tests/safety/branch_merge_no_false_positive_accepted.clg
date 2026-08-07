@@ -1,0 +1,33 @@
+//@ expect: accept
+//@ reason: `obs` is only ever rebound inside the `if` branch; the `else` branch
+//@ reason: leaves it observing its original (still-alive) owner `a` -- using it
+//@ reason: there must not be rejected by state left over from the `if` branch.
+//
+// Branch-merge precision. Before this fixture, `if`/`else` branches were checked
+// independently but the observer-tracking state (observerOf_ and friends) was never
+// snapshotted/restored between them the way moved-from state already was -- so a
+// rebind inside the `if` branch (`obs = b;`) leaked into the `else` branch's view of
+// what `obs` observes, wrongly flagging this fixture's `else`-branch use of `obs` as
+// dangling (it reported `obs`'s owner as `b`, which the `if` branch killed, even
+// though the `else` branch never touched `obs` at all and `a` -- what `obs` actually
+// observes on that path -- is still alive).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    ref Node obs = a;
+    bool cond = true;
+    if (cond) {
+        obs = b;
+        b = new Node(3);
+    } else {
+        std::cout << obs.v << std::endl;
+    }
+    return 0;
+}

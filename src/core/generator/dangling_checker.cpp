@@ -293,6 +293,91 @@ void DanglingChecker::endBlockScope(const std::set<std::string>& ownersBefore) {
     }
 }
 
+DanglingChecker::BranchState DanglingChecker::snapshotBranchState() const {
+    BranchState s;
+    s.movedFrom = movedFrom_;
+    s.observerNames = observerNames_;
+    s.observerOf = observerOf_;
+    s.danglingObservers = danglingObservers_;
+    s.aliasObservers = aliasObservers_;
+    return s;
+}
+
+void DanglingChecker::restoreBranchState(const BranchState& state) {
+    movedFrom_ = state.movedFrom;
+    observerNames_ = state.observerNames;
+    observerOf_ = state.observerOf;
+    danglingObservers_ = state.danglingObservers;
+    aliasObservers_ = state.aliasObservers;
+}
+
+void DanglingChecker::mergeBranchStates(const BranchState& before, const BranchState& thenState,
+                                         const BranchState& elseState) {
+    // movedFrom_: moved in EITHER branch -> moved after (conservative union).
+    movedFrom_ = thenState.movedFrom;
+    movedFrom_.insert(elseState.movedFrom.begin(), elseState.movedFrom.end());
+
+    // Observer names: the union of everything either branch declared (a name
+    // declared as an observer in one branch and used only within that branch is
+    // already scope-checked independently; keeping the union here just means a
+    // later use-site lookup can find it, matching how objectLocals_ union already
+    // works for owners declared inside an unconditional tail after the `if`).
+    observerNames_ = thenState.observerNames;
+    observerNames_.insert(elseState.observerNames.begin(), elseState.observerNames.end());
+
+    // danglingObservers_: dangling in EITHER branch -> dangling after (an owner
+    // dying at a branch's own scope-exit is a real death on that path, and the
+    // caller can't know which branch ran).
+    danglingObservers_ = thenState.danglingObservers;
+    danglingObservers_.insert(elseState.danglingObservers.begin(), elseState.danglingObservers.end());
+
+    aliasObservers_ = thenState.aliasObservers;
+    aliasObservers_.insert(elseState.aliasObservers.begin(), elseState.aliasObservers.end());
+
+    // observerOf_: this is the field the sibling-branch-pollution bug was actually
+    // about. For each observer name touched by EITHER branch, compare what each
+    // branch says it observes (falling back to the pre-if binding if a branch never
+    // touched it):
+    //  - both branches agree (or only one branch touched it and the other kept the
+    //    pre-if binding) -> keep that binding, it's certain either way.
+    //  - the branches disagree (rebound to different owners, or one rebound while
+    //    the other implicitly kept the old one) -> ambiguous; conservative-reject
+    //    rule says mark it dangling rather than guess which binding survives.
+    observerOf_ = before.observerOf;
+    std::set<std::string> touched;
+    for (const auto& [name, owner] : thenState.observerOf) touched.insert(name);
+    for (const auto& [name, owner] : elseState.observerOf) touched.insert(name);
+    for (const auto& name : touched) {
+        auto beforeIt = before.observerOf.find(name);
+        const std::string beforeOwner = beforeIt != before.observerOf.end() ? beforeIt->second : "";
+
+        auto thenIt = thenState.observerOf.find(name);
+        const std::string thenOwner = thenIt != thenState.observerOf.end() ? thenIt->second : beforeOwner;
+
+        auto elseIt = elseState.observerOf.find(name);
+        const std::string elseOwner = elseIt != elseState.observerOf.end() ? elseIt->second : beforeOwner;
+
+        if (thenOwner == elseOwner) {
+            if (thenOwner.empty()) {
+                observerOf_.erase(name);
+            } else {
+                observerOf_[name] = thenOwner;
+            }
+        } else {
+            // Ambiguous: the two branches leave `name` observing different owners
+            // (or one rebinds it while the other leaves it unbound). The use-site
+            // check only consults danglingObservers_ for names that HAVE an
+            // observerOf_ entry (it needs an owner name to report in the
+            // diagnostic), so an entry must still be present here -- pick whichever
+            // branch's owner is non-empty (if any) purely for that message; the
+            // dangling flag below is what actually makes any use after the `if` an
+            // error, independent of which owner name is shown.
+            observerOf_[name] = !thenOwner.empty() ? thenOwner : elseOwner;
+            danglingObservers_.insert(name);
+        }
+    }
+}
+
 void DanglingChecker::processStatement(const Statement* stmt) {
     if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
         // First: uses on the RHS are evaluated before the declaration completes.
@@ -405,52 +490,52 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         checkReturnedReference(ret->expression.get());
     } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
         checkExpressionUses(ifs->condition.get());
-        // A branch runs conditionally, so a *move* that happens inside a branch is not
-        // certain on the path after the `if`. We snapshot moved-from state before the
-        // branches and restore it afterward, so a conditional move (e.g. `head = newNode`
-        // in one arm) does not leak out and wrongly flag a later use of `newNode`. (This
-        // errs toward acceptance across branches; a precise path-merge is future work.)
-        // We deliberately do NOT roll back dangling-observer state: an owner dying at a
-        // branch's scope exit is a real death, and a later use of an observer of it must
-        // still be rejected (conservative — see the scope-exit fixture).
-        // Each branch starts fresh from the pre-if state (not polluted by the sibling
-        // branch's moves) since only one branch actually runs. Only owner-liveness
-        // (objectLocals_) carries forward normally within a branch; moved-from state
-        // is independently snapshotted/restored per branch, then merged conservatively:
-        // a name moved in EITHER branch is moved after the `if` (a use after the `if`
-        // can't know which branch ran).
-        const std::set<std::string> movedBefore = movedFrom_;
-        std::set<std::string> movedAfterThen = movedBefore;
+        // A branch runs conditionally, so any effect inside it (a move, an observer
+        // rebind, a scope-exit death) is not certain on the path after the `if` --
+        // each branch is analyzed independently from the same starting snapshot, then
+        // the two outcomes are merged conservatively: an effect present in EITHER
+        // branch holds after the `if` (a use after the `if` can't know which branch
+        // ran), and if the branches actively disagree about what an observer points
+        // at, that observer is treated as dangling rather than guessed at (same
+        // "ambiguous -> conservative reject" rule CLAUDE.md specifies elsewhere). See
+        // mergeBranchStates for the exact per-field rules.
+        const BranchState before = snapshotBranchState();
+        BranchState thenState = before;
         {
             const std::set<std::string> ownersBefore = objectLocals_;
             for (const auto& inner : ifs->body) {
                 processStatement(inner.get());
             }
             endBlockScope(ownersBefore);
-            movedAfterThen = movedFrom_;
+            thenState = snapshotBranchState();
         }
-        movedFrom_ = movedBefore;
+        restoreBranchState(before);
+        BranchState elseState = before;
         if (!ifs->elseBody.empty()) {
             const std::set<std::string> ownersBefore = objectLocals_;
             for (const auto& inner : ifs->elseBody) {
                 processStatement(inner.get());
             }
             endBlockScope(ownersBefore);
+            elseState = snapshotBranchState();
         }
-        movedFrom_.insert(movedAfterThen.begin(), movedAfterThen.end());
+        mergeBranchStates(before, thenState, elseState);
     } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
         checkExpressionUses(whiles->condition.get());
-        // Same conservatism as `if`: the loop body may run zero or more times, so a
-        // move inside it is not certain on the path after the loop -- snapshot/restore
-        // moved-from state around it (dangling-observer state is not rolled back, same
-        // reasoning as the `if` branch above).
-        const std::set<std::string> movedBefore = movedFrom_;
+        // Same conservatism as `if`: the loop body may run zero or more times, so any
+        // effect inside it is not certain on the path after the loop. Modeled as a
+        // two-way branch against "loop body never runs" (mirrors the `if`/no-`else`
+        // case above), reusing the same merge rules -- including the observer-rebind
+        // disagreement handling the sibling-branch fix added for `if`.
+        const BranchState before = snapshotBranchState();
         const std::set<std::string> ownersBefore = objectLocals_;
         for (const auto& inner : whiles->body) {
             processStatement(inner.get());
         }
         endBlockScope(ownersBefore);
-        movedFrom_ = movedBefore;
+        const BranchState afterLoop = snapshotBranchState();
+        restoreBranchState(before);
+        mergeBranchStates(before, afterLoop, before);
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         // A bare expression statement, e.g. `sink(a);`. First check uses, then
         // apply move effects: a user function call moves its object-typed args.

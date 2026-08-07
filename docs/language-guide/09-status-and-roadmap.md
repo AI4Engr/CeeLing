@@ -54,6 +54,13 @@ real.
   Combined with the existing ban on `ref` function parameters, there is no remaining
   syntactic path to get an actual borrow stored in a field. See
   `tests/safety/ref_field_rejected.clg` / `field_stores_owner_accepted.clg`.
+- **Branch-merge precision** — `if`/`else` arms (and a `while` body vs. skipping it)
+  are each analyzed from the same snapshot, then merged: an effect in either branch
+  holds afterward, and if the branches disagree about what an observer points at, it's
+  conservatively marked dangling rather than guessed at. This closed a real false
+  positive where a rebind inside one branch leaked into the sibling branch's view. See
+  `tests/safety/branch_merge_no_false_positive_accepted.clg` /
+  `branch_merge_ambiguous_rejected.clg`.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**
@@ -95,19 +102,25 @@ Forbid raw `T*`, raw `new`/`delete`, `.get()`, `reinterpret_cast` / C-style cast
 Chapter 17 for the mechanism and worked diagnostic text. Still open: default-reject
 unknown library calls (needs the Phase 2 library-summary allow-list first).
 
-### Phase 2 — Dangling-reference analysis (core)  ✅ new-syntax fixtures + auto summaries + #2 + #3 done
+### Phase 2 — Dangling-reference analysis (core)  ✅ done except library summaries
 Provenance table, death events, use-site check are implemented and cover all 5
 new-syntax dangling fixtures (owner moved/reassigned/scope-exited, observer-parameter
 ban), plus auto-derived return-provenance summaries (CLAUDE.md component A — scoped to
 return-value aliasing, since parameters are always-moved by construction),
-return-local-reference (#2), and reference-stored-in-field escape (#3, sealed by
-construction — no `ref`-qualified field production exists) (see "Working today"
-above). Still open: library summaries, iterator invalidation (#4),
-`string_view`/`span` (#5), `auto`-vs-concrete provenance (#6), lambda `[&]` escape
-(#7), dangling temporaries (#8), Eigen summaries, branch-merge precision. The legacy
-`borrow_*.clg` (`owned<>/borrowed<>`) fixtures are superseded by the new syntax and
-kept only for
-regression.
+return-local-reference (#2), reference-stored-in-field escape (#3, sealed by
+construction — no `ref`-qualified field production exists), and branch-merge
+precision (see "Working today" above). Still open: library summaries, iterator
+invalidation (#4), `string_view`/`span` (#5), `auto`-vs-concrete provenance (#6),
+lambda `[&]` escape (#7), dangling temporaries (#8), Eigen summaries — all gated on
+language features (containers, `auto`, lambdas) or a library-summary allow-list that
+don't exist yet (Phase 2.6+). The legacy `borrow_*.clg` (`owned<>/borrowed<>`)
+fixtures are superseded by the new syntax and kept only for regression.
+
+Found but not fixed during this phase (a separate, pre-existing emitter gap, not a
+dangling-analysis one): rebinding a `ref` observer (`obs = b;`) has no valid C++
+lowering — a native `T&` can't be rebound after initialization, so `AstEmitter`'s
+current assign-through lowering is wrong for this specific case. The checker itself
+tracks CeeLing's intended rebind semantics correctly.
 
 ### Phase 3 — Use-after-move (coupled to auto-`std::move`)  ✅ done
 Moved-from state tracking; reject use of a moved-from value. Implemented in
