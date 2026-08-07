@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ reason: `Box` declares its own `get()` method -- an ordinary user method call, not
+//@ reason: the smart-pointer back door. MUST continue to compile (guards against a
+//@ reason: `.get()` check that is too aggressive and rejects legitimate user code).
+// Positive control for the `.get()` escape-hatch check: a user-defined `get()` method
+// sharing the smart-pointer accessor's name must not be flagged.
+
+class Box {
+public:
+    int v;
+    Box(int x) { v = x; }
+    int get() { return v; }
+};
+
+int main() {
+    Box b = new Box(1);
+    int r = b.get();
+    std::cout << r << std::endl;
+    return 0;
+}

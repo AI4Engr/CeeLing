@@ -219,14 +219,23 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         // We deliberately do NOT roll back dangling-observer state: an owner dying at a
         // branch's scope exit is a real death, and a later use of an observer of it must
         // still be rejected (conservative — see the scope-exit fixture).
+        // Each branch starts fresh from the pre-if state (not polluted by the sibling
+        // branch's moves) since only one branch actually runs. Only owner-liveness
+        // (objectLocals_) carries forward normally within a branch; moved-from state
+        // is independently snapshotted/restored per branch, then merged conservatively:
+        // a name moved in EITHER branch is moved after the `if` (a use after the `if`
+        // can't know which branch ran).
         const std::set<std::string> movedBefore = movedFrom_;
+        std::set<std::string> movedAfterThen = movedBefore;
         {
             const std::set<std::string> ownersBefore = objectLocals_;
             for (const auto& inner : ifs->body) {
                 processStatement(inner.get());
             }
             endBlockScope(ownersBefore);
+            movedAfterThen = movedFrom_;
         }
+        movedFrom_ = movedBefore;
         if (!ifs->elseBody.empty()) {
             const std::set<std::string> ownersBefore = objectLocals_;
             for (const auto& inner : ifs->elseBody) {
@@ -234,6 +243,19 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             }
             endBlockScope(ownersBefore);
         }
+        movedFrom_.insert(movedAfterThen.begin(), movedAfterThen.end());
+    } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+        checkExpressionUses(whiles->condition.get());
+        // Same conservatism as `if`: the loop body may run zero or more times, so a
+        // move inside it is not certain on the path after the loop -- snapshot/restore
+        // moved-from state around it (dangling-observer state is not rolled back, same
+        // reasoning as the `if` branch above).
+        const std::set<std::string> movedBefore = movedFrom_;
+        const std::set<std::string> ownersBefore = objectLocals_;
+        for (const auto& inner : whiles->body) {
+            processStatement(inner.get());
+        }
+        endBlockScope(ownersBefore);
         movedFrom_ = movedBefore;
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         // A bare expression statement, e.g. `sink(a);`. First check uses, then

@@ -9,6 +9,38 @@ namespace cling {
 
 namespace {
 
+// If `snippet` contains a construct that CeeLing deliberately forbids (Phase 1 escape
+// hatches, CLAUDE.md threat model #13-18), return an explanatory suggestion naming
+// *why* it's forbidden. These constructs have no grammar production, so they always
+// surface as an unbuildable node -- this turns that into a legible, intentional
+// rejection instead of a bare "syntax error".
+std::string forbiddenConstructSuggestion(const std::string& snippet) {
+    if (snippet.find("reinterpret_cast") != std::string::npos ||
+        snippet.find("const_cast") != std::string::npos ||
+        snippet.find("static_cast") != std::string::npos) {
+        return " Suggestion: C++-style casts are forbidden in CeeLing (CLAUDE.md hatch "
+               "#13/#16) -- casting is a type-confusion / const-bypass escape hatch "
+               "with no safe equivalent, so there is no cast syntax in the language.";
+    }
+    if (snippet.find("union") != std::string::npos) {
+        return " Suggestion: raw `union` is forbidden (hatch #17) -- it allows reading "
+               "a different member than was written, which is undefined behavior C++ "
+               "cannot catch. Use a class with distinct fields instead.";
+    }
+    if (snippet.find("delete") != std::string::npos) {
+        return " Suggestion: raw `delete` is forbidden (hatch #15) -- object lifetime "
+               "is managed automatically by the compiler-chosen smart pointer; there is "
+               "no manual delete.";
+    }
+    // Note: `T* name` is grammatically indistinguishable from multiplication `a * b`
+    // (CeeLing has no separate pointer-declarator syntax), so it is NOT handled here
+    // as a parse-error pattern -- `EscapeHatchChecker` catches it semantically instead
+    // (a `ClassName * identifier` expression statement, where the left operand is a
+    // known class, cannot be a real multiplication and must be an attempted raw
+    // pointer declaration).
+    return "";
+}
+
 std::string makeNodeError(const char* prefix, TSNode node, const std::string& source) {
     const TSPoint point = ts_node_start_point(node);
     const uint32_t startByte = ts_node_start_byte(node);
@@ -30,7 +62,9 @@ std::string makeNodeError(const char* prefix, TSNode node, const std::string& so
         oss << ", near: " << snippet;
     }
 
-    if (snippet.find(":=") != std::string::npos) {
+    if (std::string forbidden = forbiddenConstructSuggestion(snippet); !forbidden.empty()) {
+        oss << forbidden;
+    } else if (snippet.find(":=") != std::string::npos) {
         oss << ". Suggestion: use '=' for assignment.";
     } else if (!snippet.empty() && snippet.find(';') == std::string::npos &&
                snippet.find('{') == std::string::npos && snippet.find('}') == std::string::npos) {
@@ -39,6 +73,15 @@ std::string makeNodeError(const char* prefix, TSNode node, const std::string& so
         oss << ". Suggestion: check member-access syntax and make sure the full statement is supported.";
     }
     return oss.str();
+}
+
+// A body-collecting loop hit a child that either is an ERROR/missing node, or is a
+// "statement" node that failed to build. Both mean the source contains something
+// CeeLing cannot express -- raise it as a real error instead of silently dropping the
+// statement (which would let unsafe/unsupported constructs pass through unseen by the
+// dangling checker and the escape-hatch checker).
+[[noreturn]] void rejectUnbuildableChild(TSNode child, const std::string& source) {
+    throw std::runtime_error(makeNodeError("Parse error", child, source));
 }
 
 } // namespace
@@ -169,6 +212,8 @@ StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) 
         result = buildReturnStatement(node, source);
     } else if (strcmp(node_type, "if_statement") == 0) {
         result = buildIfStatement(node, source);
+    } else if (strcmp(node_type, "while_statement") == 0) {
+        result = buildWhileStatement(node, source);
     } else if (strcmp(node_type, "statement") == 0) {
         // If we get a generic "statement" node, look at its first child
         if (ts_node_child_count(node) > 0) {
@@ -287,6 +332,16 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
         }
     }
 
+    // An unrecognized/ERROR node, or a recognized builder that itself failed (e.g. a
+    // binary_expression whose operand couldn't be built): never return null silently.
+    // Every call site treats the result as non-null; a silent null here was a latent
+    // crash (and, for constructs like `reinterpret_cast<T>(x)` that mis-parse as
+    // ordinary comparisons rather than an ERROR node, a silent way for a forbidden
+    // construct's operand to vanish from the emitted C++ instead of being rejected).
+    if (!result) {
+        rejectUnbuildableChild(node, source);
+    }
+
     stampLoc(result.get(), node);
     return result;
 }
@@ -355,10 +410,14 @@ StatementPtr ASTBuilder::buildFunctionDeclaration(TSNode node, const std::string
                 }
                 // Skip commas / observer_qualifier (already rejected).
             }
+        } else if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
         } else if (strcmp(childType, "statement") == 0) {
             auto stmt = buildStatement(child, source);
             if (stmt) {
                 body.push_back(std::move(stmt));
+            } else {
+                rejectUnbuildableChild(child, source);
             }
         }
     }
@@ -470,10 +529,14 @@ StatementPtr ASTBuilder::buildMainFunction(TSNode node, const std::string& sourc
         TSNode child = ts_node_child(node, i);
         const char* childType = ts_node_type(child);
 
-        if (strcmp(childType, "statement") == 0) {
+        if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        } else if (strcmp(childType, "statement") == 0) {
             auto stmt = buildStatement(child, source);
             if (stmt) {
                 body.push_back(std::move(stmt));
+            } else {
+                rejectUnbuildableChild(child, source);
             }
         }
     }
@@ -531,13 +594,17 @@ StatementPtr ASTBuilder::buildClassDeclaration(TSNode node, const std::string& s
         TSNode child = ts_node_child(node, i);
         const char* childType = ts_node_type(child);
 
-        if (strcmp(childType, "member_variable_declaration") == 0 ||
+        if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        } else if (strcmp(childType, "member_variable_declaration") == 0 ||
             strcmp(childType, "constructor_declaration") == 0 ||
             strcmp(childType, "method_declaration") == 0) {
             // Direct member
             auto member = buildStatement(child, source);
             if (member) {
                 members.push_back(std::move(member));
+            } else {
+                rejectUnbuildableChild(child, source);
             }
         }
     }
@@ -577,10 +644,14 @@ StatementPtr ASTBuilder::buildConstructorDeclaration(TSNode node, const std::str
                     }
                 }
             }
+        } else if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
         } else if (strcmp(childType, "statement") == 0) {
             auto stmt = buildStatement(child, source);
             if (stmt) {
                 body.push_back(std::move(stmt));
+            } else {
+                rejectUnbuildableChild(child, source);
             }
         }
     }
@@ -619,18 +690,45 @@ StatementPtr ASTBuilder::buildIfStatement(TSNode node, const std::string& source
 
         if (getNodeText(child, source) == "else") { afterElse = true; continue; }
 
+        if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        }
+
         const bool isStmt = strcmp(childType, "statement") == 0;
         const bool isNestedIf = strcmp(childType, "if_statement") == 0;  // `else if`
         if (!isStmt && !isNestedIf) continue;
 
         auto built = buildStatement(child, source);
-        if (!built) continue;
+        if (!built) rejectUnbuildableChild(child, source);
         (afterElse ? elseBody : body).push_back(std::move(built));
     }
 
     auto result = std::make_unique<IfStatement>(std::move(condition), std::move(body));
     result->elseBody = std::move(elseBody);
     return result;
+}
+
+StatementPtr ASTBuilder::buildWhileStatement(TSNode node, const std::string& source) {
+    // while_statement: "while" "(" expression ")" "{" repeat(statement) "}"
+    TSNode condition_node = ts_node_child(node, 2); // Skip "while" and "("
+    auto condition = buildExpression(condition_node, source);
+
+    std::vector<StatementPtr> body;
+    uint32_t childCount = ts_node_child_count(node);
+    for (uint32_t i = 0; i < childCount; i++) {
+        TSNode child = ts_node_child(node, i);
+        const char* childType = ts_node_type(child);
+
+        if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        } else if (strcmp(childType, "statement") == 0) {
+            auto stmt = buildStatement(child, source);
+            if (!stmt) rejectUnbuildableChild(child, source);
+            body.push_back(std::move(stmt));
+        }
+    }
+
+    return std::make_unique<WhileStatement>(std::move(condition), std::move(body));
 }
 
 ExpressionPtr ASTBuilder::buildMemberAccess(TSNode node, const std::string& source) {
@@ -653,6 +751,7 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
 
     std::vector<std::pair<std::string, std::string>> parameters;
     std::vector<StatementPtr> body;
+    bool isConst = false;
 
     // Parse all children to find parameters and body
     uint32_t childCount = ts_node_child_count(node);
@@ -678,15 +777,23 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
                     }
                 }
             }
+        } else if (strcmp(childType, "const") == 0) {
+            isConst = true;
+        } else if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
         } else if (strcmp(childType, "statement") == 0) {
             auto stmt = buildStatement(child, source);
             if (stmt) {
                 body.push_back(std::move(stmt));
+            } else {
+                rejectUnbuildableChild(child, source);
             }
         }
     }
 
-    return std::make_unique<MethodDeclaration>(returnType, methodName, std::move(parameters), std::move(body));
+    auto result = std::make_unique<MethodDeclaration>(returnType, methodName, std::move(parameters), std::move(body));
+    result->isConst = isConst;
+    return result;
 }
 
 } // namespace cling

@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ reason: raw pointer types (`T*`) are forbidden (CLAUDE.md hatch #15) -- pointers
+//@ reason: have no legal path through CeeLing.
+// Phase 1 escape-hatch fixture. `Node* p` has no grammar production in CeeLing; the
+// nearest thing that parses (`Node * p`, multiplication) is semantically rejected
+// because a class name can never be a real multiplication operand.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node * p;  // ERROR: raw pointer types are forbidden
+    return 0;
+}

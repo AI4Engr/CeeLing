@@ -53,3 +53,25 @@ Captured against `build/cling.exe` with **no safety analysis implemented**
 - The `tests/borrow_*.clg` files are **legacy** scaffolding (annotated syntax),
   retained for regression and tagged `//@ legacy:`.
 - Each fixture declares its expectation with a `//@ expect: reject|accept` comment.
+
+## Current status (Phase 1 landed)
+
+This section is updated as phases land; the snapshot above stays frozen as the
+Phase 0 historical starting point.
+
+Phase 1 (escape-hatch sealing) added 4 fixtures and closed all remaining gaps in the
+suite: **PASS=16, XFAIL=0, FAIL=0.**
+
+- `get_on_object_rejected.clg` / `get_on_user_method_accepted.clg` — `.get()` is
+  rejected only when the receiver is a compiler-generated smart pointer (a CeeLing
+  object), never a user-defined method of the same name.
+- `raw_pointer_type_rejected.clg` / `raw_delete_rejected.clg` — raw pointer types and
+  raw `delete` are rejected (casts and raw `union` are covered too, without dedicated
+  fixtures, since they hit the same mechanism as `delete`).
+- `borrow_owner_alive_ok.clg` flipped from `accept` to `reject`: it was never valid
+  CeeLing grammar (`owned<Node>`/`borrowed<Node>` are not real types) and only
+  "passed" before because of a bug where a body statement that failed to parse was
+  silently dropped instead of raising an error. Fixing that bug (a Phase 1
+  prerequisite -- see Ch. 18) made this fixture's true state visible: rejected, like
+  its five sibling `borrow_*.clg` fixtures. The real positive control for "a borrow
+  used while its owner is alive" is `safety/observer_alive_ok.clg`, which still PASSes.

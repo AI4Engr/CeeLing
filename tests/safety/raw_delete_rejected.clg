@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ reason: raw `delete` is forbidden (CLAUDE.md hatch #15) -- object lifetime is
+//@ reason: managed automatically by the compiler-chosen smart pointer.
+// Phase 1 escape-hatch fixture. `delete` has no grammar production in CeeLing; it
+// surfaces as an unbuildable node with an explanatory message.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    delete a;  // ERROR: raw `delete` is forbidden
+    return 0;
+}

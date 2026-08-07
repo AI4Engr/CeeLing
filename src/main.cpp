@@ -1,6 +1,7 @@
 #include "core/cst_to_ast/ast.h"
 #include "core/generator/cpp_generator.h"
 #include "core/generator/dangling_checker.h"
+#include "core/generator/escape_hatch_checker.h"
 #include "core/generator/ast_emitter.h"
 #include "core/generator/smart_pointer_analyzer.h"
 #include <iostream>
@@ -37,6 +38,8 @@ void showUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [options] <file.clg>" << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << "  --cpp <output>  - Compile to C++ and save to <output> file" << std::endl;
+    std::cout << "  --legacy-cpp    - Use the legacy regex/text-substitution generator" << std::endl;
+    std::cout << "                    instead of the default AST-driven generator" << std::endl;
     std::cout << "  --help         - Show this help message" << std::endl;
     std::cout << "  <file.clg>      - CeeLing source file to process" << std::endl;
     std::cout << std::endl;
@@ -73,13 +76,21 @@ int main(int argc, char* argv[]) {
     std::string inputFile;
     std::string outputFile;
     bool compileToCpp = false;
-    bool useAstEmitter = false;  // experimental AST-driven codegen (opt-in)
+    // AstEmitter (the AST-driven generator) is the default: it can only emit node
+    // types it recognizes, so a construct CeeLing cannot express structurally cannot
+    // appear in its output -- the property Phase 1 (escape-hatch sealing) depends on.
+    // The legacy regex/text-substitution CppGenerator remains available via
+    // --legacy-cpp for comparison/debugging, but does not offer that guarantee (it
+    // builds output from the raw source text, not from the validated AST).
+    bool useLegacyGenerator = false;
 
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--emit-ast") {
-            useAstEmitter = true;
+            // AstEmitter is now the default; kept as a harmless accepted alias.
+        } else if (arg == "--legacy-cpp") {
+            useLegacyGenerator = true;
         } else if (arg == "--cpp") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: --cpp requires an output filename" << std::endl;
@@ -137,6 +148,24 @@ int main(int argc, char* argv[]) {
         throw std::runtime_error("This build was configured without Tree-sitter support. Rebuild with -DWITH_TREE_SITTER=ON.");
 #endif
 
+        // Phase 1: seal escape hatches (e.g. `.get()` on a CeeLing object) before any
+        // lifetime analysis -- a leaky boundary makes dangling analysis meaningless.
+        EscapeHatchChecker escapeHatchChecker;
+        std::vector<EscapeHatchError> escapeHatchErrors = escapeHatchChecker.check(*program);
+        if (!escapeHatchErrors.empty()) {
+            for (const auto& err : escapeHatchErrors) {
+                std::cerr << "error[semantic/forbidden-construct]: " << err.message << "\n";
+                if (err.line > 0) {
+                    std::cerr << "  --> " << inputFile << ":" << err.line << ":" << err.column << "\n";
+                }
+                if (!err.help.empty()) {
+                    std::cerr << "  help: " << err.help << "\n";
+                }
+            }
+            pauseIfNeeded();
+            return 1;
+        }
+
         // Memory-safety analysis: reject dangling / use-after-move before generating C++.
         DanglingChecker danglingChecker;
         std::vector<DanglingError> danglingErrors = danglingChecker.check(*program);
@@ -156,15 +185,16 @@ int main(int argc, char* argv[]) {
 
         // Generate C++ code
         std::string cppCode;
-        if (useAstEmitter) {
-            // Experimental AST-driven generator (the new architecture).
+        if (useLegacyGenerator) {
+            CppGenerator generator;
+            cppCode = generator.generateCpp(*program, source);
+        } else {
+            // AST-driven generator (default): walks the validated Program, so an
+            // unsupported/forbidden construct cannot appear in the output.
             SmartPointerAnalyzer analyzer;
             analyzer.analyzeProgram(*program, source);
             AstEmitter emitter(analyzer);
             cppCode = emitter.emit(*program);
-        } else {
-            CppGenerator generator;
-            cppCode = generator.generateCpp(*program, source);
         }
 
         // Write to output file

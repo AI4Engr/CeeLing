@@ -1,8 +1,16 @@
-//@ expect: accept
+//@ expect: reject
 //@ legacy: uses owned<>/borrowed<> scaffolding syntax; superseded by tests/safety/*.clg
 // B1 control fixture (scenario D): a borrow is used while its owner is still alive and in
-// scope. This is the safe, common case and MUST continue to compile — it guards against a
-// dangling-borrow check that is too aggressive (false positives).
+// scope. This is the safe, common case for the modern syntax -- see
+// tests/safety/observer_alive_ok.clg, which is the real positive control and MUST
+// continue to compile.
+//
+// This legacy fixture's `owned<Node>`/`borrowed<Node>` syntax was NEVER valid CeeLing
+// grammar (owned<>/borrowed<> are not real types); it only appeared to "accept" because
+// of a since-fixed bug where a body statement that failed to parse was silently
+// dropped instead of raising an error (see ast_builder.cpp's body-collecting loops).
+// Now that the bug is fixed, this fixture is honestly rejected like its five sibling
+// borrow_*.clg fixtures, all tagged `//@ legacy:`.
 #include <memory>
 #include <iostream>
 

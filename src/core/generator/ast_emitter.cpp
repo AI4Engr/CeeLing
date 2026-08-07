@@ -143,7 +143,7 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
             emitFunction("", ctor->name, ctor->parameters, ctor->body, out, cls.name, 1);
         } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
             emitFunction(method->returnType, method->name, method->parameters, method->body,
-                         out, cls.name, 1);
+                         out, cls.name, 1, method->isConst);
         }
     }
     out << "};\n\n";
@@ -152,7 +152,7 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
 void AstEmitter::emitFunction(const std::string& returnType, const std::string& name,
                               const std::vector<std::pair<std::string, std::string>>& params,
                               const std::vector<StatementPtr>& body, std::ostringstream& out,
-                              const std::string& ownerClass, int baseIndent) {
+                              const std::string& ownerClass, int baseIndent, bool isConst) {
     // Each function has its own local variable scope; `currentClass_` enables `this->`
     // for field access inside a method/constructor.
     varKinds_.clear();
@@ -182,6 +182,7 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
         }
     }
     sig += ")";
+    if (isConst) sig += " const";
     // Class members are indented one level; free functions sit at column 0.
     const std::string pad = indentStr(baseIndent);
     out << pad << sig << " {\n";
@@ -249,9 +250,18 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
                                                    : assign->variable;
         }
         std::string rhs;
+        const bool rhsIsNullptr = [&] {
+            auto id = dynamic_cast<const Identifier*>(assign->expression.get());
+            return id != nullptr && id->name == "nullptr";
+        }();
         if (auto neww = dynamic_cast<const NewExpression*>(assign->expression.get())) {
             // `target = new T(...)` -> make_*<T>(...) with the target field's ptr kind.
             rhs = factoryFor(neww->className, ptrVar, neww->arguments);
+        } else if (rhsIsNullptr && !ptrVar.empty() &&
+                   analyzer_.getPointerTypeForVariable(ptrVar) == PointerType::WEAK) {
+            // weak_ptr has no operator=(nullptr_t); default-construct instead (an empty
+            // weak_ptr, the same meaning as "nullptr" for the other smart-pointer kinds).
+            rhs = "{}";
         } else if (memberTarget) {
             // `a.b = obj;` links/shares into a field — it does not consume `obj`.
             rhs = emitExpression(assign->expression.get());
@@ -307,6 +317,12 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         } else {
             out << "\n";
         }
+    } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+        out << pad << "while (" << emitExpression(whiles->condition.get()) << ") {\n";
+        for (const auto& inner : whiles->body) {
+            emitStatement(inner.get(), out, indent + 1);
+        }
+        out << pad << "}\n";
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         out << pad << emitExpression(exprStmt->expression.get()) << ";\n";
     }

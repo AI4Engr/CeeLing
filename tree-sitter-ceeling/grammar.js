@@ -21,6 +21,7 @@ module.exports = grammar({
       $.class_declaration,
       $.include_statement,
       $.if_statement,
+      $.while_statement,
       $.expression_statement
     ),
 
@@ -128,12 +129,17 @@ module.exports = grammar({
       ';'
     ),
 
+    // `const` after the parameter list marks a read-only method (`void f() const {...}`),
+    // matching ordinary C++. CeeLing does not yet enforce const-correctness; the
+    // qualifier is accepted syntactically and carried through so real C++ using it
+    // (e.g. copied-in library code) parses cleanly.
     method_declaration: $ => seq(
       $.type,
       $.identifier,
       '(',
       optional($.parameter_list),
       ')',
+      optional('const'),
       '{',
       repeat($.statement),
       '}'
@@ -171,6 +177,16 @@ module.exports = grammar({
       ))
     )),
 
+    while_statement: $ => seq(
+      'while',
+      '(',
+      $.expression,
+      ')',
+      '{',
+      repeat($.statement),
+      '}'
+    ),
+
     expression: $ => choice(
       $.binary_expression,
       $.unary_expression,
@@ -181,11 +197,19 @@ module.exports = grammar({
     ),
 
     binary_expression: $ => choice(
-      // Arithmetic `+ -`: highest, left-associative, so `a + b + c` chains. Operands are
+      // Multiplicative `* /`: highest of the arithmetic group, left-associative,
+      // matching C++ precedence (tighter than `+ -`).
+      prec.left(6, seq($.expression, choice('*', '/'), $.expression)),
+      // Arithmetic `+ -`: left-associative, so `a + b + c` chains. Operands are
       // full expressions (not just primaries), enabling nesting like `(a + b) - c`.
-      prec.left(3, seq($.expression, choice('+', '-'), $.expression)),
+      prec.left(5, seq($.expression, choice('+', '-'), $.expression)),
       // Comparison/equality: below arithmetic (so `a + b == c` groups as `(a+b) == c`).
-      prec.left(2, seq($.expression, choice('==', '!=', '<', '>', '<=', '>='), $.expression)),
+      prec.left(4, seq($.expression, choice('==', '!=', '<', '>', '<=', '>='), $.expression)),
+      // Logical AND: below comparison (so `a == b && c == d` groups as `(a==b)&&(c==d)`),
+      // matching C++ precedence (&& binds tighter than ||).
+      prec.left(3, seq($.expression, '&&', $.expression)),
+      // Logical OR: loosest of the boolean/comparison group.
+      prec.left(2, seq($.expression, '||', $.expression)),
       // Stream output `a << b << c`: n-ary left-associative chaining, precedence 1
       // (below arithmetic, matching C++ so `std::cout << a + b` groups as `<< (a+b)`).
       // `<<` is tokenized explicitly so it never mis-lexes as two `<` comparisons.
@@ -193,7 +217,7 @@ module.exports = grammar({
     ),
 
     // Unary prefix operators: `!x`, `-x`. Higher precedence than any binary operator.
-    unary_expression: $ => prec(4, seq(
+    unary_expression: $ => prec(7, seq(
       choice('!', '-'),
       $.expression
     )),
@@ -226,12 +250,13 @@ module.exports = grammar({
 
     // Member access is written with `.` in CeeLing source (Java-like). `->` is also
     // accepted for compatibility. The generator lowers `.` on smart-pointer objects
-    // to `->` in the emitted C++.
-    member_access: $ => seq(
-      $.primary_expression,
+    // to `->` in the emitted C++. Left-associative and left-recursive so chains of
+    // arbitrary depth (`a.b.c.d`) parse, not just a single `.` off a primary.
+    member_access: $ => prec.left(seq(
+      choice($.member_access, $.primary_expression),
       choice('.', '->'),
       $.identifier
-    ),
+    )),
 
     function_call: $ => seq(
       choice($.identifier, $.member_access),

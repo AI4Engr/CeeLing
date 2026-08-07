@@ -14,10 +14,9 @@ public:
 
 // LinkedList class
 class LinkedList {
-private:
+public:
     Node head;
 
-public:
     LinkedList() {
 	    head = nullptr;
 	}

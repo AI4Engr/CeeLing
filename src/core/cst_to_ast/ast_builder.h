@@ -30,6 +30,7 @@ private:
     StatementPtr buildMainFunction(TSNode node, const std::string& source);
     StatementPtr buildReturnStatement(TSNode node, const std::string& source);
     StatementPtr buildIfStatement(TSNode node, const std::string& source);
+    StatementPtr buildWhileStatement(TSNode node, const std::string& source);
     ExpressionPtr buildExpression(TSNode node, const std::string& source);
     ExpressionPtr buildIdentifier(TSNode node, const std::string& source);
     ExpressionPtr buildScopedIdentifier(TSNode node, const std::string& source);

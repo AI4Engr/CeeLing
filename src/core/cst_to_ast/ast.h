@@ -310,6 +310,24 @@ public:
     }
 };
 
+class WhileStatement : public Statement {
+public:
+    ExpressionPtr condition;
+    std::vector<StatementPtr> body;
+
+    WhileStatement(ExpressionPtr cond, std::vector<StatementPtr> statements)
+        : condition(std::move(cond)), body(std::move(statements)) {}
+
+    std::string toString() const override {
+        std::string result = "while (" + condition->toString() + ") {\n";
+        for (const auto& stmt : body) {
+            result += "    " + stmt->toString() + "\n";
+        }
+        result += "}";
+        return result;
+    }
+};
+
 class IncludeStatement : public Statement {
 public:
     std::string includeFile;
@@ -372,6 +390,7 @@ public:
     std::string name;
     std::vector<std::pair<std::string, std::string>> parameters;
     std::vector<StatementPtr> body;
+    bool isConst = false;  // true if declared with a trailing `const` qualifier
 
     MethodDeclaration(const std::string& retType,
                      const std::string& methodName,
@@ -385,7 +404,9 @@ public:
             if (i > 0) result += ", ";
             result += parameters[i].first + " " + parameters[i].second;
         }
-        result += ") {\n";
+        result += ")";
+        if (isConst) result += " const";
+        result += " {\n";
         for (const auto& stmt : body) {
             result += "    " + stmt->toString() + "\n";
         }

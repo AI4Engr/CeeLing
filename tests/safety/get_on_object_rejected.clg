@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ reason: `.get()` on a CeeLing object would extract a raw pointer -- the smart-
+//@ reason: pointer back door CLAUDE.md hatch #14 explicitly forbids.
+// Phase 1 escape-hatch fixture. `p` is a plain CeeLing object (compiled to a smart
+// pointer under the hood); calling `.get()` on it has no legal use in the language.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node p = new Node(1);
+    int r = p.get();  // ERROR: '.get()' is forbidden on a CeeLing object
+    return 0;
+}

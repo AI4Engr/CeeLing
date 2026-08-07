@@ -298,8 +298,95 @@ happened once you're past the `if`.
 
 ### Status
 
-The new generator is available today as an opt-in mode; the older text-based generator
-is still the default while a few remaining gaps are closed (returning objects by
-value, and a couple of smaller cases). Both generators agree on what the safety
+The new generator is the default today; the older text-based generator remains
+available via `--legacy-cpp` for comparison. Both generators agree on what the safety
 checker accepts or rejects — this is purely about how accepted code gets turned into
-C++.
+C++. See Step 7 for why the switch was forced, not optional.
+
+## Step 7 — Sealing escape hatches, and why the generator switch wasn't optional
+
+Chapter 17 describes *what* is forbidden (`.get()`, raw pointers, casts, `delete`,
+`union`). Building the actual check surfaced two problems that weren't visible until
+this was attempted for real.
+
+### The silent-drop bug
+
+The parser's tree can contain an `ERROR` node wherever it hit something it couldn't
+make sense of — that's expected; a syntax error should produce one. The bug was in
+what happened *next*: every place that collects a function/method/constructor body
+(`for (child : body) { if (child is a statement) build it }`) simply **skipped**
+anything that wasn't a recognized statement, `ERROR` node included. No error was
+raised. The statement was just... gone from the tree, as if it had never been written.
+
+This meant a program containing `Node* p;` didn't get rejected — it got a *slightly
+different program* silently substituted in its place, missing whatever line couldn't
+be understood. For a class with a `private:` field, that meant the field itself
+vanished, and every method that referenced it got miscompiled around the hole. The
+program would still "succeed" (exit code 0), because as far as the compiler could
+tell, there was nothing wrong with the (shorter) program it actually built.
+
+Fixed by making every one of those body-collecting loops treat an `ERROR` node, or a
+statement that fails to build, as a hard error instead of a skip. This is also what
+makes rejecting `Node* p;`, `delete p;`, and the others inside a function body
+actually work — before this fix, the rejection logic could be sitting right there and
+still never fire, because the offending line had already been quietly erased before
+the checker ever got to look at it.
+
+### Why sealing the AST wasn't enough on its own
+
+With the silent-drop bug fixed, the validated AST correctly excludes every forbidden
+construct. But CeeLing had two generators, and only one of them actually reads that
+AST to produce its output. The original generator (`CppGenerator`) works by
+regex-substituting the **raw source text** — it never looked at the parsed tree for
+most of what it emits. So even with the AST layer perfectly rejecting `Node* p;`,
+running it through `CppGenerator` would still copy that exact text into the output
+C++, untouched, because the text substitution pipeline doesn't know or care what the
+AST-level check decided.
+
+Confirmed directly: before this fix, `Node* p;`, `delete a;`, and
+`reinterpret_cast<int>(1.0)` all transpiled successfully (`exit 0`) and produced real
+`.cpp` files containing those exact dangerous constructs verbatim.
+
+This is why `AstEmitter` — which can only emit node types it recognizes, because it
+walks the tree structurally rather than substituting into text — had to become the
+**default** generator, not stay an opt-in alternative. "Rejected in the checker" only
+means something if the thing that turns accepted code into C++ is reading from the
+same tree the checker validated. The old generator is kept around (`--legacy-cpp`)
+for comparison, but does not carry the Phase 1 guarantee.
+
+### The `.get()` / cast ambiguity
+
+Two hatches don't produce a parse error at all, because their tokens are already
+meaningful in ordinary CeeLing syntax:
+
+- `.get()` is grammatically an ordinary method call. `p.get()` and `box.get()` look
+  identical in the tree; only *which class* `p`/`box` is, and whether that class
+  declares its own `get()`, tells them apart. This needs a semantic pass with type
+  information, not a grammar rule — see `EscapeHatchChecker`, which tracks
+  local/parameter/field types (mirroring the same lightweight resolution
+  `AstEmitter` already does for `this->` lowering) well enough to answer "is this
+  receiver a CeeLing object, and does its class define its own `get()`?"
+- `reinterpret_cast<int>(x)` has no cast grammar to claim the `<`/`>` tokens, so it
+  parses as a chain of comparisons: `reinterpret_cast < int > (x)`. This is caught by
+  name — `reinterpret_cast`, `const_cast`, `static_cast`, `dynamic_cast` can never be
+  legitimate CeeLing identifiers, so their appearance as an `Identifier` node is
+  itself the signal, independent of whatever nonsense the rest of the "comparison"
+  parses into.
+- Symmetrically, `Node* p;` parses as multiplication (`Node * p`) once `*` exists in
+  the grammar for real arithmetic — caught the same way, by noticing the left operand
+  of `*` is a known class name, which a real multiplication never has.
+
+### A second, distinct dangling-checker bug found along the way
+
+Getting `while` loops working (needed to exercise the escape-hatch checks against a
+realistic program, `tests/linked_list.clg`) surfaced a second conditional-move bug,
+separate from the one described above under "Linking vs. handing off." That earlier
+fix made a move *inside* one `if`/`else` branch not leak out to code *after* the
+`if`. This new one was about the two branches leaking into **each other**: the `else`
+branch was being checked while still carrying moved-from state left over from
+whatever the `if` branch had done, because only the *pre-`if`* snapshot was restored
+— not a fresh snapshot per branch. Since only one branch ever actually runs, a name
+moved in the `if` branch has no business being "already moved" when checking the
+`else` branch. Fixed by snapshotting/restoring around each branch independently, then
+merging: a name is moved after the `if` only if *either* branch moved it (the
+conservative, "can't know which branch ran" answer).

@@ -51,7 +51,8 @@ private:
     void emitFunction(const std::string& returnType, const std::string& name,
                       const std::vector<std::pair<std::string, std::string>>& params,
                       const std::vector<StatementPtr>& body, std::ostringstream& out,
-                      const std::string& ownerClass = "", int baseIndent = 0);
+                      const std::string& ownerClass = "", int baseIndent = 0,
+                      bool isConst = false);
     void emitStatement(const Statement* stmt, std::ostringstream& out, int indent);
 
     // Is `name` a field of the class we are currently emitting a method for?
