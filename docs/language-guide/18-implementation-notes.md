@@ -500,3 +500,44 @@ untouched — that's the existing, already-supported factory pattern.
 `tests/safety/return_local_ref_rejected.clg` (reject) and
 `return_owner_not_observer_accepted.clg` (accept — same function shape, but returning
 the owner) pin down the boundary.
+
+## Step 10 — Reference-stored-in-field escape (#3), and a third silent-drop site
+
+The legacy `tests/borrow_stored_in_field.clg` fixture describes the threat: a class
+holds a borrow in a field (`Holder.ref`), a method stores a caller's reference into
+that field, and later code reads through the field after the original owner is gone —
+the field outlived the thing it was pointing at. That fixture uses the superseded
+`borrowed<T>` scaffolding syntax, so it says nothing about whether *modern* CeeLing
+can express the same danger.
+
+It can't — but not because anything detects it. Checking `member_variable_declaration`
+in the grammar shows it has no `optional($.observer_qualifier)` the way
+`variable_declaration` (locals) and `parameter_list` do. There is no grammar
+production for a `ref`-typed field at all. Combined with the pre-existing ban on `ref`
+parameters (Step 4), the two together close every route a borrow could take into a
+field: it can't arrive as a parameter, and it can't be declared as a field type. What
+*can* be stored in a field is an owning value — `stored = n;` where `n` is a
+moved-in parameter lowers to `this->stored = std::move(n);`, a real ownership
+transfer, not a borrow.
+
+Trying to actually write `ref Node r;` as a field to confirm this surfaced a third
+instance of the Phase 1 silent-drop pattern (the first was body-collecting loops, the
+second was `member_variable_declaration`'s own hidden ERROR child covered in Step 7).
+Since fields have no `ref` production, tree-sitter doesn't reject `ref Node r;`
+outright — it parses `ref` as the field's *type* (a plain identifier, grammatically
+valid) and `Node` as the field's *name*, leaving the real name `r` behind as an
+orphaned `ERROR` node, a third child of `member_variable_declaration` that
+`buildMemberVariableDeclaration` never looked at (it only ever reads children 0 and
+1). The result: `class Holder { ref Node r; }` silently became `class Holder { ref
+Node; }` in the AST — a field of made-up type `ref`, named `Node`, no error raised, no
+sign anything was wrong until it failed to compile as legal C++ several steps later
+for an unrelated-looking reason.
+
+Fixed the same way as the other silent-drop sites: `buildMemberVariableDeclaration`
+now checks its own child count and rejects anything beyond the well-formed
+`type identifier ;` shape. Because this exact malformed shape is common enough to be
+worth a clear message (rather than the generic parse-error fallback), a `type == "ref"`
+check produces a dedicated diagnostic naming the actual rule being enforced. See
+`tests/safety/ref_field_rejected.clg` (reject) and `field_stores_owner_accepted.clg`
+(accept — proves the ban doesn't touch the ordinary moved-parameter-into-field
+pattern).

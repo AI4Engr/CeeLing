@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ reason: storing a moved-in parameter into a plain (non-`ref`) field is ordinary
+//@ reason: ownership transfer, not a borrow -- ref_field_rejected.clg's positive control.
+//
+// Proves the ref-field ban (ref_field_rejected.clg) doesn't over-reject the ordinary,
+// safe pattern: a method taking an object parameter (always moved-in, since `ref`
+// parameters are banned) and storing it into a plain owning field. This is a real
+// ownership handoff, lowered to std::move into a std::unique_ptr field -- no dangling
+// reference is created.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Holder {
+public:
+    Node stored;
+
+    void keep(Node n) {
+        stored = n;
+    }
+};
+
+int main() {
+    Node a = new Node(1);
+    Holder h = new Holder();
+    h.keep(a);
+    return 0;
+}

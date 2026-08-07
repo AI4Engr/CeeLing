@@ -1,0 +1,28 @@
+//@ expect: reject
+//@ reason: a class field can never be declared `ref` -- a field can outlive the
+//@ reason: local object a `ref` would observe, so a stored borrow could dangle long
+//@ reason: after the function that created it returns.
+//
+// Reference-stored-in-field escape (#3), modern-syntax equivalent of the legacy
+// tests/borrow_stored_in_field.clg (which used the superseded owned<>/borrowed<>
+// scaffolding syntax). CeeLing seals this by construction, the same way raw pointers
+// and casts are sealed (Chapter 17): the grammar has no `ref`-qualified field
+// production at all, so `ref Node r;` inside a class body is not a well-formed
+// CeeLing field -- combined with the existing ban on `ref` function parameters
+// (observer_param_rejected.clg), there is no remaining syntactic path to get an
+// actual borrow stored in a field.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Holder {
+public:
+    ref Node r;   // ERROR: `ref` cannot be used as a class field type
+};
+
+int main() {
+    return 0;
+}

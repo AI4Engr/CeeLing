@@ -661,11 +661,41 @@ StatementPtr ASTBuilder::buildConstructorDeclaration(TSNode node, const std::str
 
 StatementPtr ASTBuilder::buildMemberVariableDeclaration(TSNode node, const std::string& source) {
     // member_variable_declaration: type identifier ";"
+    // A well-formed field is exactly 3 children (type, identifier, ";"). Anything
+    // beyond that (e.g. a trailing ERROR node from a misparse like `ref Node r;` --
+    // the grammar has no `ref`-qualified field, so `ref` parses as the type and `r`
+    // is left over as an ERROR sibling) must be rejected, not silently ignored: this
+    // builder only ever reads children 0 and 1, so an extra child would otherwise
+    // vanish from the tree exactly like the Phase 1 silent-drop bug.
     TSNode type_node = ts_node_child(node, 0);
     TSNode identifier_node = ts_node_child(node, 1);
 
     std::string type = getNodeText(type_node, source);
     std::string identifier = getNodeText(identifier_node, source);
+
+    const uint32_t childCount = ts_node_child_count(node);
+    if (childCount > 3) {
+        if (type == "ref") {
+            // `ref Node r;` as a field: the grammar has no `ref`-qualified field
+            // production, so `ref` itself parses as the type and the real field name
+            // is left dangling as an ERROR sibling. Give a targeted message instead of
+            // the generic parse-error fallback -- this is threat #3 (reference-stored-
+            // in-field escape): a field can never be a `ref` observer, because a field
+            // can outlive the local it would be observing.
+            std::ostringstream oss;
+            const TSPoint p = ts_node_start_point(node);
+            oss << "error[semantic/forbidden-construct]: `ref` cannot be used as a "
+                   "class field type (line " << (p.row + 1) << ", column "
+                << (p.column + 1) << "). A field can outlive the local object a `ref` "
+                   "would observe, so a stored borrow could dangle long after the "
+                   "function that created it returns; declare the field as a plain "
+                   "owning type instead.";
+            throw std::runtime_error(oss.str());
+        }
+        for (uint32_t i = 3; i < childCount; ++i) {
+            rejectUnbuildableChild(ts_node_child(node, i), source);
+        }
+    }
 
     // For member variables without initialization, we'll use a null expression
     return std::make_unique<VariableDeclaration>(type, identifier, nullptr);

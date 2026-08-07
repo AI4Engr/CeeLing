@@ -89,7 +89,7 @@ PASS=18, XFAIL=0, FAIL=0.
   this dangling use previously went undetected.
 
 Phase 2's return-local-reference check (#2) added 2 more fixtures:
-**PASS=20, XFAIL=0, FAIL=0.**
+PASS=20, XFAIL=0, FAIL=0.
 
 - `return_local_ref_rejected.clg` — a function declares a `ref` observer of its own
   local owner, then returns the observer. CeeLing has no `ref` return type, so this
@@ -99,3 +99,13 @@ Phase 2's return-local-reference check (#2) added 2 more fixtures:
 - `return_owner_not_observer_accepted.clg` — the same function shape, but returning
   the *owner* (not the observer): proves the check only flags returning the observer
   by name, not merely having one declared somewhere in the body.
+
+Phase 2's reference-stored-in-field escape check (#3) added 2 more fixtures:
+**PASS=22, XFAIL=0, FAIL=0.**
+
+- `ref_field_rejected.clg` — a class field declared `ref` (`ref Node r;`). Sealed by
+  construction, the same mechanism as raw pointers/casts (Ch. 17): the grammar has no
+  `ref`-qualified field production, so this is a parse error, not a semantic check.
+- `field_stores_owner_accepted.clg` — a method stores a moved-in parameter into a
+  plain (non-`ref`) field: ordinary ownership transfer, not a borrow, and must still
+  be accepted.
