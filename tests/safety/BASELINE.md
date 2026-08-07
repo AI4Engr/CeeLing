@@ -60,7 +60,7 @@ This section is updated as phases land; the snapshot above stays frozen as the
 Phase 0 historical starting point.
 
 Phase 1 (escape-hatch sealing) added 4 fixtures and closed all remaining gaps in the
-suite: **PASS=16, XFAIL=0, FAIL=0.**
+suite: PASS=16, XFAIL=0, FAIL=0.
 
 - `get_on_object_rejected.clg` / `get_on_user_method_accepted.clg` — `.get()` is
   rejected only when the receiver is a compiler-generated smart pointer (a CeeLing
@@ -75,3 +75,15 @@ suite: **PASS=16, XFAIL=0, FAIL=0.**
   prerequisite -- see Ch. 18) made this fixture's true state visible: rejected, like
   its five sibling `borrow_*.clg` fixtures. The real positive control for "a borrow
   used while its owner is alive" is `safety/observer_alive_ok.clg`, which still PASSes.
+
+Phase 2's auto-derived function summaries (return-provenance) added 2 more fixtures:
+**PASS=18, XFAIL=0, FAIL=0.**
+
+- `summary_return_aliases_param.clg` — a function whose summary says its return value
+  aliases a parameter (`Node pick(Node a, Node b) { return a; }`) is used safely at the
+  call site; proves the summary mechanism doesn't over-reject the passthrough shape.
+- `summary_return_alias_dangles.clg` — the same summary-derived alias, but the aliased
+  owner is reassigned before the alias is used again: rejected, the same way an
+  explicit `ref` observer would be. This is the new catch the summary mechanism
+  enables -- without it, `Node r = pick(x, y);` registered no provenance at all, so
+  this dangling use previously went undetected.

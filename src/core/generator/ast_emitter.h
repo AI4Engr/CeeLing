@@ -44,6 +44,18 @@ private:
     void collectClassNames(const Program& program);
     bool isClassType(const std::string& type) const;
 
+    // Declared parameter types for every free function / method, so a call argument
+    // that is a bare `new T(...)` (no target variable of its own to key off) can look
+    // up what smart-pointer type the RECEIVING parameter needs instead of defaulting
+    // blindly (see emitMovedArg / the FunctionCall argument loop).
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> functionParams_;
+    std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, std::string>>>> classMethodParams_;
+    // For a resolvable call (`recv.method(...)` or a plain `f(...)`), the (class,
+    // name) of parameter `argIndex` -- needed together, since the analyzer's pointer
+    // decisions are keyed by (className, variableName), not class alone. Returns
+    // ("", "") if unknown/not an object parameter.
+    std::pair<std::string, std::string> calleeParam(const FunctionCall& call, size_t argIndex) const;
+
     void emitTopLevel(const Statement* stmt, std::ostringstream& out);
     void emitClass(const ClassDeclaration& cls, std::ostringstream& out);
     // `ownerClass` is the enclosing class for methods/constructors (empty for free
@@ -67,10 +79,12 @@ private:
     std::string emitExpression(const Expression* expr);
     // An argument in a call position. An object-typed local/parameter is std::move'd:
     // the dangling checker has already proven it is not used after this point, so the
-    // move is always safe (and required, since object params take ownership).
-    std::string emitMovedArg(const Expression* arg);
-    std::string emitNew(const NewExpression& expr, const std::string& ownerVarForType);
-
+    // move is always safe (and required, since object params take ownership). A bare
+    // `new T(...)` argument has no variable of its own to key its pointer type off,
+    // so `targetParam` (the receiving parameter's (class, name), from calleeParam)
+    // tells it which factory (make_unique/make_shared) the callee actually needs.
+    std::string emitMovedArg(const Expression* arg,
+                             const std::pair<std::string, std::string>& targetParam = {});
     std::string smartPointerType(const std::string& className, const std::string& varName) const;
     std::string factoryFor(const std::string& className, const std::string& varName,
                            const std::vector<ExpressionPtr>& args);

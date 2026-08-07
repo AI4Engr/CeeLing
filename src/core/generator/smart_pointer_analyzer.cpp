@@ -250,6 +250,7 @@ void SmartPointerAnalyzer::analyzeStatement(const Statement& stmt, const std::st
     } else if (auto assignment = dynamic_cast<const AssignmentStatement*>(&stmt)) {
         analyzeAssignmentStatement(*assignment, currentClass);
     } else if (auto funcDecl = dynamic_cast<const FunctionDeclaration*>(&stmt)) {
+        registerParameters(funcDecl->parameters, funcDecl->name);
         for (const auto& bodyStmt : funcDecl->body) {
             analyzeStatement(*bodyStmt, funcDecl->name);
         }
@@ -259,14 +260,38 @@ void SmartPointerAnalyzer::analyzeStatement(const Statement& stmt, const std::st
         }
     } else if (auto ctorDecl = dynamic_cast<const ConstructorDeclaration*>(&stmt)) {
         const std::string ctorScope = currentClass.empty() ? ctorDecl->name : currentClass + "::" + ctorDecl->name;
+        registerParameters(ctorDecl->parameters, ctorScope);
         for (const auto& bodyStmt : ctorDecl->body) {
             analyzeStatement(*bodyStmt, ctorScope);
         }
     } else if (auto methodDecl = dynamic_cast<const MethodDeclaration*>(&stmt)) {
         const std::string methodScope = currentClass.empty() ? methodDecl->name : currentClass + "::" + methodDecl->name;
+        registerParameters(methodDecl->parameters, methodScope);
         for (const auto& bodyStmt : methodDecl->body) {
             analyzeStatement(*bodyStmt, methodScope);
         }
+    }
+}
+
+void SmartPointerAnalyzer::registerParameters(
+    const std::vector<std::pair<std::string, std::string>>& params, const std::string& scopeName) {
+    // Give each object-typed parameter a bare variableReferences entry so
+    // getPointerType(className, paramName) has something to find instead of always
+    // missing and falling back to the SHARED default (see AstEmitter::emitFunction).
+    // Deliberately minimal: only registerReference + registerSymbolType, matching
+    // just the identity (scope, class, name) a fresh local gets on first sight.
+    // NOT setting isAssignedFrom/assignedFromVars or any bidirectional/back-reference
+    // bookkeeping here -- those heuristics are tuned around locals and fields observed
+    // via full statement analysis, and wiring a parameter into them was not verified
+    // safe. A parameter that is never itself assigned into a field defaults to
+    // PointerType::UNIQUE from secondPassDeterminePointerTypes' base case, same as a
+    // fresh local would; a parameter that IS stored into a field (e.g. `next = child;`)
+    // still gets promoted to SHARED via scanSource's independent regex pass, which
+    // already covers that case today.
+    for (const auto& [ptype, pname] : params) {
+        if (classNames.find(ptype) == classNames.end()) continue;
+        registerReference(scopeName, ptype, pname, 0);
+        registerSymbolType(scopeName, pname, ptype);
     }
 }
 

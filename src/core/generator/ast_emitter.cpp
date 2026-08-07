@@ -39,10 +39,38 @@ void AstEmitter::collectClassNames(const Program& program) {
             for (const auto& member : cls->members) {
                 if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
                     fields[var->identifier] = var->type;
+                } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    classMethodParams_[cls->name][method->name] = method->parameters;
                 }
             }
+        } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            functionParams_[fn->name] = fn->parameters;
         }
     }
+}
+
+std::pair<std::string, std::string> AstEmitter::calleeParam(const FunctionCall& call, size_t argIndex) const {
+    const std::vector<std::pair<std::string, std::string>>* params = nullptr;
+    if (call.callee) {
+        // `recv.method(args)`.
+        auto member = dynamic_cast<const MemberAccess*>(call.callee.get());
+        if (member == nullptr) return {};
+        const std::string objClass = exprObjectClass(member->object.get());
+        if (objClass.empty()) return {};
+        auto clsIt = classMethodParams_.find(objClass);
+        if (clsIt == classMethodParams_.end()) return {};
+        auto paramIt = clsIt->second.find(member->member);
+        if (paramIt == clsIt->second.end()) return {};
+        params = &paramIt->second;
+    } else {
+        // Plain call `f(args)`.
+        auto paramIt = functionParams_.find(call.function_name);
+        if (paramIt == functionParams_.end()) return {};
+        params = &paramIt->second;
+    }
+    if (argIndex >= params->size()) return {};
+    const auto& [ptype, pname] = (*params)[argIndex];
+    return isClassType(ptype) ? std::make_pair(ptype, pname) : std::pair<std::string, std::string>{};
 }
 
 bool AstEmitter::isCurrentField(const std::string& name) const {
@@ -173,7 +201,15 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
         if (i > 0) sig += ", ";
         const auto& [ptype, pname] = params[i];
         if (isClassType(ptype)) {
-            sig += "std::shared_ptr<" + ptype + "> " + pname;
+            // A parameter's smart-pointer type is derived by SmartPointerAnalyzer
+            // exactly like a local's (it registers parameters in its first pass now
+            // -- see analyzeStatement), so it reflects real usage inside the body
+            // (e.g. stored into a shared field vs. exclusively owned). A fixed
+            // choice here regardless of usage/call-site type produced a mismatch in
+            // one direction or the other (shared_ptr broke unique_ptr-passing call
+            // sites; unique_ptr broke bodies that store the parameter into a shared
+            // field).
+            sig += smartPointerType(ptype, pname) + "<" + ptype + "> " + pname;
             noteVar(pname, VarKind::SmartPtr);
             varClass_[pname] = ptype;
         } else {
@@ -195,12 +231,23 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     currentClass_ = savedClass;
 }
 
-std::string AstEmitter::emitMovedArg(const Expression* arg) {
+std::string AstEmitter::emitMovedArg(const Expression* arg,
+                                     const std::pair<std::string, std::string>& targetParam) {
     if (auto id = dynamic_cast<const Identifier*>(arg)) {
         // Object-typed local or parameter (smart pointer): transfer ownership.
         // Field access and references are not moved here.
         if (varClass_.find(id->name) != varClass_.end() && !isCurrentField(id->name)) {
             return "std::move(" + id->name + ")";
+        }
+    }
+    if (!targetParam.first.empty()) {
+        if (auto neww = dynamic_cast<const NewExpression*>(arg)) {
+            // A bare `new T(...)` argument has no variable of its own to key its
+            // pointer type off (unlike `Node x = new Node(1);`, which uses x's
+            // analyzer decision) -- use the receiving parameter's own (class, name)
+            // instead of emitExpression's context-free make_shared default, so the
+            // constructed object matches what the callee's signature expects.
+            return factoryFor(targetParam.first, targetParam.second, neww->arguments);
         }
     }
     return emitExpression(arg);
@@ -386,7 +433,7 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         std::string s = prefix + "(";
         for (size_t i = 0; i < call->arguments.size(); ++i) {
             if (i > 0) s += ", ";
-            s += emitMovedArg(call->arguments[i].get());
+            s += emitMovedArg(call->arguments[i].get(), calleeParam(*call, i));
         }
         s += ")";
         return s;

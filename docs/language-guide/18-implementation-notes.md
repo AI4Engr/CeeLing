@@ -390,3 +390,76 @@ moved in the `if` branch has no business being "already moved" when checking the
 `else` branch. Fixed by snapshotting/restoring around each branch independently, then
 merging: a name is moved after the `if` only if *either* branch moved it (the
 conservative, "can't know which branch ran" answer).
+
+## Step 8 — Auto-derived function summaries, and the pointer-type bug they surfaced
+
+CLAUDE.md's component A calls for per-function borrow summaries: which parameters are
+borrowed, which are moved, and what the return value borrows from. Before writing this,
+it's worth noticing that CeeLing already answers the parameter half by construction —
+`ref` is banned as a function parameter (Step 4), so every object-typed parameter is
+unconditionally *moved* into the callee. There is no borrowing-parameter case to
+summarize yet. That leaves exactly one question a summary needs to answer:
+
+> Does this function's return value alias one of its own parameters (a passthrough,
+> `T f(T a) { return a; }`), or is it always a fresh value?
+
+`DanglingChecker::deriveSummaries` walks every function/method body once, before any
+body is checked, and records `returnBorrowsParam` (a parameter index, or -1 for
+"fresh") per function. A call site that assigns the result — `Node r = pick(x, y);` —
+looks the callee up and, if the summary says the return aliases parameter *i*,
+registers `r` as an **observer** of whatever object local was passed at that position,
+reusing the exact same `observerOf_`/`danglingObservers_` machinery that an explicit
+`ref` already uses. No new death-event logic was needed — only a new way to populate
+the provenance table.
+
+One subtlety: the argument passed to `pick` is *also* moved-from by the call itself
+(as every call argument is). Naively, "the object `r` observes" and "the owner that
+call just moved from" are the same name, so the existing "an observer's owner is
+moved-from ⇒ dangling" check would immediately flag `r` as dangling right after
+creation — always true, useless. The fix is a small `aliasObservers_` set: for an
+alias-derived observer, only an *explicit* death event (the owner being reassigned or
+falling out of scope) makes it dangling, not the move that produced the alias in the
+first place. `tests/safety/summary_return_aliases_param.clg` (accept — using `r` while
+`x`'s object is still alive) and `summary_return_alias_dangles.clg` (reject — `x` gets
+reassigned out from under `r`) are the fixtures that pin this down.
+
+### A pre-existing bug this surfaced: parameters had no real pointer type
+
+Writing the accept fixture immediately hit a compile error unrelated to the dangling
+logic: `pick`'s generated signature was `std::shared_ptr<Node> a`, but the caller's
+locals were `std::unique_ptr<Node>` — moving a `unique_ptr` into a `shared_ptr`
+parameter doesn't compile. Tracing it back: `SmartPointerAnalyzer` had never registered
+function/method/constructor *parameters* at all — only class fields and locally
+declared variables. `AstEmitter` then hardcoded every object-typed parameter as
+`std::shared_ptr<T>` in the function signature, independent of whatever pointer type
+the analyzer would have derived from actual usage. This had been true since parameters
+were first emitted; it just never had a fixture shaped like "pass a `unique_ptr` local
+into a function and use the result" until now.
+
+Fixed in two parts:
+
+- `SmartPointerAnalyzer::analyzeStatement` now registers each object-typed parameter
+  the same way a local declaration is registered — but *deliberately minimally*: only
+  identity (scope, class, name), not the `isAssignedFrom`/back-reference bookkeeping
+  that drives the shared/weak-promotion heuristics. Those heuristics are tuned around
+  locals and fields observed through full statement analysis, and wiring parameters
+  into them directly risked perturbing unrelated decisions in ways that weren't
+  verified safe. With this minimal registration, a parameter that is never itself
+  stored into a shared field defaults to `unique_ptr` (the same base case a fresh local
+  gets); a parameter that *is* stored into a field still gets promoted to `shared_ptr`
+  by the existing (separate, regex-based) `scanSource` pass, which already covered
+  that case — see `tests/new_expression_paths.clg`'s `attach(Node child)`, which
+  stores `child` into a `shared_ptr`-promoted field.
+- `AstEmitter::emitFunction` now asks `analyzer_.getPointerType(paramType, paramName)`
+  for each parameter's smart-pointer type instead of hardcoding `shared_ptr`.
+
+A second, related bug came out of the same investigation: a bare `new T(...)` passed
+*directly* as a call argument — `head.attach(new Node(3))`, no named variable of its
+own — always emitted `std::make_shared<T>(...)`, regardless of what the receiving
+parameter actually needed, because the argument-emission path had no way to know which
+function was being called or what its parameter's type was. Fixed by
+`AstEmitter::calleeParam`, which resolves the callee (free function by name, or method
+by the receiver's statically-known class) and returns the `(class, name)` of the
+parameter at that argument position; `emitMovedArg` uses it to pick the right factory
+(`make_unique` vs `make_shared`) for a literal `new` argument instead of a
+context-free default.

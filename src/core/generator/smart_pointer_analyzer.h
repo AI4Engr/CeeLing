@@ -59,6 +59,11 @@ private:
     void firstPassCollectReferences(const Program& program);
     void analyzeStatement(const Statement& stmt, const std::string& currentClass = "");
     void analyzeVariableDeclaration(const VariableDeclaration& decl, const std::string& currentClass);
+    // Give each object-typed parameter a minimal identity in variableReferences (see
+    // .cpp for why this stays deliberately minimal -- no assignment/back-reference
+    // heuristics wired in).
+    void registerParameters(const std::vector<std::pair<std::string, std::string>>& params,
+                            const std::string& scopeName);
     void analyzeAssignmentStatement(const AssignmentStatement& stmt, const std::string& currentClass);
     void analyzeClassDeclaration(const ClassDeclaration& cls);
 

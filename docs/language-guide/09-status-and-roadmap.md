@@ -33,14 +33,25 @@ real.
   `std::cout << ...` stream output. The old regex `CppGenerator` remains available via
   `--legacy-cpp` for comparison/debugging only — it does not offer the Phase 1
   guarantee, since it builds output from raw source text rather than the AST.
+- **Auto-derived return-provenance summaries** (CLAUDE.md component A) — CeeLing bans
+  `ref` function parameters, so every object-typed parameter is unconditionally moved
+  into the callee already; the only thing a summary needs to capture is whether a
+  function's return value aliases one of its own parameters (`T f(T a){ return a; }`)
+  or is always fresh. Computed once per function/method before the dangling check
+  runs; a call result assigned to a variable consults it and registers the right
+  provenance (alias → observer of the argument, same machinery as `ref`; fresh → new
+  owner) instead of assuming every call returns something brand new. See
+  `tests/safety/summary_return_aliases_param.clg` / `summary_return_alias_dangles.clg`.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**
   (`unique_ptr`/`shared_ptr`/`weak_ptr`), not yet unified onto the new engine.
 - **Default-reject unknown library calls** (the remaining Phase 1 item) — no
   library-summary allow-list exists yet; tracked under Phase 2.
-- Branch merges (`if`/`else` arms are checked independently, not merged), library
-  summaries, iterator invalidation, `string_view`/Eigen dangling — still open.
+- **Library/std/Eigen summaries** — only CeeLing's own functions get an auto-derived
+  summary today.
+- Branch merges (`if`/`else` arms are checked independently, not merged), iterator
+  invalidation, `string_view`/Eigen dangling — still open.
 
 This chapter is the plan; only the "working today" list above is done.
 
@@ -72,14 +83,17 @@ Forbid raw `T*`, raw `new`/`delete`, `.get()`, `reinterpret_cast` / C-style cast
 Chapter 17 for the mechanism and worked diagnostic text. Still open: default-reject
 unknown library calls (needs the Phase 2 library-summary allow-list first).
 
-### Phase 2 — Dangling-reference analysis (core)  ✅ new-syntax fixtures done
+### Phase 2 — Dangling-reference analysis (core)  ✅ new-syntax fixtures + auto summaries done
 Provenance table, death events, use-site check are implemented and cover all 5
 new-syntax dangling fixtures (owner moved/reassigned/scope-exited, observer-parameter
-ban). Still open: auto + library summaries, return-local-reference (#2), field escape
-(#3), iterator invalidation (#4), `string_view`/`span` (#5), `auto`-vs-concrete
-provenance (#6), lambda `[&]` escape (#7), dangling temporaries (#8), Eigen summaries,
-branch-merge precision. The legacy `borrow_*.clg` (`owned<>/borrowed<>`) fixtures are
-superseded by the new syntax and kept only for regression.
+ban), plus auto-derived return-provenance summaries (CLAUDE.md component A — scoped to
+return-value aliasing, since parameters are always-moved by construction; see
+"Working today" above). Still open: library summaries, return-local-reference (#2),
+field escape (#3), iterator invalidation (#4), `string_view`/`span` (#5),
+`auto`-vs-concrete provenance (#6), lambda `[&]` escape (#7), dangling temporaries
+(#8), Eigen summaries, branch-merge precision. The legacy `borrow_*.clg`
+(`owned<>/borrowed<>`) fixtures are superseded by the new syntax and kept only for
+regression.
 
 ### Phase 3 — Use-after-move (coupled to auto-`std::move`)  ✅ done
 Moved-from state tracking; reject use of a moved-from value. Implemented in

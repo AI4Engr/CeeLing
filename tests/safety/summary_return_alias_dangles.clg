@@ -1,0 +1,29 @@
+//@ expect: reject
+//@ reason: `r` observes `x` via pick()'s return-aliases-param summary; reassigning
+//@ reason: `x` frees the object `r` still points at, so using `r` afterward dangles.
+//
+// Same summary-derived provenance as summary_return_aliases_param.clg, but this time
+// the aliased owner (`x`) is reassigned to a fresh object before `r` is used again --
+// the object `r` observes is gone, so this must be rejected exactly like an explicit
+// `ref` observer would be (see observer_dangles_after_reassign.clg). This is the new
+// catch the summary mechanism enables: without it, `Node r = pick(x, y);` registered
+// no provenance at all, so this dangling use previously went undetected.
+
+class Node {
+public:
+    int v;
+    Node(int val) { v = val; }
+};
+
+Node pick(Node a, Node b) {
+    return a;
+}
+
+int main() {
+    Node x = new Node(1);
+    Node y = new Node(2);
+    Node r = pick(x, y);   // r observes x's object
+    x = new Node(3);       // old object (the one r observes) freed; r now dangles
+    std::cout << r.v << std::endl;   // ERROR: r observes a destroyed object
+    return 0;
+}

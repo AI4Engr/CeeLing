@@ -22,8 +22,18 @@ struct DanglingError {
 //   * "move" events: passing an object-typed local as a function-call argument, and
 //     assigning one object-typed local from another (`Node b = a;` moves a).
 //   * "use" check: any later use of a moved-from variable is an error.
-// Not yet handled: `ref` observers, scope-exit deaths, reassignment revival across
-// branches, library summaries. Those arrive in later Phase 2 increments.
+// Auto-derived return-provenance summaries (CLAUDE.md component A) are also
+// implemented: CeeLing bans `ref` function parameters, so every object-typed
+// parameter is unconditionally moved into the callee -- there is no per-parameter
+// borrow/move case to summarize. The only thing that varies per-function is whether
+// the RETURN value aliases one of its own parameters (a passthrough, e.g.
+// `T f(T a){ return a; }`) or is always a fresh/owned value. `deriveSummaries`
+// computes this once per function/method before the main check; call sites that
+// assign a call result consult it to register the right provenance instead of
+// assuming "always fresh".
+// Not yet handled: library/std/Eigen summaries, field-escape (#3), dedicated
+// return-local-reference checks (#2) beyond what falls out of the above, reassignment
+// revival across branches (branch-merge precision). Those arrive in later increments.
 //
 // Conservative by construction: it only flags a use that provably follows a move on
 // the linear statement order within one function body. It never rewrites code and has
@@ -35,11 +45,39 @@ public:
     std::vector<DanglingError> check(const Program& program);
 
 private:
+    // Auto-derived per-function/method borrow contract (CLAUDE.md component A).
+    // CeeLing bans `ref` parameters, so every object-typed parameter is always moved
+    // by the callee -- the only thing that varies per-function is what the return
+    // value aliases, if anything.
+    struct FunctionSummary {
+        // Index into the parameter list that the return value aliases (borrows
+        // from), or -1 if the return value is always a fresh/owned object (or the
+        // function is void/non-object-returning).
+        int returnBorrowsParam = -1;
+    };
+
     void collectClassNames(const Program& program);
 
-    // Analyze one function/method body: clears per-body state, then processes each
-    // statement in order.
-    void checkBody(const std::vector<StatementPtr>& body);
+    // One pass over the whole program computing a FunctionSummary for every free
+    // function and method, before any body is checked -- so forward references
+    // within the same file already have a summary available.
+    void deriveSummaries(const Program& program);
+    FunctionSummary deriveSummaryForBody(
+        const std::vector<StatementPtr>& body,
+        const std::vector<std::pair<std::string, std::string>>& params) const;
+
+    // Qualified summary key: free functions by name, methods by "ClassName::name".
+    static std::string summaryKey(const std::string& ownerClass, const std::string& name) {
+        return ownerClass.empty() ? name : ownerClass + "::" + name;
+    }
+
+    // Analyze one function/method body: clears per-body state, registers parameters
+    // (object-typed ones become live owners, same as a VariableDeclaration would),
+    // then processes each statement in order. `ownerClass` is the enclosing class for
+    // methods ("" for free functions/main), used to resolve method-call summaries.
+    void checkBody(const std::vector<StatementPtr>& body,
+                    const std::vector<std::pair<std::string, std::string>>& params,
+                    const std::string& ownerClass);
 
     // Process one statement in the CURRENT scope (does not clear state). Nested blocks
     // (e.g. an `if` body) reuse the enclosing scope so outer observers stay visible;
@@ -60,8 +98,29 @@ private:
     // If `expr` is a bare object-typed local, return its name; else empty.
     std::string asObjectLocalName(const Expression* expr) const;
 
+    // If `expr` is a call to a known CeeLing function/method whose summary says the
+    // return value aliases one of its parameters, return the NAME of the object-local
+    // argument passed at that position (empty if not applicable: unknown callee,
+    // summary says "fresh", or the aliased argument isn't a bare object local).
+    std::string resolveCallReturnAlias(const Expression* expr) const;
+
+    // If `expr` is a call, every object-typed-local argument is moved into the
+    // callee (CeeLing bans `ref` parameters, so a call always consumes its object
+    // arguments). No-op for non-call expressions.
+    void applyCallArgMoves(const Expression* expr);
+
     std::set<std::string> classNames_;
+    // Qualified summary key (summaryKey()) -> derived summary.
+    std::map<std::string, FunctionSummary> summaries_;
+    // Free-function name -> declared parameter list (needed to resolve a call's
+    // aliased-argument expression by index). Methods are looked up per-receiver-class
+    // via classMethodParams_.
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> functionParams_;
+    std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, std::string>>>> classMethodParams_;
+
+    std::string currentClass_;  // enclosing class of the body being checked ("" = free fn)
     std::set<std::string> objectLocals_;   // object-typed owners live in current body
+    std::map<std::string, std::string> localType_;  // object-local/param name -> class name
     std::set<std::string> movedFrom_;      // moved-from locals in the current body
     std::set<std::string> observerNames_;  // all names declared with `ref`
     // observer name -> the owner it observes (`ref Node b = a;` => b observes a).
@@ -70,6 +129,15 @@ private:
     // Observers whose observed object is already gone (owner reassigned to a fresh
     // object, or the owner's scope ended). Using them is a dangling use.
     std::set<std::string> danglingObservers_;
+    // Observer names created via a summary-derived return alias (`Node r =
+    // pick(x, y);` where pick's summary says it returns param 0 back out), as
+    // opposed to an explicit `ref` observer. For these, `observerOf_[r]`'s owner
+    // being moved-from is EXPECTED (the very call that created the alias moves its
+    // argument) and must NOT by itself count as dangling -- the returned object is
+    // still alive, just no longer reachable through the original owner's name. Only
+    // an explicit death event (reassignment/scope-exit of the owner, tracked via
+    // danglingObservers_) makes an alias observer dangling, same as a real observer.
+    std::set<std::string> aliasObservers_;
     std::vector<DanglingError> errors_;
 };
 

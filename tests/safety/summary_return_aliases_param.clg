@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ reason: `pick`'s auto-derived summary says its return value aliases its first
+//@ reason: parameter; the returned reference is used safely while that object is alive.
+//
+// Exercises auto-derived function borrow summaries (CLAUDE.md component A). CeeLing
+// bans `ref` function parameters, so every object-typed parameter is unconditionally
+// moved into the callee -- the only thing a summary needs to capture is whether the
+// return value aliases one of its own parameters (a passthrough) or is always fresh.
+//
+// `pick(a, b)` always returns `a` back out, so `Node r = pick(x, y);` makes `r` an
+// observer of `x`'s object, not an independent fresh owner. `x` itself is correctly
+// moved-from afterward (arguments are always moved), but using `r` -- the alias the
+// summary says came back out -- is safe as long as nothing else kills `x`'s object.
+
+class Node {
+public:
+    int v;
+    Node(int val) { v = val; }
+};
+
+Node pick(Node a, Node b) {
+    return a;
+}
+
+int main() {
+    Node x = new Node(1);
+    Node y = new Node(2);
+    Node r = pick(x, y);   // r observes x's object (summary: return aliases param 0)
+    std::cout << r.v << std::endl;   // OK: x's object is still alive, only x itself moved
+    return 0;
+}
