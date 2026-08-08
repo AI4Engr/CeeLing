@@ -1,0 +1,16 @@
+//@ expect: accept
+//@ reason: `std::map<K,V>` with primitive key/value types, insertion via `m[key] =
+//@ reason: value;`, and reading back via `m[key]` are all ordinary, safe usage --
+//@ reason: matches real std::map::operator[] semantics (insert-or-update) exactly.
+//
+// End-to-end proof that std::map is genuinely usable: declaration, insert-or-update
+// via subscript assignment, subscript read, all lowering to compilable C++.
+
+int main() {
+    std::map<int, string> m;
+    m[1] = "one";
+    m[2] = "two";
+    string first = m[1];
+    std::cout << first << std::endl;
+    return 0;
+}

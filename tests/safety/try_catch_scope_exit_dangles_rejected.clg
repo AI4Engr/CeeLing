@@ -1,0 +1,32 @@
+//@ expect: reject
+//@ reason: the try body reassigns `a` (killing any observer of its ORIGINAL object)
+//@ reason: only after a point where a throw could plausibly have occurred first --
+//@ reason: the checker can't know how far into the try body execution got before an
+//@ reason: exception, so it must conservatively treat the reassignment as MAYBE
+//@ reason: having happened. `n` (observing the original `a`) is therefore dangling
+//@ reason: after the try/catch, on both the throw and no-throw paths.
+//
+// Proves try/catch gets the same branch-merge conservatism as if/while/vector-
+// invalidation: DanglingChecker::processStatement's TryStatement branch merges
+// "try body never ran" against "try body ran to completion" (mirrors `while`'s
+// zero-or-more-iterations merge) to get the state the catch block analyzes from,
+// then merges try-succeeded vs catch-ran for the state after the whole construct.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    ref Node n = a;
+    try {
+        a = new Node(2);   // kills n's original owner -- may or may not have run
+        throw "maybe";
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    std::cout << n.v << std::endl;   // ERROR: n may be dangling (a was reassigned)
+    return 0;
+}

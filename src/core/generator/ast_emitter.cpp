@@ -21,7 +21,8 @@ std::string AstEmitter::emit(const Program& program) {
     // source `#include <memory>` doesn't collide with the one we require.
     std::set<std::string> emittedIncludes;
     for (const char* hdr : {"#include <memory>", "#include <utility>",
-                            "#include <iostream>", "#include <vector>"}) {
+                            "#include <iostream>", "#include <vector>",
+                            "#include <string>", "#include <map>"}) {
         if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
     }
     for (const auto& stmt : program.statements) {
@@ -144,6 +145,15 @@ std::string AstEmitter::containerVarType(const Expression* expr) const {
 }
 
 std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::string& varName) const {
+    if (isStringType(ceelingType)) return "std::string";
+    if (isMapType(ceelingType)) {
+        // Map keys/values are restricted to primitives this slice (enforced at parse
+        // time in ast_builder.cpp), so neither side ever needs the class-type
+        // smart-pointer-wrapping cppTypeFor does for vector elements below -- just
+        // recurse so e.g. the value's own `string` -> `std::string` mapping applies.
+        return "std::map<" + cppTypeFor(mapKeyType(ceelingType), "")
+             + ", " + cppTypeFor(mapValueType(ceelingType), "") + ">";
+    }
     const std::string elem = vectorElementType(ceelingType);
     if (elem.empty()) return ceelingType;
     std::string elemCpp = elem;
@@ -208,7 +218,8 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
                 out << indentStr(1) << smartPointerType(var->type, var->identifier)
                     << "<" << var->type << "> " << var->identifier << ";\n";
             } else {
-                out << indentStr(1) << var->type << " " << var->identifier << ";\n";
+                out << indentStr(1) << cppTypeFor(var->type, var->identifier) << " "
+                    << var->identifier << ";\n";
             }
         } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
             emitFunction("", ctor->name, ctor->parameters, ctor->body, out, cls.name, 1);
@@ -239,7 +250,7 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     std::string sig;
     if (!returnType.empty()) {
         sig += isClassType(returnType) ? "std::unique_ptr<" + returnType + "> "
-                                       : returnType + " ";
+                                       : cppTypeFor(returnType, "") + " ";
     }
     sig += name + "(";
     for (size_t i = 0; i < params.size(); ++i) {
@@ -350,16 +361,25 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         std::string lhs;
         std::string ptrVar = assign->variable;  // name used to pick the target's ptr kind
         const bool memberTarget = dynamic_cast<const MemberAccess*>(assign->target.get()) != nullptr;
+        const bool subscriptTarget = dynamic_cast<const SubscriptExpression*>(assign->target.get()) != nullptr;
         if (auto m = dynamic_cast<const MemberAccess*>(assign->target.get())) {
             lhs = emitExpression(m);
             ptrVar = m->member;  // the field being assigned
+        } else if (subscriptTarget) {
+            lhs = emitExpression(assign->target.get());
         } else {
             lhs = isCurrentField(assign->variable) ? "this->" + assign->variable
                                                    : assign->variable;
         }
         std::string rhs;
         const bool rhsIsNullptr = isNullptrLiteral(assign->expression.get());
-        if (!memberTarget && kindOf(assign->variable) == VarKind::Reference) {
+        if (subscriptTarget) {
+            // `m[key] = value;` (std::map insert-or-update, Phase 2.6 map slice): the
+            // value is always a primitive this slice (enforced at parse time), so it's
+            // a plain copy -- no move/factory/weak_ptr logic applies, the same reason
+            // a member-target store doesn't consume its RHS.
+            rhs = emitExpression(assign->expression.get());
+        } else if (!memberTarget && kindOf(assign->variable) == VarKind::Reference) {
             // `obs = b;` REBINDS the observer to a different object -- it does not
             // move/consume `b` (matches DanglingChecker's model: rebinding an
             // observer never marks the RHS moved-from). Lowered the same way as the
@@ -479,6 +499,33 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         out << pad << "}\n";
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         out << pad << emitExpression(exprStmt->expression.get()) << ";\n";
+    } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
+        // `throw <expr>;` -- restricted to string operands (DanglingChecker has
+        // already proven this). A string LITERAL is C++ `const char*`, not
+        // `std::string` -- `catch (const std::string&)` does NOT match a thrown
+        // `const char*` (C++ exception matching is exact-type, no implicit
+        // conversion), which would silently std::terminate at runtime instead of
+        // being caught. Force-wrap literals in std::string(...) so the thrown type
+        // always matches the catch clause's type; an already-`std::string`-typed
+        // identifier needs no wrapping.
+        const bool isLiteral = dynamic_cast<const StringLiteral*>(throwStmt->expression.get()) != nullptr;
+        std::string operand = emitExpression(throwStmt->expression.get());
+        if (isLiteral) operand = "std::string(" + operand + ")";
+        out << pad << "throw " << operand << ";\n";
+    } else if (auto tryStmt = dynamic_cast<const TryStatement*>(stmt)) {
+        // `catch (string name)` lowers to idiomatic C++ catch-by-const-ref. This is a
+        // fixed emitter convention, not derived from cppTypeFor -- `string` is the
+        // only catch type this slice supports (DanglingChecker enforces that), so
+        // there's no other case to generalize to yet.
+        out << pad << "try {\n";
+        for (const auto& inner : tryStmt->body) {
+            emitStatement(inner.get(), out, indent + 1);
+        }
+        out << pad << "} catch (const std::string& " << tryStmt->catchIdentifier << ") {\n";
+        for (const auto& inner : tryStmt->catchBody) {
+            emitStatement(inner.get(), out, indent + 1);
+        }
+        out << pad << "}\n";
     }
 }
 

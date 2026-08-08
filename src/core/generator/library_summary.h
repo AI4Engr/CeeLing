@@ -35,4 +35,33 @@ bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex);
 // exist. `size`/`begin`/`end` are read-only and never invalidate.
 bool vectorMethodInvalidatesReferences(const std::string& methodName);
 
+// Is `type` CeeLing's `string` primitive (bare keyword, or `std::string`/`string`
+// written explicitly)? `string` is a value type -- unlike `std::vector<T>`, it never
+// participates in DanglingChecker's move/observer tracking (isObjectType), the same
+// way `int`/`bool` don't; this is purely a codegen + allow-list question of which
+// name maps to `std::string` and which methods are safe to call on it.
+bool isStringType(const std::string& type);
+
+// Is `methodName` a known std::string method this allow-list covers? Deliberately
+// excludes `c_str()` (and `data()`): both extract a raw `const char*`, the same
+// escape-hatch shape CLAUDE.md's `.get()` ban closes for smart pointers (#14) -- a
+// raw pointer has nowhere legal to go once raw pointers are otherwise forbidden.
+bool isKnownStringMethod(const std::string& methodName);
+
+// Is `type` a `std::map<K,V>` (or bare `map<K,V>`) shape? (Phase 2.6 map slice.)
+bool isMapType(const std::string& type);
+
+// "std::map<int, string>" -> "int". Returns "" if `type` isn't a map<...> shape.
+std::string mapKeyType(const std::string& type);
+
+// "std::map<int, string>" -> "string". Returns "" if `type` isn't a map<...> shape.
+std::string mapValueType(const std::string& type);
+
+// Is `type` one of CeeLing's primitive value types (int/float/double/bool/string)?
+// Used to reject class-typed map keys/values this slice -- a map's element ownership
+// question (unique_ptr vs shared_ptr per entry, the same problem vector slice 1
+// solved for push_back) is deliberately deferred; primitives sidestep it entirely
+// since they're always plain-copy values.
+bool isPrimitiveType(const std::string& type);
+
 } // namespace cling

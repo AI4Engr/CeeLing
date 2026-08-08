@@ -41,7 +41,15 @@ void DanglingChecker::collectClassNames(const Program& program) {
 }
 
 bool DanglingChecker::isObjectType(const std::string& type) const {
-    return classNames_.find(type) != classNames_.end() || isVectorType(type);
+    // std::map<K,V> participates in move/observer tracking the same way
+    // std::vector<T> does -- both are container types where "did you still have
+    // access to the old one after passing it to a function" is a real, checkable
+    // question, independent of what's inside them (this slice restricts map K/V to
+    // primitives, but the container variable itself is exactly as move-trackable as
+    // a vector variable). `string` deliberately stays excluded: a bare `string`
+    // local is a plain C++ value type with cheap real copies everywhere, not a
+    // container whose "old" and "new" handles could diverge.
+    return classNames_.find(type) != classNames_.end() || isVectorType(type) || isMapType(type);
 }
 
 DanglingChecker::FunctionSummary DanglingChecker::deriveSummaryForBody(
@@ -375,6 +383,10 @@ void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
         if (isObjectType(type)) {
             objectLocals_.insert(name);
             localType_[name] = type;
+        } else if (isStringType(type)) {
+            // Same reasoning as the VariableDeclaration string case: not move-
+            // tracked, but its type must be recorded for ThrowStatement's check.
+            localType_[name] = type;
         }
     }
 
@@ -541,6 +553,12 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                 objectLocals_.insert(decl->identifier);
                 movedFrom_.erase(decl->identifier);
                 localType_[decl->identifier] = decl->type;
+            } else if (isStringType(decl->type)) {
+                // `string` isn't an object type (no move/observer tracking), but its
+                // declared type still needs to be recorded so ThrowStatement can
+                // verify a thrown identifier is actually string-typed (see below) --
+                // the only reader of a non-object localType_ entry.
+                localType_[decl->identifier] = decl->type;
             }
         }
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
@@ -680,6 +698,82 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         // apply move effects: a user function call moves its object-typed args.
         checkExpressionUses(exprStmt->expression.get());
         applyCallArgMoves(exprStmt->expression.get());
+    } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
+        checkExpressionUses(throwStmt->expression.get());
+        // `throw` is restricted to string-typed operands this slice (CeeLing has no
+        // exception-class hierarchy without inheritance -- see CLAUDE.md/TODO.md).
+        // A string literal is always fine; an identifier must resolve (via
+        // localType_, populated for string locals/params alongside object types --
+        // see checkBody/VariableDeclaration above) to `string`; anything else
+        // (a class object, a container, a numeric expression, an unresolvable
+        // expression) is rejected, per the conservative-reject rule.
+        bool isStringOperand = dynamic_cast<const StringLiteral*>(throwStmt->expression.get()) != nullptr;
+        if (!isStringOperand) {
+            if (auto id = dynamic_cast<const Identifier*>(throwStmt->expression.get())) {
+                auto typeIt = localType_.find(id->name);
+                isStringOperand = typeIt != localType_.end() && isStringType(typeIt->second);
+            }
+        }
+        if (!isStringOperand) {
+            DanglingError e;
+            e.line = throwStmt->expression->loc.line;
+            e.column = throwStmt->expression->loc.column;
+            e.message = "`throw` operand is not a string";
+            e.help = "CeeLing's `throw` is restricted to `string` messages -- there is "
+                     "no exception-class hierarchy yet (that needs inheritance/"
+                     "polymorphism, not implemented), so a thrown value can only be a "
+                     "plain error message. Throw a string literal or a `string`-typed "
+                     "variable instead.";
+            errors_.push_back(e);
+        }
+        // No scope-exit logic needed: block-exit is already unconditional (endBlockScope
+        // runs after every if/while/for/try body regardless of a return/throw inside),
+        // so a throw needs no special early-exit machinery -- see Chapter 18.
+    } else if (auto tryStmt = dynamic_cast<const TryStatement*>(stmt)) {
+        // The try body may throw at ANY point inside it, not just fail-or-succeed as
+        // a whole -- modeled the same way `while`'s "body runs zero or more times" is
+        // modeled: merge "try body never ran" against "try body ran to completion" to
+        // get the conservative "could have thrown after any prefix" state the catch
+        // block must be analyzed from (we don't know how far execution got before the
+        // throw). The state after the whole construct is a second, ordinary two-way
+        // merge: "try succeeded, no exception" vs "catch ran".
+        const BranchState before = snapshotBranchState();
+        const std::set<std::string> ownersBeforeTry = objectLocals_;
+        for (const auto& inner : tryStmt->body) {
+            processStatement(inner.get());
+        }
+        endBlockScope(ownersBeforeTry);
+        const BranchState tryState = snapshotBranchState();
+
+        restoreBranchState(before);
+        mergeBranchStates(before, before, tryState);
+        const BranchState throwEntryState = snapshotBranchState();
+
+        restoreBranchState(throwEntryState);
+        const std::set<std::string> ownersBeforeCatch = objectLocals_;
+        // The caught variable is a string (enforced below); not move-tracked, but its
+        // type is recorded the same way a string local/param is, so a re-throw of it
+        // inside the catch body is recognized as a valid string operand.
+        if (!isStringType(tryStmt->catchType)) {
+            DanglingError e;
+            e.line = stmt->loc.line;
+            e.column = stmt->loc.column;
+            e.message = "`catch` type `" + tryStmt->catchType + "` is not supported";
+            e.help = "CeeLing's `catch` is restricted to `string` this slice, matching "
+                     "`throw`'s restriction to string messages -- there is no exception-"
+                     "class hierarchy yet. Declare the catch parameter as `string`.";
+            errors_.push_back(e);
+        } else {
+            localType_[tryStmt->catchIdentifier] = tryStmt->catchType;
+        }
+        for (const auto& inner : tryStmt->catchBody) {
+            processStatement(inner.get());
+        }
+        endBlockScope(ownersBeforeCatch);
+        const BranchState catchState = snapshotBranchState();
+
+        restoreBranchState(before);
+        mergeBranchStates(before, tryState, catchState);
     }
 }
 

@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ reason: `throw` of a string literal, caught by `catch (string e)`, is the basic
+//@ reason: usable case -- no dangling/move concerns, straightforward value flow.
+//
+// End-to-end proof throw/catch is usable: compiles under g++, and actually catches
+// at runtime (a string literal is C++ `const char*`, not `std::string` -- the
+// emitter must wrap it in std::string(...) or catch (const std::string&) would
+// never match and the program would std::terminate instead).
+
+int main() {
+    try {
+        throw "bad thing";
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    return 0;
+}

@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ reason: positive control -- the try body runs normally (no throw), the catch
+//@ reason: never executes, and using `n` after the try/catch is fine since `a` was
+//@ reason: never touched. Guards against over-rejection from the new try/catch
+//@ reason: branch-merge logic (a safety analysis that rejects valid code is a bug
+//@ reason: too, same discipline as every other positive-control fixture).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    ref Node n = a;
+    try {
+        std::cout << "no throw here" << std::endl;
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    std::cout << n.v << std::endl;
+    return 0;
+}

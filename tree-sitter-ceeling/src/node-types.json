@@ -33,6 +33,10 @@
         {
           "type": "member_access",
           "named": true
+        },
+        {
+          "type": "subscript_expression",
+          "named": true
         }
       ]
     }
@@ -563,6 +567,14 @@
           "named": true
         },
         {
+          "type": "throw_statement",
+          "named": true
+        },
+        {
+          "type": "try_statement",
+          "named": true
+        },
+        {
           "type": "variable_declaration",
           "named": true
         },
@@ -595,6 +607,44 @@
         },
         {
           "type": "subscript_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "throw_statement",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "try_statement",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "statement",
+          "named": true
+        },
+        {
+          "type": "type",
           "named": true
         }
       ]
@@ -793,6 +843,10 @@
     "named": false
   },
   {
+    "type": "catch",
+    "named": false
+  },
+  {
     "type": "class",
     "named": false
   },
@@ -864,6 +918,14 @@
   {
     "type": "string_literal",
     "named": true
+  },
+  {
+    "type": "throw",
+    "named": false
+  },
+  {
+    "type": "try",
+    "named": false
   },
   {
     "type": "void",

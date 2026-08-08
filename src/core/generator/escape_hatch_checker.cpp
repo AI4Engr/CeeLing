@@ -94,6 +94,9 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         if (isVectorType(declaredType)) {
             return isKnownVectorMethod(member->member);
         }
+        if (isStringType(declaredType)) {
+            return isKnownStringMethod(member->member);
+        }
 
         const std::string objClass = resolveObjectType(member->object.get());
         if (objClass.empty()) return false;

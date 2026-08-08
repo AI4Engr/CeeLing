@@ -1,0 +1,26 @@
+//@ expect: reject
+//@ reason: `ref` may not appear inside a container's element type. `std::vector<ref
+//@ reason: Node>` would let an observer's lifetime outlive its owner while stored
+//@ reason: anonymously inside a reallocatable container -- precise per-element
+//@ reason: provenance tracking would be needed to make this safe, and CeeLing takes
+//@ reason: the cheaper escape-by-construction route instead (same design as the
+//@ reason: observer-parameter ban): this is a parse error, not a semantic reject.
+//
+// Container-held observers (CLAUDE.md Phase 2.6 slice 2 follow-up) are forbidden by
+// construction, not by analysis: `generic_type`'s single type argument is `$.type`,
+// and `observer_qualifier` (`ref`) is only reachable from `variable_declaration` and
+// `parameter_list` in the grammar -- it can never appear inside a `<...>` type
+// argument, a member-variable declaration, or anywhere else `$.type` is used. So
+// `std::vector<ref Node>` fails to parse; there is no dedicated checker rule for this
+// because there is nothing for a checker to see -- the syntax itself does not exist.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<ref Node> v;   // ERROR: `ref` cannot appear inside a type argument
+    return 0;
+}

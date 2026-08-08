@@ -205,3 +205,72 @@ Ch. 18, Step 14) added 4 more fixtures: **PASS=29, XFAIL=0, FAIL=0.**
   (dangling-in-either-branch ⇒ dangling after merge), proving invalidation events
   get the same branch-merge conservatism as every other death event, with no new
   `BranchState` machinery — reuses the existing `danglingObservers_` union.
+
+The container-held-observer ban (Ch. 18, Step 15) added 1 more fixture:
+**PASS=30, XFAIL=0, FAIL=0.**
+
+- `container_held_observer_rejected.clg` — `std::vector<ref Node> v;` is tagged
+  `//@ expect: reject` for a *parse-level* rejection, not a semantic one: the
+  grammar already made this unparseable (`generic_type`'s type argument is
+  `$.type`, and `ref` is never reachable from there), but the AST builder was
+  silently swallowing the resulting nested ERROR node via a raw `getNodeText`
+  capture. Fixed with `ts_node_has_error` (first use in this codebase — a
+  full-subtree check, needed because the ERROR node here is nested inside
+  `generic_type`, not a direct sibling the way every prior ERROR-detection site
+  assumed).
+
+`std::string` support (Ch. 18, Step 16) added 2 more fixtures:
+**PASS=32, XFAIL=0, FAIL=0.**
+
+- `string_basic_usage_accepted.clg` — `string` locals, a class field, a
+  parameter, concatenation with `+`, and a known-method call (`.length()`), all
+  lowering to `std::string` and compiling clean under g++. Also the fixture that
+  confirmed a real pre-existing gap: every non-vector field/return-type emission
+  site wrote the bare CeeLing type name verbatim instead of routing through
+  `cppTypeFor`, so `string` fields never actually compiled before this fix (two
+  `examples/*.clg` files had been silently broken this way).
+- `string_c_str_rejected.clg` — `.c_str()` is deliberately off the string method
+  allow-list (extracts a raw `const char*`, the same escape-hatch shape as the
+  `.get()` ban, #14) and hits the default-reject-unknown-calls path.
+
+`std::map<K,V>` support (Ch. 18, Step 17) added 3 more fixtures:
+**PASS=35, XFAIL=0, FAIL=0.**
+
+- `map_declare_and_subscript_accepted.clg` — declare `std::map<int,string>`,
+  insert via `m[key] = value;`, read back via `m[key]`, compiles clean under g++.
+  Also proves `AssignmentStatement::target` (already a general `ExpressionPtr`,
+  not `MemberAccess`-specific) needed zero `DanglingChecker` changes for
+  subscript-target semantics — only `AstEmitter` needed a new `subscriptTarget`
+  case.
+- `map_class_value_rejected.clg` — `std::map<int, Node>` (Node a class) — positive
+  control proving the primitive-only key/value restriction is enforced, not just
+  documented.
+- `map_moved_into_call_rejected.clg` — a map variable participates in
+  move-tracking exactly like a vector variable (confirmed design decision:
+  `isObjectType` checks `isMapType` too), mirroring
+  `vector_moved_into_call_rejected.clg`.
+
+`throw`/`catch` support, string-only (Ch. 18, Step 18) added 4 more fixtures:
+**PASS=39, XFAIL=0, FAIL=0.**
+
+- `throw_catch_basic_accepted.clg` — the basic usable case. This fixture is
+  actually **run**, not just compiled with `-fsyntax-only`, because the bug it
+  caught (see below) only manifests at runtime.
+- `throw_non_string_rejected.clg` — `throw 42;` — positive control proving the
+  string-only restriction is enforced.
+- `try_catch_scope_exit_dangles_rejected.clg` — an observer's owner is reassigned
+  partway through a try body that then throws; a use after the `try`/`catch` must
+  still reject, proving the new two-stage conservative merge (try-may-throw-
+  anywhere, then try-succeeded-vs-caught) works, built entirely from existing
+  `mergeBranchStates`/`endBlockScope` primitives with no new `BranchState` fields.
+- `try_catch_no_throw_path_accepted.clg` — positive control: the try body runs
+  normally, catch never executes, code after is fine.
+
+**Runtime bug caught and fixed while building `throw_catch_basic_accepted.clg`**:
+a thrown string literal is C++ `const char*`, not `std::string`; `catch (const
+std::string&)` does not match a thrown `const char*` (exact-type exception
+matching, no implicit conversion) — the naive emission compiled clean and then
+`std::terminate()`'d at runtime. `AstEmitter` now force-wraps thrown string
+literals in `std::string(...)`. This is why the accept fixture is run, not just
+compiled — `-fsyntax-only` cannot catch a matching failure that only manifests
+when the exception is actually thrown.

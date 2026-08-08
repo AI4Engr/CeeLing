@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ reason: `string` locals, fields, parameters, concatenation, and known std::string
+//@ reason: methods (length/substr/find/...) are all ordinary, safe value-type usage.
+//
+// Proves std::string is a genuinely usable type end-to-end: declaration, a class
+// field, a parameter, concatenation with `+`, and a known-method call, all lowering
+// to compilable C++ (`std::string`, not the bare CeeLing `string` keyword).
+
+class Greeter {
+public:
+    string prefix;
+    Greeter(string p) { prefix = p; }
+    string greet(string name) {
+        string message = prefix + name;
+        return message;
+    }
+};
+
+int main() {
+    Greeter g = new Greeter("Hello, ");
+    string result = g.greet("World");
+    int len = result.length();
+    std::cout << result << " " << len << std::endl;
+    return 0;
+}

@@ -88,16 +88,48 @@ real.
   and getting branch-merge conservatism for free. See
   `tests/safety/vector_element_observer_dangles_after_push_back_rejected.clg` and
   siblings, and Chapter 18's implementation notes.
+- **Container-held observers forbidden by construction** — `std::vector<ref Node>`
+  turned out to already be grammatically unparseable (`generic_type`'s type
+  argument is `$.type`, and `observer_qualifier` never appears there), but the AST
+  *builder* silently swallowed the resulting ERROR node (nested inside
+  `generic_type`, not a direct sibling) by capturing the whole subtree's text
+  verbatim — a real "misparse, not rejection" gap, not a documentation-only item.
+  Fixed with `ts_node_has_error` (a full-subtree check, first use in this codebase)
+  plus a targeted diagnostic. See
+  `tests/safety/container_held_observer_rejected.clg`.
+- **`std::string` as a usable type** — a plain value type, never move/observer
+  tracked (unlike `std::vector`/`std::map`). Lowers to `std::string`; a small
+  read-only method allow-list deliberately excludes `.c_str()` (extracts a raw
+  `const char*` — the same escape-hatch shape as the `.get()` ban, #14). See
+  `tests/safety/string_basic_usage_accepted.clg`.
+- **`std::map<K,V>` as a usable type** — `generic_type` extended to an optional
+  second type argument; `m[key] = value;` (insert-or-update) works via a new
+  `subscript_expression`-as-assignment-target grammar path. Keys/values restricted
+  to primitive types this slice (sidesteps the element-ownership question vector
+  slice 1 needed to solve); the map variable itself participates in move-tracking
+  exactly like `std::vector`. See
+  `tests/safety/map_declare_and_subscript_accepted.clg` and siblings.
+- **`throw`/`catch`, string-only** — `throw` needed no new dangling-analysis
+  machinery at all (block-exit was already unconditional, not return-triggered);
+  `try`/`catch` reuses the existing branch-merge primitives for a new two-stage
+  conservative merge (try-may-throw-anywhere, then try-succeeded-vs-caught).
+  Restricted to `string` payloads/catch-types (no exception-class hierarchy without
+  inheritance). Caught and fixed a real runtime bug while building the fixture: a
+  thrown string literal is C++ `const char*`, which `catch (const std::string&)`
+  does NOT match (exact-type matching, no implicit conversion) — would have
+  compiled clean but `std::terminate`'d at runtime. See
+  `tests/safety/throw_catch_basic_accepted.clg` and siblings.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**
   (`unique_ptr`/`shared_ptr`/`weak_ptr`), not yet unified onto the new engine.
-- **Library/std/Eigen summaries** — only `std::vector<T>`'s methods are on the
-  allow-list; every other external call is still rejected unconditionally (the
-  correct conservative default).
-- `std::map`/`std::string`, `insert`/`erase`/`resize` as additional invalidating
-  mutators, container-held observers (`vector<ref Node>`), `string_view`/Eigen
-  dangling — next Phase 2.6 slices.
+- **Library/std/Eigen summaries** — only `std::vector<T>`/`std::string`'s methods
+  are on the allow-list; every other external call is still rejected
+  unconditionally (the correct conservative default).
+- `insert`/`erase`/`resize` as additional invalidating mutators, class-typed map
+  keys/values, container-held observers precise tracking (currently just banned),
+  map iteration (needs C++ structured-binding support, unshipped),
+  `string_view`/Eigen dangling — next slices.
 
 This chapter is the plan; only the "working today" list above is done.
 

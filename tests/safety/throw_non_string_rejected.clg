@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ reason: `throw 42;` throws a non-string operand -- CeeLing's `throw` is
+//@ reason: restricted to `string` messages this slice (no exception-class
+//@ reason: hierarchy without inheritance). Positive control proving the
+//@ reason: restriction is enforced, not just documented.
+
+int main() {
+    throw 42;   // ERROR: throw operand must be a string
+    return 0;
+}

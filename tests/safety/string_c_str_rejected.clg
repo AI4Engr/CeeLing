@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ reason: `.c_str()` extracts a raw `const char*` from a `std::string` -- the exact
+//@ reason: escape-hatch shape CLAUDE.md's `.get()` ban closes for smart pointers
+//@ reason: (#14): a raw pointer has nowhere legal to go once raw pointers are
+//@ reason: otherwise forbidden, so this is deliberately left off the string
+//@ reason: method allow-list and hits the default-reject-unknown-calls path.
+
+int main() {
+    string s = "hello";
+    int len = s.c_str();   // ERROR: c_str() is not on the known-method allow-list
+    return 0;
+}

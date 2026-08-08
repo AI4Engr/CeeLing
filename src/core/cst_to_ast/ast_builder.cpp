@@ -1,4 +1,5 @@
 #include "ast_builder.h"
+#include "generator/library_summary.h"
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
@@ -216,6 +217,10 @@ StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) 
         result = buildWhileStatement(node, source);
     } else if (strcmp(node_type, "for_statement") == 0) {
         result = buildForStatement(node, source);
+    } else if (strcmp(node_type, "throw_statement") == 0) {
+        result = buildThrowStatement(node, source);
+    } else if (strcmp(node_type, "try_statement") == 0) {
+        result = buildTryStatement(node, source);
     } else if (strcmp(node_type, "container_declaration") == 0) {
         result = buildContainerDeclaration(node, source);
     } else if (strcmp(node_type, "statement") == 0) {
@@ -257,14 +262,61 @@ StatementPtr ASTBuilder::buildContainerDeclaration(TSNode node, const std::strin
     TSNode type_node = ts_node_child(node, 0);
     TSNode identifier_node = ts_node_child(node, 1);
 
+    // `std::vector<ref Node>` (a container-held observer): the grammar has no
+    // `ref`-qualified type-argument production, so `ref` inside the `< >` is left as
+    // an ERROR node nested under generic_type rather than a sibling of this whole
+    // declaration -- ts_node_has_error walks the full subtree, unlike the sibling-
+    // count check buildMemberVariableDeclaration uses for its own `ref`-misparse case
+    // (there the ERROR is a direct sibling, not nested). Container-held observers are
+    // forbidden by construction the same way `ref` fields are (#3-adjacent: an
+    // observer stored anonymously inside a reallocatable container has no reliable
+    // per-element provenance), so give a targeted diagnostic instead of the generic
+    // parse-error fallback.
+    if (ts_node_has_error(type_node)) {
+        std::ostringstream oss;
+        const TSPoint p = ts_node_start_point(node);
+        oss << "error[semantic/forbidden-construct]: `ref` cannot appear inside a "
+               "container's element type (line " << (p.row + 1) << ", column "
+            << (p.column + 1) << "). A container element has no independent "
+               "identity to observe safely -- storing a `ref` inside `std::vector<...>` "
+               "would let an observer's lifetime outlive its owner anonymously; "
+               "declare the container's element type as a plain owning type instead.";
+        throw std::runtime_error(oss.str());
+    }
+
     std::string type = getNodeText(type_node, source);
     std::string identifier = getNodeText(identifier_node, source);
+
+    // `std::map<K,V>` (Phase 2.6 map slice) is restricted to primitive-typed keys and
+    // values this slice: a map's element-ownership question (unique_ptr vs
+    // shared_ptr per entry, keyed on usage across every insertion site) is exactly
+    // the problem vector slice 1 solved for push_back, and re-solving it for map
+    // isn't worth it until a real class-valued-map need shows up. Primitives
+    // sidestep the question entirely (always plain-copy values), so this is a
+    // conservative reject of anything else -- including class names, which this
+    // builder cannot even distinguish from a typo, so any non-primitive value is
+    // rejected the same way, per CLAUDE.md's "ambiguous -> conservative reject" rule.
+    if (isMapType(type)) {
+        const std::string keyType = mapKeyType(type);
+        const std::string valueType = mapValueType(type);
+        if (!isPrimitiveType(keyType) || !isPrimitiveType(valueType)) {
+            std::ostringstream oss;
+            const TSPoint p = ts_node_start_point(node);
+            oss << "error[semantic/forbidden-construct]: `std::map<" << keyType << ", "
+                << valueType << ">` is not supported (line " << (p.row + 1)
+                << ", column " << (p.column + 1) << "). CeeLing's std::map support is "
+                   "restricted to primitive key/value types (int, float, double, bool, "
+                   "string) for now -- class-typed map entries need an element-ownership "
+                   "decision (unique_ptr vs shared_ptr) that isn't implemented yet.";
+            throw std::runtime_error(oss.str());
+        }
+    }
 
     return std::make_unique<ContainerDeclaration>(type, identifier);
 }
 
 StatementPtr ASTBuilder::buildAssignmentStatement(TSNode node, const std::string& source) {
-    // assignment_statement: (identifier | member_access) "=" expression ";"
+    // assignment_statement: (identifier | member_access | subscript_expression) "=" expression ";"
     TSNode lhs_node = ts_node_child(node, 0);
     TSNode expression_node = ts_node_child(node, 2);  // skip "="
     auto expr = buildExpression(expression_node, source);
@@ -278,6 +330,25 @@ StatementPtr ASTBuilder::buildAssignmentStatement(TSNode node, const std::string
             if (auto id = dynamic_cast<const Identifier*>(e)) { rootName = id->name; break; }
             if (auto m = dynamic_cast<const MemberAccess*>(e)) { e = m->object.get(); continue; }
             break;
+        }
+        auto stmt = std::make_unique<AssignmentStatement>(rootName, std::move(expr));
+        stmt->target = std::move(target);
+        return stmt;
+    }
+
+    if (strcmp(ts_node_type(lhs_node), "subscript_expression") == 0) {
+        // Subscript target `m[key] = value;` (std::map insert-or-update, Phase 2.6 map
+        // slice). `object` is always a bare container identifier here -- the grammar's
+        // subscript_expression production allows a chain, but map/vector locals are
+        // never themselves the result of a further subscript/member access -- so the
+        // root name is just object's identifier, no walk needed (unlike member_access,
+        // where `a.b.c = ...` can nest).
+        auto target = buildSubscriptExpression(lhs_node, source);
+        std::string rootName;
+        if (auto sub = dynamic_cast<const SubscriptExpression*>(target.get())) {
+            if (auto id = dynamic_cast<const Identifier*>(sub->object.get())) {
+                rootName = id->name;
+            }
         }
         auto stmt = std::make_unique<AssignmentStatement>(rootName, std::move(expr));
         stmt->target = std::move(target);
@@ -531,6 +602,56 @@ StatementPtr ASTBuilder::buildReturnStatement(TSNode node, const std::string& so
     TSNode expression_node = ts_node_child(node, 1); // Skip "return"
     auto expr = buildExpression(expression_node, source);
     return std::make_unique<ReturnStatement>(std::move(expr));
+}
+
+StatementPtr ASTBuilder::buildThrowStatement(TSNode node, const std::string& source) {
+    // throw_statement: "throw" expression ";"
+    TSNode expression_node = ts_node_child(node, 1); // Skip "throw"
+    auto expr = buildExpression(expression_node, source);
+    return std::make_unique<ThrowStatement>(std::move(expr));
+}
+
+StatementPtr ASTBuilder::buildTryStatement(TSNode node, const std::string& source) {
+    // try_statement: "try" "{" stmts "}" "catch" "(" type identifier ")" "{" stmts "}"
+    // repeat($.statement) produces no wrapper node, so try-body and catch-body
+    // "statement" children sit as flat siblings of this node -- split them on the
+    // "catch" keyword the same way buildIfStatement splits then/else on "else".
+    std::vector<StatementPtr> body;
+    std::vector<StatementPtr> catchBody;
+    std::string catchType;
+    std::string catchIdentifier;
+
+    uint32_t childCount = ts_node_child_count(node);
+    bool afterCatch = false;
+    bool sawType = false;
+    for (uint32_t i = 0; i < childCount; i++) {
+        TSNode child = ts_node_child(node, i);
+        const char* childType = ts_node_type(child);
+
+        if (getNodeText(child, source) == "catch") { afterCatch = true; continue; }
+
+        if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        }
+
+        if (afterCatch && strcmp(childType, "type") == 0 && !sawType) {
+            catchType = getNodeText(child, source);
+            sawType = true;
+            continue;
+        }
+        if (afterCatch && strcmp(childType, "identifier") == 0 && catchIdentifier.empty()) {
+            catchIdentifier = getNodeText(child, source);
+            continue;
+        }
+
+        if (strcmp(childType, "statement") != 0) continue;
+        auto built = buildStatement(child, source);
+        if (!built) rejectUnbuildableChild(child, source);
+        (afterCatch ? catchBody : body).push_back(std::move(built));
+    }
+
+    return std::make_unique<TryStatement>(std::move(body), catchType, catchIdentifier,
+                                          std::move(catchBody));
 }
 
 StatementPtr ASTBuilder::buildMainFunction(TSNode node, const std::string& source) {

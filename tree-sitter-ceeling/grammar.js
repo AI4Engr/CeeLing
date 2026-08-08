@@ -35,6 +35,8 @@ module.exports = grammar({
       $.if_statement,
       $.while_statement,
       $.for_statement,
+      $.throw_statement,
+      $.try_statement,
       $.expression_statement
     ),
 
@@ -44,9 +46,10 @@ module.exports = grammar({
       ';'
     ),
 
-    // Assignment target is a bare name (`a = ...`) or a member (`a.b = ...`).
+    // Assignment target is a bare name (`a = ...`), a member (`a.b = ...`), or a
+    // subscript (`m[key] = ...` -- std::map insert-or-update, Phase 2.6 map slice).
     assignment_statement: $ => seq(
-      choice($.identifier, $.member_access),
+      choice($.identifier, $.member_access, $.subscript_expression),
       '=',
       $.expression,
       ';'
@@ -92,10 +95,13 @@ module.exports = grammar({
       $.identifier  // Add support for custom types (class names)
     ),
 
-    // A single-type-argument generic, e.g. `std::vector<Node>`. Recursive through
-    // $.type, so `std::vector<std::vector<int>>` parses without extra work (nested
-    // generics are unvalidated by the safety analysis for now, but not rejected at
-    // the grammar level). Two-argument generics (`std::map<K, V>`) are out of scope.
+    // A one- or two-type-argument generic, e.g. `std::vector<Node>` or
+    // `std::map<int, string>`. Recursive through $.type, so
+    // `std::vector<std::vector<int>>` parses without extra work (nested generics are
+    // unvalidated by the safety analysis for now, but not rejected at the grammar
+    // level). The optional second argument is only meaningful for `std::map<K,V>`
+    // (Phase 2.6 map slice) -- the grammar does not distinguish map from vector, that
+    // happens downstream in library_summary.cpp by inspecting the captured type text.
     //
     // `scoped_identifier '<'` is ambiguous with a comparison expression
     // (`someScoped::Name < x`, e.g. as an operand -- rare, but grammatically legal
@@ -109,6 +115,7 @@ module.exports = grammar({
       $.scoped_identifier,
       '<',
       $.type,
+      optional(seq(',', $.type)),
       '>'
     )),
 
@@ -126,6 +133,35 @@ module.exports = grammar({
       'return',
       $.expression,
       ';'
+    ),
+
+    // `throw <expr>;` -- restricted to string-typed operands (enforced downstream by
+    // DanglingChecker, not the grammar; see dangling_checker.cpp's ThrowStatement
+    // branch). CeeLing has no inheritance/exception-class hierarchy yet, so a plain
+    // message is the only supported payload this slice.
+    throw_statement: $ => seq(
+      'throw',
+      $.expression,
+      ';'
+    ),
+
+    // `try { ... } catch (Type name) { ... }` -- single catch clause only (no
+    // multiple catch blocks, no catch-all `...`). `Type` is grammatically general
+    // (matches parameter_list's shape) but DanglingChecker rejects anything other
+    // than `string` this slice, since `throw` itself only ever produces a string.
+    try_statement: $ => seq(
+      'try',
+      '{',
+      repeat($.statement),
+      '}',
+      'catch',
+      '(',
+      $.type,
+      $.identifier,
+      ')',
+      '{',
+      repeat($.statement),
+      '}'
     ),
 
     // C++-style function declaration: `returnType name(params) { ... }`.

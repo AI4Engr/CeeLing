@@ -221,6 +221,24 @@ public:
     }
 };
 
+// `throw <expr>;` -- restricted to string-typed operands (DanglingChecker enforces
+// this, not the grammar; see its ThrowStatement branch). Structurally identical to
+// ReturnStatement (a single carried expression); kept as a distinct AST node rather
+// than reusing ReturnStatement because the two mean different things to both the
+// dangling checker (a throw doesn't hand a value back to the caller the way return
+// does) and the emitter (`throw expr;` vs `return expr;`).
+class ThrowStatement : public Statement {
+public:
+    ExpressionPtr expression;
+
+    explicit ThrowStatement(ExpressionPtr expr)
+        : expression(std::move(expr)) {}
+
+    std::string toString() const override {
+        return "throw " + expression->toString() + ";";
+    }
+};
+
 class FunctionDeclaration : public Statement {
 public:
     std::string returnType;
@@ -384,6 +402,38 @@ public:
         std::string result = "for (" + loopVarType + " " + loopVarName + " : " +
                              container->toString() + ") {\n";
         for (const auto& stmt : body) {
+            result += "    " + stmt->toString() + "\n";
+        }
+        result += "}";
+        return result;
+    }
+};
+
+// `try { ... } catch (Type name) { ... }` -- single catch clause only. DanglingChecker
+// rejects any catchType other than `string` this slice (see its TryStatement branch),
+// since `throw` itself only ever produces a string; the AST node stays general
+// (catchType is a plain string, not hardcoded to "string") the same way
+// ContainerDeclaration's type field stays general even though this slice only
+// validates a narrow subset of what it could hold.
+class TryStatement : public Statement {
+public:
+    std::vector<StatementPtr> body;
+    std::string catchType;
+    std::string catchIdentifier;
+    std::vector<StatementPtr> catchBody;
+
+    TryStatement(std::vector<StatementPtr> tryBody, const std::string& cType,
+                const std::string& cIdentifier, std::vector<StatementPtr> cBody)
+        : body(std::move(tryBody)), catchType(cType), catchIdentifier(cIdentifier),
+          catchBody(std::move(cBody)) {}
+
+    std::string toString() const override {
+        std::string result = "try {\n";
+        for (const auto& stmt : body) {
+            result += "    " + stmt->toString() + "\n";
+        }
+        result += "} catch (" + catchType + " " + catchIdentifier + ") {\n";
+        for (const auto& stmt : catchBody) {
             result += "    " + stmt->toString() + "\n";
         }
         result += "}";

@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ reason: `std::map<int, Node>` has a class-typed value -- map element ownership
+//@ reason: (unique_ptr vs shared_ptr per entry) is deliberately not implemented yet,
+//@ reason: so class-typed keys/values are conservatively rejected rather than
+//@ reason: silently mishandled. Positive control proving the primitive-only
+//@ reason: restriction is actually enforced, not just documented.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::map<int, Node> m;   // ERROR: Node is not a primitive value type
+    return 0;
+}

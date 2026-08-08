@@ -894,3 +894,190 @@ existing `ref`-to-raw-pointer lowering unchanged (`Node* n = (v[0]).get();`), si
 smart-pointer-typed expression to call `.get()` on. This is the confirmation signal
 the plan called for — if it hadn't composed cleanly, that would have meant the
 container-observer design was wrong, not that a parallel emission path was needed.
+
+## Step 15 — Container-held observers were already grammatically banned; the builder just didn't know it
+
+The three remaining Phase 2.6 follow-up items (container-held-observer ban,
+`std::string`, `std::map<K,V>`) turned out to be worth doing in that order, because
+the first one revealed something worth knowing before touching the other two: a
+construct can be grammatically impossible and still silently compile, if the AST
+builder captures a subtree's text without checking for embedded parse errors.
+
+`std::vector<ref Node>` was assumed, going in, to need a grammar-level or
+checker-level ban. Direct inspection of `grammar.js` showed neither was necessary —
+`generic_type`'s type argument is `$.type`, and `observer_qualifier` (`ref`) is only
+ever reachable from `variable_declaration` and `parameter_list`, never from
+`$.type` itself. So `std::vector<ref Node>` was *already* unparseable as valid
+syntax. Testing it anyway (rather than trusting the grammar-reading alone) surfaced
+the real bug: `cling` exited 0 and silently emitted `std::vector<ref Node> v;`
+verbatim into the generated C++.
+
+The cause was the exact "misparse, not rejection" failure class Step 7 first
+identified for `reinterpret_cast`: tree-sitter's GLR error recovery wraps the
+misplaced `ref` as an `ERROR`-tagged node **nested inside** `generic_type` (not a
+sibling of the whole `container_declaration`), and `buildContainerDeclaration` was
+calling `getNodeText` on the whole `generic_type` node — a raw source-text slice
+that includes ERROR-node text without complaint, since `getNodeText` has no opinion
+about parse-tree well-formedness. Nothing downstream ever checked the subtree for
+embedded errors.
+
+The fix is `ts_node_has_error`, a tree-sitter API that recursively checks a node
+and every descendant for ERROR/missing nodes — the first use of it in this
+codebase. Every prior ERROR-detection site (`buildMemberVariableDeclaration`'s
+`ref`-field check, Step 10; the various `rejectUnbuildableChild` call sites) checks
+only **direct** children, because in those cases the ERROR node genuinely is a
+direct sibling. Here it isn't — `ref` is swallowed one level down, inside
+`generic_type`'s own children — so a sibling-count check would have missed it
+silently, same as `getNodeText` did. `ts_node_has_error` was the right tool
+specifically because it doesn't care how deep the error is nested.
+
+`tests/safety/container_held_observer_rejected.clg` pins this down: it's tagged
+`//@ expect: reject` for a *parse-level* rejection, not a semantic one — there is
+no dedicated checker rule for container-held observers, because after this fix
+there's nothing for a checker to see. The syntax itself doesn't exist.
+
+## Step 16 — `std::string`, and a bug it was never possible to see before
+
+`string` had been a token in `grammar.js`'s `type` rule since early in the
+project — alongside `int`/`float`/`double`/`bool` — but nothing downstream ever
+gave it special treatment. It flowed through exactly like a primitive: never
+registered in `DanglingChecker`'s `isObjectType` (correctly — a bare `string`
+local is a C++ value type with cheap real copies everywhere, not a container with
+a checkable "did you still have the old one" question), and never mapped to
+`std::string` anywhere in `AstEmitter`.
+
+That second part was the actual gap: `AstEmitter::cppTypeFor` returned the
+CeeLing type string verbatim whenever it wasn't a recognized vector shape, so a
+field or return type declared `string` emitted literal `string` in the generated
+C++ — not valid C++ without a `using namespace std;` this codebase deliberately
+never emits. Testing two of the repo's own `examples/*.clg` files (written before
+this fix, presumably aspirationally, since they were never wired into CTest)
+confirmed this wasn't hypothetical: `rule_b_shared_resources.clg`'s `string
+filename;` field failed to compile with `'string' does not name a type`. The fix
+is threading every remaining `cppTypeFor` gap (member fields, function/method
+return types — parameters already routed through it) through the same function,
+plus one addition to `cppTypeFor` itself: map `string`/`std::string` to
+`std::string`, checked first before the vector-element logic.
+
+The method allow-list (`isKnownStringMethod`: `length`/`size`/`empty`/`substr`/
+`find`/`append`/`clear`) deliberately excludes `.c_str()` and `.data()` — both
+extract a raw `const char*`, the same shape of hole Step 7's `.get()` ban closes
+for smart pointers (#14): once raw pointers are otherwise forbidden, a method that
+hands one out is a back door regardless of what type it's hanging off of. This is
+the first time the `.get()` reasoning has been applied to something other than a
+smart pointer, and it generalizes cleanly — the escape-hatch shape ("extracts a
+raw pointer from a safe wrapper") is what matters, not which wrapper.
+
+## Step 17 — `std::map<K,V>`, and reusing `target` instead of special-casing it
+
+`std::map<K,V>` needed two real grammar changes neither prior container slice
+needed: a second type argument (`generic_type` was hard-restricted to one — the
+grammar comment said so explicitly), and a subscript usable as an **assignment
+target**, not just an rvalue (`m[key] = value;` is how a `std::map` is actually
+built up; Step 14's `subscript_expression` only ever appeared on the right-hand
+side). Both changes were narrow and resolved with zero grammar conflicts:
+`optional(seq(',', $.type))` after the first type argument (commas are already
+unambiguous inside `parameter_list`/`argument_list`, neither of which nests inside
+`<...>`), and adding `$.subscript_expression` to `assignment_statement`'s left-hand
+`choice(...)` (the same node, just newly legal in a second grammatical position,
+not a new production to disambiguate against anything).
+
+**Scope, confirmed before writing code**: keys and values are restricted to
+primitive types this slice (`int`/`float`/`double`/`bool`/`string`). This
+sidesteps, rather than re-solves, the shared_ptr-vs-unique_ptr-per-element
+decision Step 13 needed a whole two-pass scanning mechanism to answer for
+`std::vector<Node>` — primitives are always plain-copy values, so there's no
+ownership question to answer for a map's entries at all. The rejection of
+non-primitive key/value types lives in `ast_builder.cpp`'s
+`buildContainerDeclaration`, reusing the exact `ts_node_has_error`-adjacent style
+Step 15 established: a clear, targeted diagnostic at the point where the
+restriction is violated, not a silent mishandling.
+
+**The one open design question going in** — should a `std::map` variable itself
+participate in move-tracking the way `std::vector` does, or stay untracked like
+`string`? — was resolved by asking, not guessing: confirmed with the user that
+`isObjectType` should recognize `isMapType` too, on the reasoning that "did you
+still have access to the old one after passing it to a function" is a real,
+checkable question for any container, independent of what's stored inside it.
+`string` is different in kind, not just degree: it was never a container in the
+first place.
+
+The pleasant surprise was how little `DanglingChecker` needed to change for
+`m[key] = value;` itself. `AssignmentStatement::target` (the field that already
+holds a `MemberAccess` for `a.b = ...;`) was never actually typed as
+`MemberAccess` — it's a plain `ExpressionPtr`, and the checker's own branch on it
+(dangling_checker.cpp, `processStatement`'s `AssignmentStatement` case) already
+keyed off "is `target` set at all," not "is `target` specifically a
+`MemberAccess`." A `SubscriptExpression` target falls into that same branch and
+gets exactly the right semantics for free: assigning into a map links/shares into
+the receiver, it does not reassign or move the container `m` itself — the same
+rule that was already correct for `a.b = obj;`. The one real gap was in
+`AstEmitter`, which HAD hardcoded a `MemberAccess`-specific check (`memberTarget`)
+that a `SubscriptExpression` target fell through past, landing in branches that
+assumed a scalar/object local rather than a container — fixed with a parallel
+`subscriptTarget` case, simpler than the member case since map values are
+guaranteed primitive this slice (a plain copy, no move/factory/weak_ptr logic).
+
+## Step 18 — `throw`/`catch`: less new machinery than expected, and a runtime-only bug
+
+TODO.md had already pre-scoped this from an earlier planning pass: model `throw`
+as an early-exit triggering the same scope-exit death events as `return`. Reading
+the actual `if`/`while`/`for` code before implementing anything overturned part of
+that framing: block-exit (`endBlockScope`) already runs **unconditionally** after
+every body statement list, regardless of whether a `return` appeared inside it —
+`ReturnStatement`'s own handling in `processStatement` does nothing beyond
+checking its expression's uses. There was never a "return triggers scope-exit"
+mechanism to begin with; block-exit was always going to happen once the walk
+finished that block, return or no return. So `throw` needed exactly the same
+trivial treatment `return` gets — no early-exit concept had to be invented at all.
+
+**Scope, confirmed before writing code**: `throw` is restricted to `string`
+operands only. CeeLing has no inheritance/polymorphism, so a
+`throw ParseError(...)`-shaped exception-class hierarchy has no answer for two
+real questions — what does throwing an object move/copy/share, and what would
+`catch` even match against without a type hierarchy — that don't arise for a
+plain message. `catch (string msg)` is accordingly the only catch shape the
+grammar's `try_statement` needs to support meaningfully, though the grammar itself
+stays general (`$.type $.identifier`, not the literal token `string`) the same way
+`ContainerDeclaration::type` stays a general string even though this slice only
+validates a narrow subset of it — `DanglingChecker` enforces the restriction, not
+the grammar.
+
+`try`/`catch` needed exactly one genuinely new idea, built entirely from existing
+primitives with zero new `BranchState` fields or merge rules. A try body can throw
+at *any point* inside it, not just succeed-or-fail as a whole — modeled the same
+way Step 11's `while` models "body runs zero or more times": merge `before` (try
+body never ran) against `tryState` (try body ran to completion) via the existing
+`mergeBranchStates`, which produces exactly the right conservative "could have
+thrown after any prefix of the try body" state. The catch block is then analyzed
+starting from *that* merged state, not from `before` directly — because the
+checker genuinely doesn't know how much of the try body executed before a
+hypothetical throw. The state after the whole construct is a second, ordinary
+two-way merge (try-succeeded vs. catch-ran), shaped exactly like `if`/`else`.
+`try_catch_scope_exit_dangles_rejected.clg` proves the first merge does real work:
+an observer's owner is reassigned partway through a try body that then throws, and
+a use after the `try`/`catch` is correctly rejected on the conservative
+assumption that the reassignment might have already happened.
+
+`throw`'s string-only enforcement needed one small extension to existing state
+rather than new state: `localType_` (already populated for object-typed
+locals/parameters) now also records `string`-typed locals/parameters — they still
+never enter `isObjectType`/move-tracking, but their declared type is now
+look-up-able, which is all `ThrowStatement`'s check needs (a string literal is
+always fine; an identifier must resolve via `localType_` to `string`; anything
+else is rejected).
+
+**The bug that would have shipped without running the fixture, not just compiling
+it**: `throw "bad thing";` throws C++ `const char*`, not `std::string` — string
+literals never implicitly become `std::string` just because they're in a `throw`
+statement. `catch (const std::string&)` does not match a thrown `const char*` at
+all (C++ exception matching is exact-type, with no implicit conversions), so the
+first version of this feature *compiled cleanly* and then called
+`std::terminate()` the moment it actually ran, since nothing catches a `const
+char*` when only a `std::string` handler exists. This was only caught because the
+verification step for this fixture specifically ran the compiled binary, not just
+`g++ -fsyntax-only` — a reminder that "compiles" and "does what the source says"
+are different claims, and a checker/emitter pair proving memory safety doesn't
+automatically prove exception-matching correctness. Fixed by having `AstEmitter`
+force-wrap thrown string literals in `std::string(...)`, so the thrown type always
+matches the fixed `const std::string&` catch-clause type it also generates.

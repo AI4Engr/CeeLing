@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ reason: a std::map<K,V> local participates in ordinary move tracking exactly like
+//@ reason: a std::vector<T> local: passing it to a plain function moves it, and using
+//@ reason: it afterward (even just to insert via subscript) dangles.
+//
+// Proves map variables reuse 100% of the existing move-tracking machinery
+// (DanglingChecker::isObjectType recognizes std::map<...> types alongside
+// std::vector<...>) rather than being invisible to the checker, mirroring
+// vector_moved_into_call_rejected.clg.
+
+void sink(std::map<int, string> m) {
+}
+
+int main() {
+    std::map<int, string> m;
+    m[1] = "one";
+    sink(m);
+    m[2] = "two";   // ERROR: m was moved into sink
+    return 0;
+}
