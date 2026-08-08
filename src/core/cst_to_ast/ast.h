@@ -301,6 +301,23 @@ public:
     }
 };
 
+// Subscript access `v[i]` (Phase 2.6 slice 2: std::vector<T> element access).
+// Mirrors MemberAccess, but the index is a real sub-expression (not a bare name --
+// it can be an identifier, a literal, or an arithmetic expression), so unlike
+// MemberAccess::member it must be an ExpressionPtr, not a std::string.
+class SubscriptExpression : public Expression {
+public:
+    ExpressionPtr object;
+    ExpressionPtr index;
+
+    SubscriptExpression(ExpressionPtr obj, ExpressionPtr idx)
+        : object(std::move(obj)), index(std::move(idx)) {}
+
+    std::string toString() const override {
+        return object->toString() + "[" + index->toString() + "]";
+    }
+};
+
 class IfStatement : public Statement {
 public:
     ExpressionPtr condition;

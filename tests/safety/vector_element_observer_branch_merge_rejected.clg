@@ -1,0 +1,27 @@
+//@ expect: reject
+//@ reason: the invalidating push_back happens inside only ONE `if` branch, but a use
+//@ reason: after the `if` can't know which branch ran -- conservative-reject applies
+//@ reason: the same way it does for ordinary moved-from/dangling-observer state.
+//
+// Proves invalidation events get the same branch-merge conservatism as every other
+// death event (reassignment, scope-exit): reuses mergeBranchStates' existing
+// danglingObservers_ union with no new machinery, since invalidateContainerObservers
+// writes into that same set.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    ref Node n = v[0];
+    bool cond = true;
+    if (cond) {
+        v.push_back(new Node(2));   // invalidates n only on this path
+    }
+    std::cout << n.v << std::endl;   // ERROR: n may be dangling regardless of cond
+    return 0;
+}

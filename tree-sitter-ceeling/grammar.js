@@ -257,6 +257,7 @@ module.exports = grammar({
       $.function_call,
       $.new_expression,
       $.member_access,
+      $.subscript_expression,
       $.primary_expression
     ),
 
@@ -315,15 +316,29 @@ module.exports = grammar({
     // Member access is written with `.` in CeeLing source (Java-like). `->` is also
     // accepted for compatibility. The generator lowers `.` on smart-pointer objects
     // to `->` in the emitted C++. Left-associative and left-recursive so chains of
-    // arbitrary depth (`a.b.c.d`) parse, not just a single `.` off a primary.
+    // arbitrary depth (`a.b.c.d`) parse, not just a single `.` off a primary. Also
+    // accepts a subscript as its left operand, so `v[i].field` parses.
     member_access: $ => prec.left(seq(
-      choice($.member_access, $.primary_expression),
+      choice($.member_access, $.subscript_expression, $.primary_expression),
       choice('.', '->'),
       $.identifier
     )),
 
+    // Subscript access `v[i]`. Binds as tightly as `.`/`->` -- by the SAME technique
+    // member_access/function_call already use (restricting the left operand to
+    // member_access/subscript_expression/primary_expression, not general
+    // $.expression), not by a numeric precedence climb. Composes with member_access
+    // in both directions (`v[i].field` above; `a.v[i]` here) and with function_call
+    // (`v[i].method()`), so chains of arbitrary shape parse.
+    subscript_expression: $ => prec.left(seq(
+      choice($.subscript_expression, $.member_access, $.primary_expression),
+      '[',
+      $.expression,
+      ']'
+    )),
+
     function_call: $ => seq(
-      choice($.identifier, $.member_access),
+      choice($.identifier, $.member_access, $.subscript_expression),
       '(',
       optional($.argument_list),
       ')'

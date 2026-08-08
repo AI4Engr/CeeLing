@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ reason: `ref Node n = v[0];` observes the container `v` (not a specific element --
+//@ reason: invalidation is a whole-container reallocation event); `v` is never
+//@ reason: mutated afterward, so `n` stays valid. Positive control guarding against
+//@ reason: an over-aggressive invalidation check.
+//
+// The safe, common case: an observer of a container element used while the
+// container is untouched. Must NOT be rejected -- a safety analysis that rejects
+// valid code is a bug too (same discipline as observer_alive_ok.clg for plain refs).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    ref Node n = v[0];
+    std::cout << n.v << std::endl;
+    return 0;
+}

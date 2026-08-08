@@ -230,6 +230,11 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
         checkExpression(member->object.get());
         return;
     }
+    if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        checkExpression(sub->object.get());
+        checkExpression(sub->index.get());
+        return;
+    }
     if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
         // `ClassName * identifier` has no legal meaning as multiplication (a class
         // name is never a numeric value), and CeeLing has no separate pointer-

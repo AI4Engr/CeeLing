@@ -76,15 +76,28 @@ real.
   and iterator-invalidation analysis are deferred to the next slice. See
   `tests/safety/vector_push_back_and_for_accepted.clg` and siblings, and Chapter
   18's implementation notes for the full design.
+- **`v[i]` subscript access + iterator/reference invalidation, threat #4**
+  (Phase 2.6, slice 2) — new `subscript_expression` grammar (same tight-binding
+  operand-restriction technique as `member_access`), and `ref Node n = v[i];` is now
+  a real, trackable observer of the **container** (not a specific element — element
+  identity doesn't exist independently, and invalidation is a whole-container
+  reallocation event). `push_back` is the sole invalidating mutator modeled so far
+  (`library_summary.h`'s `vectorMethodInvalidatesReferences`); an invalidating call
+  kills every existing observer of its container, a third death-event source
+  alongside reassignment and scope-exit, reusing the same `danglingObservers_` set
+  and getting branch-merge conservatism for free. See
+  `tests/safety/vector_element_observer_dangles_after_push_back_rejected.clg` and
+  siblings, and Chapter 18's implementation notes.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**
   (`unique_ptr`/`shared_ptr`/`weak_ptr`), not yet unified onto the new engine.
-- **Library/std/Eigen summaries** — only `std::vector<T>`'s four methods are on the
+- **Library/std/Eigen summaries** — only `std::vector<T>`'s methods are on the
   allow-list; every other external call is still rejected unconditionally (the
   correct conservative default).
-- `operator[]`, `std::map`/`std::string`, iterator invalidation, container-held
-  observers, `string_view`/Eigen dangling — next Phase 2.6 slices.
+- `std::map`/`std::string`, `insert`/`erase`/`resize` as additional invalidating
+  mutators, container-held observers (`vector<ref Node>`), `string_view`/Eigen
+  dangling — next Phase 2.6 slices.
 
 This chapter is the plan; only the "working today" list above is done.
 
@@ -127,13 +140,15 @@ new-syntax dangling fixtures (owner moved/reassigned/scope-exited, observer-para
 ban), plus auto-derived return-provenance summaries (CLAUDE.md component A — scoped to
 return-value aliasing, since parameters are always-moved by construction),
 return-local-reference (#2), reference-stored-in-field escape (#3, sealed by
-construction — no `ref`-qualified field production exists), and branch-merge
-precision (see "Working today" above). Still open: library summaries, iterator
-invalidation (#4), `string_view`/`span` (#5), `auto`-vs-concrete provenance (#6),
-lambda `[&]` escape (#7), dangling temporaries (#8), Eigen summaries — all gated on
-language features (containers, `auto`, lambdas) or a library-summary allow-list that
-don't exist yet (Phase 2.6+). The legacy `borrow_*.clg` (`owned<>/borrowed<>`)
-fixtures are superseded by the new syntax and kept only for regression.
+construction — no `ref`-qualified field production exists), branch-merge
+precision, and `std::vector<T>` iterator/reference invalidation for `push_back`
+(#4, Phase 2.6 slice 2 — see "Working today" above). Still open: broader library
+summaries, `insert`/`erase`/`resize` invalidation, `string_view`/`span` (#5),
+`auto`-vs-concrete provenance (#6), lambda `[&]` escape (#7), dangling temporaries
+(#8), Eigen summaries — all gated on language features (`map`/`string`, `auto`,
+lambdas) or a library-summary allow-list that don't exist yet (Phase 2.6+). The
+legacy `borrow_*.clg` (`owned<>/borrowed<>`) fixtures are superseded by the new
+syntax and kept only for regression.
 
 Found but not fixed during this phase (a separate, pre-existing emitter gap, not a
 dangling-analysis one): rebinding a `ref` observer (`obs = b;`) has no valid C++

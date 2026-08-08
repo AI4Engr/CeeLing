@@ -119,6 +119,16 @@ std::string AstEmitter::exprObjectClass(const Expression* expr) const {
         const std::string ft = fieldType(objClass, member->member);
         return isClassType(ft) ? ft : "";
     }
+    if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        // `v[i]` yields a container element -- if the container holds class-typed
+        // elements, `v[i]` is itself a smart pointer (shared_ptr or unique_ptr, per
+        // SmartPointerAnalyzer::containerElementIsShared), so `v[i].field` needs
+        // `->` exactly like any other smart-pointer expression.
+        const std::string containerType = containerVarType(sub->object.get());
+        if (containerType.empty()) return "";
+        const std::string elem = vectorElementType(containerType);
+        return isClassType(elem) ? elem : "";
+    }
     return "";
 }
 
@@ -588,6 +598,11 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         const std::string objStr = emitExpression(member->object.get());
         const std::string op = exprObjectClass(member->object.get()).empty() ? "." : "->";
         return objStr + op + member->member;
+    }
+    if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        // `v[i]` lowers 1:1 to C++ `v[i]` -- std::vector's operator[] is exactly
+        // what CeeLing's subscript syntax means, no translation needed.
+        return emitExpression(sub->object.get()) + "[" + emitExpression(sub->index.get()) + "]";
     }
     // Unknown node: best effort.
     return expr->toString();

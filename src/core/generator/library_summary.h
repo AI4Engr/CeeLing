@@ -28,4 +28,11 @@ bool isKnownVectorMethod(const std::string& methodName);
 // object-typed argument.
 bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex);
 
+// Does calling `methodName` on a vector potentially reallocate its backing store,
+// invalidating every existing reference/iterator into the container (CLAUDE.md
+// threat #4)? Only `push_back` is modeled for this slice (the only mutator this
+// allow-list covers); `insert`/`resize`/`erase` will extend this set once they
+// exist. `size`/`begin`/`end` are read-only and never invalidate.
+bool vectorMethodInvalidatesReferences(const std::string& methodName);
+
 } // namespace cling

@@ -136,6 +136,31 @@ private:
     // If `expr` is a bare object-typed local, return its name; else empty.
     std::string asObjectLocalName(const Expression* expr) const;
 
+    // If `expr` is a subscript into a container-typed local (`v[i]`), return the
+    // CONTAINER's name (not a per-element identity -- an element has no name of its
+    // own; invalidation is a whole-container reallocation event, so provenance is
+    // tracked at the container level, matching threat #4's actual shape). Else "".
+    // Used the same way asObjectLocalName is used for observer-binding: `ref Node n
+    // = v[i];` should make `n` observe `v`, and `v.push_back(...)` (see
+    // invalidateContainerObservers) should be able to find every such `n`.
+    std::string asContainerSubscript(const Expression* expr) const;
+
+    // If `expr` is a bare identifier or a subscript, return the name of the object-
+    // typed local it resolves to for observer-binding purposes (asObjectLocalName
+    // for a bare identifier, asContainerSubscript for `v[i]`). Shared choke point
+    // for every "what does this ref/alias observe" call site.
+    std::string resolveObservedOwner(const Expression* expr) const;
+
+    // A known invalidating library call (only `push_back` this slice -- see
+    // library_summary.h) kills every existing observer of its container receiver:
+    // the backing store may have reallocated, so any `ref`/subscript-derived
+    // reference into the old storage is now dangling. Structurally identical to
+    // what endBlockScope already does for scope-exit and the AssignmentStatement
+    // branch already does for reassignment -- just a third death-event source,
+    // reusing the same danglingObservers_ set (already conservatively unioned
+    // across branches by mergeBranchStates, so this needs no new BranchState field).
+    void invalidateContainerObservers(const Expression* callExpr);
+
     // If `expr` is a call to a known CeeLing function/method whose summary says the
     // return value aliases one of its parameters, return the NAME of the object-local
     // argument passed at that position (empty if not applicable: unknown callee,

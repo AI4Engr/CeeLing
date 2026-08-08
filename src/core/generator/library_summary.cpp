@@ -41,4 +41,8 @@ bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex) {
     return methodName == "push_back" && argIndex == 0;
 }
 
+bool vectorMethodInvalidatesReferences(const std::string& methodName) {
+    return methodName == "push_back";
+}
+
 } // namespace cling

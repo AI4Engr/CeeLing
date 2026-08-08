@@ -333,6 +333,8 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
         result = buildUnaryExpression(node, source);
     } else if (strcmp(node_type, "member_access") == 0) {
         result = buildMemberAccess(node, source);
+    } else if (strcmp(node_type, "subscript_expression") == 0) {
+        result = buildSubscriptExpression(node, source);
     } else if (strcmp(node_type, "primary_expression") == 0) {
         // If we get a primary_expression node, look at its first child
         if (ts_node_child_count(node) > 0) {
@@ -814,6 +816,17 @@ ExpressionPtr ASTBuilder::buildMemberAccess(TSNode node, const std::string& sour
     std::string member = getNodeText(member_node, source);
 
     return std::make_unique<MemberAccess>(std::move(object), member);
+}
+
+ExpressionPtr ASTBuilder::buildSubscriptExpression(TSNode node, const std::string& source) {
+    // subscript_expression: expression "[" expression "]"
+    TSNode object_node = ts_node_child(node, 0);
+    TSNode index_node = ts_node_child(node, 2); // Skip "["
+
+    auto object = buildExpression(object_node, source);
+    auto index = buildExpression(index_node, source);
+
+    return std::make_unique<SubscriptExpression>(std::move(object), std::move(index));
 }
 
 StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& source) {

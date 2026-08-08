@@ -187,3 +187,21 @@ fixtures: **PASS=25, XFAIL=0, FAIL=0.**
   fixture that surfaced a genuine pre-existing bug (not container-specific): a
   method call's receiver (`v` in `v.size()`) was never checked for moved-from status,
   only the call's arguments — fixed alongside this fixture, see Ch. 18.
+
+Phase 2.6 slice 2 (`v[i]` subscript + iterator/reference invalidation, threat #4 —
+Ch. 18, Step 14) added 4 more fixtures: **PASS=29, XFAIL=0, FAIL=0.**
+
+- `vector_subscript_read_accepted.clg` — plain `v[i]` read, no `ref` observer
+  involved. Proves the new subscript syntax parses, resolves to the right receiver,
+  and lowers `.` to `->` when the element is class-typed; compiles clean under g++.
+- `vector_element_observer_alive_ok.clg` — `ref Node n = v[0];` used while `v` is
+  never mutated afterward. Positive control: an element observer must NOT be
+  rejected just because it exists — only actual invalidation should trigger reject.
+- `vector_element_observer_dangles_after_push_back_rejected.clg` — the canonical
+  invalidation case: `ref Node n = v[0];` then `v.push_back(...)` then use `n`.
+  `push_back` may reallocate the vector's backing store, so `n` may be dangling.
+- `vector_element_observer_branch_merge_rejected.clg` — the invalidating
+  `push_back` happens inside only one `if` branch; a later use must still reject
+  (dangling-in-either-branch ⇒ dangling after merge), proving invalidation events
+  get the same branch-merge conservatism as every other death event, with no new
+  `BranchState` machinery — reuses the existing `danglingObservers_` union.

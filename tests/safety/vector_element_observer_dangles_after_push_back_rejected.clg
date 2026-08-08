@@ -1,0 +1,26 @@
+//@ expect: reject
+//@ reason: `push_back` may reallocate the vector's backing store, invalidating every
+//@ reason: existing reference into it (CLAUDE.md threat #4). `n` observes `v[0]` at
+//@ reason: the time of the ref declaration; the later push_back may move that
+//@ reason: storage elsewhere, so using `n` afterward is a real dangling-reference risk.
+//
+// The canonical iterator/reference-invalidation case this slice exists to catch.
+// `library_summary.h`'s `vectorMethodInvalidatesReferences` marks `push_back` as
+// invalidating; DanglingChecker kills every existing observer of the container
+// (`invalidateContainerObservers`), the same death-event mechanism already used for
+// owner reassignment and scope-exit.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    ref Node n = v[0];
+    v.push_back(new Node(2));   // may reallocate -- n's observed storage may move
+    std::cout << n.v << std::endl;   // ERROR: n observes a possibly-invalidated container
+    return 0;
+}

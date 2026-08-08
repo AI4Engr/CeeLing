@@ -116,6 +116,26 @@ std::string DanglingChecker::asObjectLocalName(const Expression* expr) const {
     return {};
 }
 
+std::string DanglingChecker::asContainerSubscript(const Expression* expr) const {
+    auto sub = dynamic_cast<const SubscriptExpression*>(expr);
+    if (sub == nullptr) return {};
+    // The container itself must be a bare, live, container-typed local -- matches
+    // asObjectLocalName's own restriction to bare identifiers (this checker does
+    // lightweight resolution, not full type inference; `f()[i]` or `a.v[i]` are not
+    // resolved by this lightweight pass, same conservatism as elsewhere).
+    auto id = dynamic_cast<const Identifier*>(sub->object.get());
+    if (id == nullptr) return {};
+    if (objectLocals_.find(id->name) == objectLocals_.end()) return {};
+    auto typeIt = localType_.find(id->name);
+    if (typeIt == localType_.end() || !isVectorType(typeIt->second)) return {};
+    return id->name;
+}
+
+std::string DanglingChecker::resolveObservedOwner(const Expression* expr) const {
+    if (std::string owner = asObjectLocalName(expr); !owner.empty()) return owner;
+    return asContainerSubscript(expr);
+}
+
 std::string DanglingChecker::resolveCallReturnAlias(const Expression* expr) const {
     auto call = dynamic_cast<const FunctionCall*>(expr);
     if (call == nullptr) return {};
@@ -159,6 +179,12 @@ std::string DanglingChecker::resolveCallReturnAlias(const Expression* expr) cons
 void DanglingChecker::applyCallArgMoves(const Expression* expr) {
     auto call = dynamic_cast<const FunctionCall*>(expr);
     if (call == nullptr) return;
+
+    // A known invalidating call (push_back) kills every existing observer of its
+    // container receiver first -- runs alongside the argument-move logic below
+    // since both are driven by the exact same call expression, and every call
+    // site in this file that calls applyCallArgMoves needs this too.
+    invalidateContainerObservers(expr);
 
     // A known library method may SHARE an argument instead of moving it (e.g.
     // `v.push_back(x)` links x into the container, the same way storing into a
@@ -205,6 +231,31 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
         }
         if (std::string src = asObjectLocalName(call->arguments[i].get()); !src.empty()) {
             movedFrom_.insert(src);
+        }
+    }
+}
+
+void DanglingChecker::invalidateContainerObservers(const Expression* callExpr) {
+    auto call = dynamic_cast<const FunctionCall*>(callExpr);
+    if (call == nullptr || !call->callee) return;
+    auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+    if (member == nullptr) return;
+    auto id = dynamic_cast<const Identifier*>(member->object.get());
+    if (id == nullptr) return;
+
+    auto typeIt = localType_.find(id->name);
+    if (typeIt == localType_.end() || !isVectorType(typeIt->second)) return;
+    if (!vectorMethodInvalidatesReferences(member->member)) return;
+
+    // The container may have reallocated -- every existing observer of it (`ref
+    // Node n = v[i];`) is now dangling, the same way endBlockScope kills observers
+    // of an owner whose scope just ended, and the AssignmentStatement branch kills
+    // observers of a reassigned owner. Reuses danglingObservers_ (already unioned
+    // conservatively across branches by mergeBranchStates), so a call inside only
+    // one `if` arm still invalidates on both paths after the merge.
+    for (const auto& [obs, owner] : observerOf_) {
+        if (owner == id->name) {
+            danglingObservers_.insert(obs);
         }
     }
 }
@@ -265,6 +316,11 @@ void DanglingChecker::checkExpressionUses(const Expression* expr) {
     }
     if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
         checkExpressionUses(member->object.get());
+        return;
+    }
+    if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        checkExpressionUses(sub->object.get());
+        checkExpressionUses(sub->index.get());
         return;
     }
     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
@@ -445,7 +501,10 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             danglingObservers_.erase(decl->identifier);
             if (isObjectType(decl->type)) {
                 localType_[decl->identifier] = decl->type;
-                if (std::string owner = asObjectLocalName(decl->expression.get());
+                // `ref Node n = v[i];` observes the CONTAINER `v` (see
+                // asContainerSubscript) -- an element has no identity of its own to
+                // observe; invalidation is a whole-container reallocation event.
+                if (std::string owner = resolveObservedOwner(decl->expression.get());
                     !owner.empty()) {
                     observerOf_[decl->identifier] = owner;
                 }
@@ -500,7 +559,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             // the alias exemption even if `b` was originally alias-derived.
             danglingObservers_.erase(assign->variable);
             aliasObservers_.erase(assign->variable);
-            if (std::string owner = asObjectLocalName(assign->expression.get());
+            if (std::string owner = resolveObservedOwner(assign->expression.get());
                 !owner.empty()) {
                 observerOf_[assign->variable] = owner;
             } else {

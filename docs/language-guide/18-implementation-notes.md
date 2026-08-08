@@ -792,3 +792,105 @@ did so through a bare field read (`b.v`), which the `MemberAccess` branch alread
 covers by checking `member->object`, never through a method call. Fixed by also
 walking `call->callee` when present, using the exact same `checkExpressionUses`
 recursion already in place.
+
+## Step 14 — `v[i]` subscript access, and container invalidation as a third death event
+
+Slice 1 deliberately stopped short of `operator[]` and iterator-invalidation
+analysis (threat #4): without subscript syntax there's no way to produce an
+observer *of* a container element, so "push_back may invalidate existing
+references" had nothing to invalidate yet. This step closes that gap.
+
+### Subscript syntax reuses the tight-binding trick from Step 6/7, not precedence
+
+`member_access` and `function_call` already bind tightly to `.`/`->`/`()` not
+through a numeric `prec(N)` climb, but by restricting their left-operand grammar to
+`choice($.member_access, $.primary_expression)` — deliberately excluding general
+`$.expression`, so `.`/`->`/calls can never silently apply across a full binary
+expression without parens. `subscript_expression` follows the exact same pattern:
+
+```js
+subscript_expression: $ => prec.left(seq(
+  choice($.subscript_expression, $.member_access, $.primary_expression),
+  '[', $.expression, ']'
+)),
+```
+
+with `member_access` and `function_call`'s operand `choice(...)` widened to also
+include `$.subscript_expression`, so `v[i].field`, `a.v[i]`, and `v[i].method()` all
+compose bidirectionally. This regenerated with **zero conflicts** on the first
+attempt — a real contrast to slice 1's `generic_type`/`container_declaration` work,
+which needed a `prec(10)` fix and a `conflicts:` entry. The difference: subscript's
+`[`/`]` brackets are unambiguous delimiters the moment they appear, unlike `<`/`>`
+(shared with comparison operators) or the `generic_type identifier` vs
+`variable_declaration` prefix overlap.
+
+The AST node, `SubscriptExpression` (`object` + `index`, both real `ExpressionPtr`s
+— unlike `MemberAccess::member`, which is a bare name, an index is itself an
+expression that can be checked/emitted recursively), and its builder mirror
+`MemberAccess`/`buildMemberAccess` exactly.
+
+### `v[i]` observes the container, not an element — a deliberate granularity choice
+
+The natural question once `ref Node n = v[i];` needs to be trackable: should `n`'s
+provenance point at "element `i` of `v`," or at `v` itself? Per-element provenance
+would be more precise in principle, but elements in a `std::vector` have no
+independent identity — `push_back` can reallocate the entire backing store, which
+invalidates *every* existing reference into the vector regardless of which index it
+came from. Tracking per-element provenance would imply a precision the underlying
+container doesn't actually provide, so `n` observes the container `v` as a whole.
+
+Mechanically, this meant giving `DanglingChecker` a second way to answer "what does
+this expression observe," alongside the existing `asObjectLocalName` (bare
+identifier only). `asContainerSubscript` recognizes `v[i]` specifically when `v` is
+a live, container-typed local (not an arbitrary subscript on some unrelated
+expression), and a new `resolveObservedOwner` choke point tries
+`asObjectLocalName` first, then falls back to `asContainerSubscript`, feeding both
+of the `ref`-binding sites (initial declaration and observer rebind) that
+previously called `asObjectLocalName` directly. Move-tracking call sites
+deliberately keep calling `asObjectLocalName` unchanged — a container subscript
+result is never itself a movable owner, only ever an observed target.
+
+### Invalidation is a third death event, not a new mechanism
+
+Before this step, exactly two things could kill an owner and dangle its observers:
+reassignment (`AssignmentStatement`) and scope-exit (`endBlockScope`) — both work by
+inserting into `danglingObservers_` every observer whose `observerOf_` value equals
+the dying name. `push_back`-invalidates-existing-observers turns out to be
+*structurally identical*: "the container's previous backing storage is gone" is the
+same shape of event as "the owner is gone," just triggered by a mutating call
+instead of a reassignment or scope boundary.
+
+`library_summary.h` gained `vectorMethodInvalidatesReferences(methodName)` (true
+only for `push_back` this slice — the extension point for `insert`/`erase`/`resize`
+once they exist), and `DanglingChecker::invalidateContainerObservers` — called from
+`applyCallArgMoves`, the single place every call expression already passes through
+— checks whether a call is `<container>.push_back(...)` on a known vector-typed
+local, and if the method is invalidating, walks `observerOf_` for every entry whose
+owner is that container and inserts it into `danglingObservers_`.
+
+Because this reuses `danglingObservers_` rather than adding new state, it gets
+`mergeBranchStates`' existing conservative union **for free**: an invalidating call
+inside only one arm of an `if` still makes an observer dangling after the merge,
+with zero changes to `BranchState` or the merge logic itself.
+`vector_element_observer_branch_merge_rejected.clg` proves this the same way
+`branch_merge_ambiguous_rejected.clg` proved it for plain reassignment in Step 11 —
+by construction, not by adding a special case.
+
+### Codegen needed almost nothing new
+
+`AstEmitter` lowers `v[i]` to literal C++ `v[i]` — `std::vector::operator[]` is
+exactly what the subscript means, no translation required. The one real addition
+was extending `exprObjectClass` (the function deciding `.` vs `->` for member
+access on an arbitrary expression) with a `SubscriptExpression` case, so
+`v[i].field` correctly lowers to `v[i]->field` when the vector's element type is
+class-typed (and therefore a smart pointer under the hood) — found immediately
+after the first build by manual inspection of generated output (`v[0].v` was
+emitting `.` instead of `->`), fixed the same way `MemberAccess`'s own
+`exprObjectClass` case already worked.
+
+`ref Node n = v[i];` needed **zero** new emission logic: it composes with the
+existing `ref`-to-raw-pointer lowering unchanged (`Node* n = (v[0]).get();`), since
+`emitExpression` on a `SubscriptExpression` already produces a valid
+smart-pointer-typed expression to call `.get()` on. This is the confirmation signal
+the plan called for — if it hadn't composed cleanly, that would have meant the
+container-observer design was wrong, not that a parallel emission path was needed.

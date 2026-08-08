@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ reason: v[i] subscript access on a std::vector<T>, with no ref observer involved,
+//@ reason: is the basic case that must work for the syntax to be usable at all.
+//
+// Proves subscript syntax parses, resolves the correct receiver (a container-typed
+// local), and lowers `.` -> `->` when the element is class-typed (v[0] yields a
+// std::unique_ptr<Node>, so v[0].v must become v[0]->v in the generated C++).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    int a = v[0].v;
+    std::cout << a << std::endl;
+    return 0;
+}
