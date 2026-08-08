@@ -18,6 +18,7 @@ private:
 
     StatementPtr buildStatement(TSNode node, const std::string& source);
     StatementPtr buildVariableDeclaration(TSNode node, const std::string& source);
+    StatementPtr buildContainerDeclaration(TSNode node, const std::string& source);
     StatementPtr buildMemberVariableDeclaration(TSNode node, const std::string& source);
     StatementPtr buildAssignmentStatement(TSNode node, const std::string& source);
     StatementPtr buildExpressionStatement(TSNode node, const std::string& source);
@@ -31,6 +32,7 @@ private:
     StatementPtr buildReturnStatement(TSNode node, const std::string& source);
     StatementPtr buildIfStatement(TSNode node, const std::string& source);
     StatementPtr buildWhileStatement(TSNode node, const std::string& source);
+    StatementPtr buildForStatement(TSNode node, const std::string& source);
     ExpressionPtr buildExpression(TSNode node, const std::string& source);
     ExpressionPtr buildIdentifier(TSNode node, const std::string& source);
     ExpressionPtr buildScopedIdentifier(TSNode node, const std::string& source);

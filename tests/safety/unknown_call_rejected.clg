@@ -1,0 +1,24 @@
+//@ expect: reject
+//@ reason: `mysteryFunction` is not defined anywhere in this program; CeeLing has no
+//@ reason: borrow/ownership summary for it and must not silently trust it.
+//
+// CLAUDE.md's "default-reject, never default-allow" rule: a call into anything
+// CeeLing did not compile itself (no summary table entry) is rejected outright,
+// rather than treating its return value as a fresh, safe owner by default. CeeLing
+// has no mechanism today to learn a real signature for anything reached via
+// `#include` (include lines are passed through as opaque text), so "unknown call"
+// and "call to something outside this program" are currently the same set.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    Node r = mysteryFunction(a, b);   // ERROR: no summary for an unknown call
+    std::cout << r.v << std::endl;
+    return 0;
+}

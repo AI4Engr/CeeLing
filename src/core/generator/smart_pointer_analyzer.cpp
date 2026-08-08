@@ -140,11 +140,20 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     diagnostics.clear();
     reportLines.clear();
 
+    containerElementShared_.clear();
+
     firstPassCollectReferences(program);
     if (!source.empty()) {
         scanSource(source);
     }
     secondPassDeterminePointerTypes();
+
+    // Container element-kind scan runs AFTER the two-pass decision above, since it
+    // asks "what pointer kind did each push_back argument's OWN variable already
+    // get decided as" -- e.g. `v.push_back(a);` needs `a`'s pointer kind (decided
+    // from a's own non-container usages) to know whether this push forces v's
+    // element kind to shared_ptr.
+    scanContainerElementKinds(program);
 }
 
 PointerType SmartPointerAnalyzer::getPointerType(const std::string& className, const std::string& variableName) const {
@@ -227,6 +236,79 @@ const std::vector<AnalysisDiagnostic>& SmartPointerAnalyzer::getDiagnostics() co
 
 bool SmartPointerAnalyzer::classRequiresSharedRoot(const std::string& className) const {
     return classesNeedingSharedRoots.find(className) != classesNeedingSharedRoots.end();
+}
+
+bool SmartPointerAnalyzer::containerElementIsShared(const std::string& containerVarName) const {
+    auto it = containerElementShared_.find(containerVarName);
+    return it != containerElementShared_.end() && it->second;
+}
+
+void SmartPointerAnalyzer::scanContainerElementKinds(const Program& program) {
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            for (const auto& inner : fn->body) scanContainerElementKindsInStatement(*inner);
+        } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
+            for (const auto& inner : mn->body) scanContainerElementKindsInStatement(*inner);
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    for (const auto& inner : method->body) scanContainerElementKindsInStatement(*inner);
+                } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    for (const auto& inner : ctor->body) scanContainerElementKindsInStatement(*inner);
+                }
+            }
+        }
+    }
+}
+
+namespace {
+// Local helper: does `expr` name a bare identifier, and if so what is it? Used to
+// resolve both the push_back receiver (container variable) and argument (source
+// variable) without needing full expression evaluation -- this scan only needs the
+// direct, common shape `container.push_back(sourceVar)`.
+const Identifier* asIdentifier(const Expression* expr) {
+    return dynamic_cast<const Identifier*>(expr);
+}
+} // namespace
+
+void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement& stmt) {
+    // Only need to find `<container>.push_back(<arg>)` call expressions, wherever
+    // they appear (as a bare expression statement or nested in an initializer) --
+    // recurse into every statement shape that can contain one.
+    auto visitExpr = [this](const Expression* expr) {
+        auto call = dynamic_cast<const FunctionCall*>(expr);
+        if (call == nullptr || !call->callee) return;
+        auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+        if (member == nullptr || member->member != "push_back" || call->arguments.empty()) return;
+        const Identifier* recv = asIdentifier(member->object.get());
+        const Identifier* arg = asIdentifier(call->arguments[0].get());
+        if (recv == nullptr || arg == nullptr) return;
+
+        // Resolve the argument's OWN already-decided pointer kind via its symbol
+        // type (registered the same way locals/parameters/fields already are).
+        const auto typeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, arg->name));
+        if (typeIt == symbolTypesByScope.end()) return;
+        if (getPointerType(typeIt->second, arg->name) == PointerType::SHARED) {
+            containerElementShared_[recv->name] = true;
+        } else if (containerElementShared_.find(recv->name) == containerElementShared_.end()) {
+            containerElementShared_[recv->name] = false;
+        }
+    };
+
+    if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(&stmt)) {
+        visitExpr(exprStmt->expression.get());
+    } else if (auto decl = dynamic_cast<const VariableDeclaration*>(&stmt)) {
+        if (decl->expression) visitExpr(decl->expression.get());
+    } else if (auto assign = dynamic_cast<const AssignmentStatement*>(&stmt)) {
+        if (assign->expression) visitExpr(assign->expression.get());
+    } else if (auto ifs = dynamic_cast<const IfStatement*>(&stmt)) {
+        for (const auto& inner : ifs->body) scanContainerElementKindsInStatement(*inner);
+        for (const auto& inner : ifs->elseBody) scanContainerElementKindsInStatement(*inner);
+    } else if (auto whiles = dynamic_cast<const WhileStatement*>(&stmt)) {
+        for (const auto& inner : whiles->body) scanContainerElementKindsInStatement(*inner);
+    } else if (auto fors = dynamic_cast<const ForStatement*>(&stmt)) {
+        for (const auto& inner : fors->body) scanContainerElementKindsInStatement(*inner);
+    }
 }
 
 void SmartPointerAnalyzer::firstPassCollectReferences(const Program& program) {

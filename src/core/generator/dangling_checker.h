@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../cst_to_ast/ast.h"
+#include "smart_pointer_analyzer.h"
 #include <map>
 #include <set>
 #include <string>
@@ -45,7 +46,12 @@ struct DanglingError {
 class DanglingChecker {
 public:
     // Returns all detected errors (empty => program is accepted by this checker).
-    std::vector<DanglingError> check(const Program& program);
+    // `analyzer` must already have run analyzeProgram over the same `program` --
+    // needed for Phase 2.6 container support: whether a specific `push_back`
+    // argument is shared or moved depends on the argument's own already-decided
+    // pointer kind (unique vs shared), which only SmartPointerAnalyzer knows (see
+    // applyCallArgMoves and Chapter 18's note on this cross-module dependency).
+    std::vector<DanglingError> check(const Program& program, const SmartPointerAnalyzer& analyzer);
 
 private:
     // Auto-derived per-function/method borrow contract (CLAUDE.md component A).
@@ -117,7 +123,11 @@ private:
                             const BranchState& elseState);
 
     // Record which locals are object-typed (only those participate in move tracking).
-    // Returns true if `type` names a known class.
+    // Returns true if `type` names a known class OR a recognized container type
+    // (e.g. `std::vector<Node>` -- see library_summary.h). A container's own
+    // lifetime matters exactly like a class object's (moving it moves the backing
+    // store; an observer of a moved-from/killed container dangles), so it reuses
+    // 100% of the existing move/observer machinery once recognized here.
     bool isObjectType(const std::string& type) const;
 
     // Walk an expression; for every use of a moved-from variable, emit an error.
@@ -175,6 +185,7 @@ private:
     // danglingObservers_) makes an alias observer dangling, same as a real observer.
     std::set<std::string> aliasObservers_;
     std::vector<DanglingError> errors_;
+    const SmartPointerAnalyzer* analyzer_ = nullptr;  // set for the duration of check()
 };
 
 } // namespace cling

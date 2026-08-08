@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ reason: a std::vector<Node> declared, populated via push_back, and iterated with
+//@ reason: range-for is the minimal usable slice of Phase 2.6 container support.
+//
+// Proves std::vector<T> works end-to-end: declaration with no initializer (the one
+// definite-init exception -- a container's empty default state is always safe),
+// push_back with fresh `new` objects, and range-for iteration with field access on
+// the loop variable (`.` lowers to `->` since the element is class-typed).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    v.push_back(new Node(2));
+    for (Node n : v) {
+        std::cout << n.v << std::endl;
+    }
+    return 0;
+}

@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ reason: `pick` is a CeeLing-defined free function and `helper` is a same-class
+//@ reason: method called via an implicit `this` receiver -- both are known callables.
+//
+// Positive control for unknown_call_rejected.clg: proves the default-reject-unknown-
+// calls check doesn't flag legitimate calls to functions/methods CeeLing itself
+// compiled, including the bare-name (implicit `this`) method-call shape.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+
+    int helper() {
+        return v;
+    }
+
+    int useHelper() {
+        return helper();   // bare call, implicit `this` receiver -- known callable
+    }
+};
+
+Node pick(Node a, Node b) {
+    return a;
+}
+
+int main() {
+    Node x = new Node(1);
+    Node y = new Node(2);
+    Node r = pick(x, y);
+    std::cout << r.v << std::endl;
+    Node n = new Node(5);
+    std::cout << n.useHelper() << std::endl;
+    return 0;
+}

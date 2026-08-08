@@ -14,11 +14,10 @@ real.
   reassigned, or falls out of scope is rejected.
 - **Observer-parameter ban** — `void sink(ref Node n)` is rejected at parse time
   (observers are local-only; this seals a whole class of escape bug by construction).
-- **Every dangling scenario in the current syntax is caught.** Only the old,
-  superseded `owned<>`/`borrowed<>` fixtures (kept around for regression, now
-  correctly rejected as unparseable rather than silently accepted) are not covered by
-  the modern dangling analysis — their intent is covered by the `tests/safety/*.clg`
-  equivalents.
+- **Every dangling scenario in the current syntax is caught**, verified by
+  `tests/safety/*.clg`. The old `owned<>`/`borrowed<>`-annotated fixtures that once
+  demonstrated the same scenarios in a superseded syntax have been removed — every
+  scenario they covered now has a real, passing modern-syntax equivalent.
 - **Escape hatches are sealed** (Phase 1) — `.get()` on a CeeLing object, raw pointer
   types, raw `delete`, casts, and raw `union` are all rejected with an explanatory
   diagnostic. See [Chapter 17](17-escape-hatches.md) for the mechanism and worked
@@ -61,16 +60,31 @@ real.
   positive where a rebind inside one branch leaked into the sibling branch's view. See
   `tests/safety/branch_merge_no_false_positive_accepted.clg` /
   `branch_merge_ambiguous_rejected.clg`.
+- **Default-reject unknown library calls** — a call to anything CeeLing did not
+  itself compile (no free function/method declaration in the program) is rejected
+  outright, closing the gap where an unknown call's return value was silently
+  trusted as "a fresh, safe owner." `std::cout << ...` stream output is exempt by
+  construction (never a `FunctionCall` node). See
+  `tests/safety/unknown_call_rejected.clg` / `known_call_accepted.clg`.
+- **`std::vector<T>` (Phase 2.6, slice 1)** — declaration (with or without an
+  initializer — the one definite-init exception, a container's empty state is
+  always safe), `push_back`/`size`/`begin`/`end` (the first real library-summary
+  allow-list entry), and range-`for` iteration. A vector's element pointer kind
+  (`shared_ptr` or `unique_ptr`, for class-typed elements) is decided once across
+  every `push_back` call site targeting it, and container variables participate in
+  the same move/observer tracking as class objects. `operator[]`, `map`/`string`,
+  and iterator-invalidation analysis are deferred to the next slice. See
+  `tests/safety/vector_push_back_and_for_accepted.clg` and siblings, and Chapter
+  18's implementation notes for the full design.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**
   (`unique_ptr`/`shared_ptr`/`weak_ptr`), not yet unified onto the new engine.
-- **Default-reject unknown library calls** (the remaining Phase 1 item) — no
-  library-summary allow-list exists yet; tracked under Phase 2.
-- **Library/std/Eigen summaries** — only CeeLing's own functions get an auto-derived
-  summary today.
-- Branch merges (`if`/`else` arms are checked independently, not merged), iterator
-  invalidation, `string_view`/Eigen dangling — still open.
+- **Library/std/Eigen summaries** — only `std::vector<T>`'s four methods are on the
+  allow-list; every other external call is still rejected unconditionally (the
+  correct conservative default).
+- `operator[]`, `std::map`/`std::string`, iterator invalidation, container-held
+  observers, `string_view`/Eigen dangling — next Phase 2.6 slices.
 
 This chapter is the plan; only the "working today" list above is done.
 
@@ -87,8 +101,10 @@ Without a red/green baseline none of the later phases can be verified.
   is a hard **FAIL**. `--strict` flips XFAIL to FAIL once the analysis lands.
 - ✅ **New-syntax fixtures** — `tests/safety/*.clg` use the intended surface syntax:
   **plain move** (`Node b = a;`) and **`ref` observers** (`ref Node n = ...;`), no
-  `owned<>`/`borrowed<>`. Legacy annotated fixtures are tagged `//@ legacy:`.
-- ✅ **Baseline snapshot** — `tests/safety/BASELINE.md` (PASS=2, XFAIL=9, FAIL=0).
+  `owned<>`/`borrowed<>`. The legacy annotated `borrow_*.clg` fixtures have since been
+  removed (see Phase 2's "Migrate/retire" item in `TODO.md`).
+- ✅ **Baseline snapshot** — `tests/safety/BASELINE.md` (Phase 0 frozen at PASS=2,
+  XFAIL=9, FAIL=0; see the file for the full current count as later phases landed).
 - ✅ **CTest integration** — `cling_safety_contract_baseline`.
 - ✅ **Legal-C++ output check** — `AstEmitter` is now the default generator and emits
   compilable C++ (verified under g++ via `cling_test_ast_return_object_compile` and
@@ -96,11 +112,14 @@ Without a red/green baseline none of the later phases can be verified.
   `std::cout << ...`. The legacy regex generator is available via `--legacy-cpp` for
   comparison only.
 
-### Phase 1 — Seal escape hatches (simplest + foundational)  ✅ mostly done
+### Phase 1 — Seal escape hatches (simplest + foundational)  ✅ done
 Forbid raw `T*`, raw `new`/`delete`, `.get()`, `reinterpret_cast` / C-style casts,
-`const_cast`, raw `union`; require definite initialization (locals). All done — see
-Chapter 17 for the mechanism and worked diagnostic text. Still open: default-reject
-unknown library calls (needs the Phase 2 library-summary allow-list first).
+`const_cast`, raw `union`; require definite initialization (locals); default-reject
+any call to a function/method CeeLing did not itself compile. All done — see Chapter
+17 for the mechanism and worked diagnostic text. The default-reject-unknown-calls
+rule rejects every external call today (there is no library-summary allow-list yet,
+so nothing outside the program has a known-safe contract) — a real allow-list letting
+specific std/Eigen calls through is tracked under Phase 2.
 
 ### Phase 2 — Dangling-reference analysis (core)  ✅ done except library summaries
 Provenance table, death events, use-site check are implemented and cover all 5

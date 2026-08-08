@@ -103,6 +103,25 @@
     }
   },
   {
+    "type": "container_declaration",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "generic_type",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "expression",
     "named": true,
     "fields": {},
@@ -153,6 +172,33 @@
     }
   },
   {
+    "type": "for_statement",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "statement",
+          "named": true
+        },
+        {
+          "type": "type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "function_call",
     "named": true,
     "fields": {},
@@ -193,6 +239,25 @@
         },
         {
           "type": "statement",
+          "named": true
+        },
+        {
+          "type": "type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "generic_type",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "scoped_identifier",
           "named": true
         },
         {
@@ -454,7 +519,15 @@
           "named": true
         },
         {
+          "type": "container_declaration",
+          "named": true
+        },
+        {
           "type": "expression_statement",
+          "named": true
+        },
+        {
+          "type": "for_statement",
           "named": true
         },
         {
@@ -496,6 +569,10 @@
       "multiple": false,
       "required": false,
       "types": [
+        {
+          "type": "generic_type",
+          "named": true
+        },
         {
           "type": "identifier",
           "named": true
@@ -691,6 +768,10 @@
   },
   {
     "type": "float",
+    "named": false
+  },
+  {
+    "type": "for",
     "named": false
   },
   {

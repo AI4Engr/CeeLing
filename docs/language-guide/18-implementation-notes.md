@@ -675,3 +675,120 @@ Two smaller things fell out of the same fix, for free:
 the rebind) now compiles under g++ where it previously only passed the dangling
 checker's own exit-code check — direct proof the fix closes the gap Step 11 left
 open.
+
+## Step 13 — `std::vector<T>`, and why one container's elements can't be two types
+
+Phase 2.6 ("std container support") starts here, deliberately scoped to the smallest
+slice that's genuinely usable: `std::vector<T>` with `push_back`/`size`/`begin`/`end`
+and range-`for` — no `operator[]` (no subscript grammar exists yet), no
+`map`/`string`, no iterator-invalidation analysis (there's nothing to invalidate
+until vectors exist). Three things made this bigger than "add a grammar rule and a
+codegen branch."
+
+### Generic syntax didn't exist, and had to be added carefully
+
+`std::vector<int>` didn't parse before this — `<`/`>` were consumed as comparison
+operators, `int` as a bare identifier, silently, with no `ERROR` node at all (the
+same failure class Step 7 found repeatedly: a *misparse*, not a rejection). Adding
+`generic_type: scoped_identifier '<' type '>'` reintroduced the same
+`scoped_identifier '<'` ambiguity Step 7 fixed for casts, this time against real
+multiplication/comparison — resolved with `prec(10)`, verified by parsing both
+`std::vector<int> v = ...;` and a plain `a < b` comparison in the same file.
+
+A second, smaller grammar problem followed directly from Phase 1's definite-init
+rule: `variable_declaration` requires `= expression`, so there was no way to write
+`std::vector<int> v;` (the ordinary way to start an empty vector) at all. Unlike a
+bare `int n;` or `Node n;`, though, a container's default-constructed (empty) state
+is always well-defined and safe to read from — there's no uninitialized-memory risk
+to guard against. So `container_declaration: generic_type identifier ';'` was added
+as the one deliberate exception to definite-init, scoped narrowly to `$.generic_type`
+so it can never apply to a plain class or primitive. This created a genuine
+1-token-lookahead ambiguity with `variable_declaration` (both start `generic_type
+identifier`, and the parser can't know which production it's in until it sees `;` or
+`=` next) — not a precedence problem, so `tree-sitter generate`'s suggested fix
+(`conflicts: [[$.container_declaration, $.type]]`) was the right one: it tells the
+generator this ambiguity is real and GLR-resolvable at parse time, not a grammar bug
+to eliminate.
+
+### Why a vector's elements can't just "be shared_ptr" or "be unique_ptr"
+
+The obvious first design — always wrap class-typed elements in `shared_ptr`, since
+`shared_ptr` copies cheaply and a vector needs to store/return elements by value —
+breaks immediately: a plain local declared `Node a = new Node(1);` is independently
+inferred as `unique_ptr` by `SmartPointerAnalyzer` (Rule A: single owner, no sharing
+signal), and `v.push_back(a)` then fails to compile — there's no implicit conversion
+from `unique_ptr<Node>` to `shared_ptr<Node>` by copy. The equally obvious opposite
+fix — always `unique_ptr`, and make `push_back` always *move* — avoids that specific
+error, but breaks the moment two different pointer-kind sources both need to go into
+the same vector, and contradicts the existing "storing into a field links, doesn't
+consume" precedent from member-target assignment (`a.b = obj;`).
+
+The real constraint neither naive fix respects: **a single `std::vector<T>`'s
+element type is fixed** — `vector<unique_ptr<Node>>` and `vector<shared_ptr<Node>>`
+are different C++ types, so a container variable's element kind has to be decided
+*once*, consistently, and every `push_back` into it has to work with that decision.
+That's a whole-program property, not a per-call-site one — the same shape of problem
+`SmartPointerAnalyzer`'s existing two-pass design already solves for ordinary
+fields/locals, so the fix follows the same pattern: `scanContainerElementKinds` is a
+new, self-contained pass (own data — `containerElementShared_` — own recursive
+statement walk) that runs *after* the existing two-pass decision, over every
+`push_back` call site in the program. For each one, it looks up the pushed
+argument's own already-decided pointer kind (via `getPointerType`, keyed by the
+argument's class and name) and records: if *any* push into a given container
+variable came from an already-shared source, that container's elements are
+`shared_ptr`; otherwise `unique_ptr`. It runs after (not folded into) the existing
+second pass specifically because it depends on that pass's output — a chicken-and-egg
+problem solved by ordering, not by merging the two passes together.
+
+`SmartPointerAnalyzer::containerElementIsShared(varName)` is deliberately kept
+separate from the existing `pointerDecisions`/`variableReferences` machinery (own
+map, own pass) rather than threaded through it, for the same reason earlier
+container-related additions to that class stayed minimal (Step 8's parameter
+registration comment explains this directly): that engine's heuristics are tuned
+around locals/fields observed through full statement analysis, and it wasn't
+verified safe to wire container semantics into it without risking the existing
+back-reference/bidirectional-assignment rules.
+
+### `push_back` shares or moves depending on the specific argument, not the method
+
+Once a container's element kind is fixed, whether one particular `push_back` call
+shares or moves its argument turns out to depend on that argument's own pointer
+kind, not on `push_back` as a blanket rule:
+
+- Element kind shared, argument already shared → **shares**: plain copy (a
+  `shared_ptr` refcount bump), the argument remains a live, usable owner. This is
+  the case that matches "storing into a field links, doesn't consume."
+- Element kind shared, argument is unique → **moves**, but has to be *wrapped*:
+  `std::shared_ptr<Node>(std::move(a))`, since a `unique_ptr` can't be copied into a
+  `shared_ptr` slot, only moved-and-converted. The argument is consumed either way.
+- Element kind unique → **always moves**, the ordinary call-argument rule, no
+  wrapping needed (`unique_ptr` moves anywhere freely).
+
+Both `DanglingChecker` (does the argument count as moved-from afterward?) and
+`AstEmitter` (plain copy vs. `std::move(x)` vs. `std::shared_ptr<T>(std::move(x))`)
+have to agree on exactly this rule, or the checker's answer and the generated code's
+actual behavior diverge. That agreement is why `DanglingChecker` gained a dependency
+on `SmartPointerAnalyzer` in this step — the first time these two components have
+been coupled. Previously `DanglingChecker` was purely AST-level, with no opinion on
+pointer *types*, only on *lifetimes*; but "is this argument already shared" is
+inescapably a pointer-type question. `main.cpp` now constructs and runs
+`SmartPointerAnalyzer` before `DanglingChecker::check` (previously it only ran for
+the AST-emitter branch, after the dangling check), and passes it in by reference.
+
+`tests/safety/vector_push_back_shares_when_already_shared_accepted.clg` and
+`vector_push_back_moves_unique_source_rejected.clg` are the fixture pair pinning
+down this exact boundary — same-shaped source, different pointer-kind history for
+the pushed variable, opposite verdicts.
+
+### A pre-existing bug this surfaced: method-call receivers were never checked
+
+Writing `vector_moved_into_call_rejected.clg` (`sink(v); v.size();`) surfaced a bug
+with nothing to do with containers: `DanglingChecker::checkExpressionUses`'s
+`FunctionCall` branch walked only the call's *arguments*, never `call->callee` (the
+`recv.method` `MemberAccess` for a method call). So `a.getV()` on a moved-from `a`
+silently passed — a real gap, present since the dangling checker's earliest version,
+just never exercised: every prior fixture that used a moved-from object afterward
+did so through a bare field read (`b.v`), which the `MemberAccess` branch already
+covers by checking `member->object`, never through a method call. Fixed by also
+walking `call->callee` when present, using the exact same `checkExpressionUses`
+recursion already in place.

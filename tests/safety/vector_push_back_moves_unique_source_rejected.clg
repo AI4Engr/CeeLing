@@ -1,0 +1,22 @@
+//@ expect: reject
+//@ reason: `a` is a plain (unique_ptr-kind) local -- no other usage makes it shared --
+//@ reason: so `push_back(a)` MOVES it, the same as passing it to any other function.
+//
+// Positive control for the "share" case: proves push_back does not unconditionally
+// keep its argument alive. When the argument's own pointer kind was never promoted
+// to shared_ptr by anything else in the program, pushing it into a vector consumes
+// it exactly like an ordinary function-call argument -- using `a` afterward dangles.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    Node a = new Node(1);
+    v.push_back(a);
+    std::cout << a.v << std::endl;   // ERROR: a was moved into v
+    return 0;
+}

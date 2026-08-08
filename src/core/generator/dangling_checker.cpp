@@ -1,8 +1,9 @@
 #include "dangling_checker.h"
+#include "library_summary.h"
 
 namespace cling {
 
-std::vector<DanglingError> DanglingChecker::check(const Program& program) {
+std::vector<DanglingError> DanglingChecker::check(const Program& program, const SmartPointerAnalyzer& analyzer) {
     errors_.clear();
     classNames_.clear();
     collectClassNames(program);
@@ -10,6 +11,7 @@ std::vector<DanglingError> DanglingChecker::check(const Program& program) {
     functionParams_.clear();
     classMethodParams_.clear();
     deriveSummaries(program);
+    analyzer_ = &analyzer;
 
     // Each top-level function / main / method body is analyzed independently.
     for (const auto& stmt : program.statements) {
@@ -39,7 +41,7 @@ void DanglingChecker::collectClassNames(const Program& program) {
 }
 
 bool DanglingChecker::isObjectType(const std::string& type) const {
-    return classNames_.find(type) != classNames_.end();
+    return classNames_.find(type) != classNames_.end() || isVectorType(type);
 }
 
 DanglingChecker::FunctionSummary DanglingChecker::deriveSummaryForBody(
@@ -157,8 +159,51 @@ std::string DanglingChecker::resolveCallReturnAlias(const Expression* expr) cons
 void DanglingChecker::applyCallArgMoves(const Expression* expr) {
     auto call = dynamic_cast<const FunctionCall*>(expr);
     if (call == nullptr) return;
-    for (const auto& arg : call->arguments) {
-        if (std::string src = asObjectLocalName(arg.get()); !src.empty()) {
+
+    // A known library method may SHARE an argument instead of moving it (e.g.
+    // `v.push_back(x)` links x into the container, the same way storing into a
+    // field does not consume the RHS -- see library_summary.h). Resolve the
+    // receiver's declared type/name once so each argument can check the per-index
+    // rule.
+    std::string receiverType;
+    std::string receiverName;
+    std::string methodName;
+    if (call->callee) {
+        if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+            methodName = member->member;
+            if (auto id = dynamic_cast<const Identifier*>(member->object.get())) {
+                receiverName = id->name;
+                if (auto it = localType_.find(id->name); it != localType_.end()) {
+                    receiverType = it->second;
+                }
+            }
+        }
+    }
+    const bool receiverIsVector = !receiverType.empty() && isVectorType(receiverType);
+
+    for (size_t i = 0; i < call->arguments.size(); ++i) {
+        if (receiverIsVector && vectorMethodSharesArg(methodName, i)) {
+            // A container's element pointer kind is decided once, across every
+            // push_back call site targeting it (SmartPointerAnalyzer::
+            // containerElementIsShared) -- vector<unique_ptr<T>> and
+            // vector<shared_ptr<T>> are different C++ types, so it can't vary per
+            // call. Whether THIS specific push shares or moves its argument
+            // depends on whether the argument's OWN pointer kind already matches:
+            //   - element=SHARED, arg already SHARED -> share (copy, arg survives)
+            //   - element=SHARED, arg is UNIQUE       -> must move (wrap-construct
+            //     a shared_ptr from the unique_ptr, consuming it)
+            //   - element=UNIQUE                       -> always moves
+            const std::string argName = asObjectLocalName(call->arguments[i].get());
+            const bool elementIsShared = analyzer_ != nullptr &&
+                analyzer_->containerElementIsShared(receiverName);
+            const bool argIsShared = analyzer_ != nullptr && !argName.empty() &&
+                analyzer_->getPointerType(localType_.count(argName) ? localType_.at(argName) : "",
+                                          argName) == PointerType::SHARED;
+            if (elementIsShared && argIsShared) {
+                continue;  // shares -- the argument stays a live owner
+            }
+        }
+        if (std::string src = asObjectLocalName(call->arguments[i].get()); !src.empty()) {
             movedFrom_.insert(src);
         }
     }
@@ -223,6 +268,15 @@ void DanglingChecker::checkExpressionUses(const Expression* expr) {
         return;
     }
     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        // A method call's RECEIVER is a use too (`v.size()` after `v` was moved
+        // must be rejected the same way `v.field` already is via the MemberAccess
+        // branch above) -- pre-existing gap found while testing Phase 2.6 container
+        // fixtures: `call->callee` (the `recv.method` MemberAccess) was never
+        // walked here, only the call arguments. Not container-specific -- the same
+        // gap applied to any class-object method call on a moved-from receiver.
+        if (call->callee) {
+            checkExpressionUses(call->callee.get());
+        }
         for (const auto& arg : call->arguments) {
             checkExpressionUses(arg.get());
         }
@@ -530,6 +584,32 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         const BranchState before = snapshotBranchState();
         const std::set<std::string> ownersBefore = objectLocals_;
         for (const auto& inner : whiles->body) {
+            processStatement(inner.get());
+        }
+        endBlockScope(ownersBefore);
+        const BranchState afterLoop = snapshotBranchState();
+        restoreBranchState(before);
+        mergeBranchStates(before, afterLoop, before);
+    } else if (auto cdecl = dynamic_cast<const ContainerDeclaration*>(stmt)) {
+        // `std::vector<T> v;` -- no initializer (the one definite-init exception,
+        // see Chapter 17/grammar.js container_declaration). Always a fresh owner;
+        // no RHS uses to check and nothing to move.
+        objectLocals_.insert(cdecl->identifier);
+        movedFrom_.erase(cdecl->identifier);
+        localType_[cdecl->identifier] = cdecl->type;
+    } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+        checkExpressionUses(fors->container.get());
+        // Same conservatism as `while`: the body may run zero or more times.
+        const BranchState before = snapshotBranchState();
+        const std::set<std::string> ownersBefore = objectLocals_;
+        // The loop variable is a fresh owner for each (modeled: one static pass
+        // over the) iteration -- registered exactly like a VariableDeclaration,
+        // then cleaned up by endBlockScope same as any other block-local.
+        if (isObjectType(fors->loopVarType)) {
+            objectLocals_.insert(fors->loopVarName);
+            localType_[fors->loopVarName] = fors->loopVarType;
+        }
+        for (const auto& inner : fors->body) {
             processStatement(inner.get());
         }
         endBlockScope(ownersBefore);

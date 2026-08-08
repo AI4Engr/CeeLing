@@ -1,4 +1,5 @@
 #include "escape_hatch_checker.h"
+#include "library_summary.h"
 
 namespace cling {
 
@@ -6,7 +7,10 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
     errors_.clear();
     classNames_.clear();
     classFields_.clear();
+    knownFreeFunctions_.clear();
+    classMethods_.clear();
     collectClasses(program);
+    collectCallables(program);
 
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
@@ -42,6 +46,70 @@ void EscapeHatchChecker::collectClasses(const Program& program) {
             }
         }
     }
+}
+
+void EscapeHatchChecker::collectCallables(const Program& program) {
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            knownFreeFunctions_.insert(fn->name);
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            auto& methods = classMethods_[cls->name];
+            for (const auto& member : cls->members) {
+                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    methods.insert(method->name);
+                }
+            }
+        }
+    }
+}
+
+std::string EscapeHatchChecker::resolveDeclaredType(const Expression* expr) const {
+    auto id = dynamic_cast<const Identifier*>(expr);
+    if (id == nullptr) return {};
+    if (auto it = localType_.find(id->name); it != localType_.end()) {
+        return it->second;
+    }
+    if (!currentClass_.empty()) {
+        if (auto clsIt = classFields_.find(currentClass_); clsIt != classFields_.end()) {
+            if (auto fIt = clsIt->second.find(id->name); fIt != clsIt->second.end()) {
+                return fIt->second;
+            }
+        }
+    }
+    return {};
+}
+
+bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
+    if (call.callee) {
+        // `recv.method(args)`: the receiver's class must be known AND declare this
+        // method. An unresolvable receiver (e.g. the result of another call -- this
+        // checker does lightweight resolution, not full type inference) is treated
+        // as unknown, matching resolveObjectType's existing conservative behavior.
+        auto member = dynamic_cast<const MemberAccess*>(call.callee.get());
+        if (member == nullptr) return false;
+
+        // A known library method on a recognized container type, e.g.
+        // `v.push_back(x)` where `v`'s declared type is `std::vector<T>`.
+        const std::string declaredType = resolveDeclaredType(member->object.get());
+        if (isVectorType(declaredType)) {
+            return isKnownVectorMethod(member->member);
+        }
+
+        const std::string objClass = resolveObjectType(member->object.get());
+        if (objClass.empty()) return false;
+        auto it = classMethods_.find(objClass);
+        return it != classMethods_.end() && it->second.count(member->member) > 0;
+    }
+    // Plain call `f(args)`: either a free function, or -- inside a method body -- a
+    // bare same-class method call with an implicit `this` receiver.
+    if (knownFreeFunctions_.count(call.function_name) > 0) return true;
+    if (!currentClass_.empty()) {
+        auto it = classMethods_.find(currentClass_);
+        if (it != classMethods_.end() && it->second.count(call.function_name) > 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void EscapeHatchChecker::checkBody(const std::vector<StatementPtr>& body,
@@ -128,6 +196,29 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                          "specific field.";
                 errors_.push_back(e);
             }
+        } else if (!isKnownCallable(*call)) {
+            // Default-reject unknown library calls: CeeLing has no summary (borrow/
+            // move contract) for anything it didn't compile itself, so it cannot
+            // prove a call is safe -- default-allow would silently treat the return
+            // value as "fresh" even if the callee actually hands back an alias of
+            // one of its arguments (exactly the shape DanglingChecker's auto-derived
+            // summaries catch for known functions). `.get()` calls are handled by
+            // the branch above (they're rejected/accepted by a different rule, not
+            // this one, so they don't fall through here).
+            std::string calleeName = call->function_name;
+            if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+                calleeName = calleeMember->member;
+            }
+            EscapeHatchError e;
+            e.line = expr->loc.line;
+            e.column = expr->loc.column;
+            e.message = "call to unknown function/method `" + calleeName + "`";
+            e.help = "CeeLing has no borrow/ownership summary for anything it did not "
+                     "compile itself; unknown calls are rejected by default rather than "
+                     "silently trusted (CLAUDE.md \"default-reject, never default-allow\"). "
+                     "Define `" + calleeName + "` in CeeLing source, or call an existing "
+                     "CeeLing function/method instead.";
+            errors_.push_back(e);
         }
         checkExpression(call->callee.get());
         for (const auto& arg : call->arguments) {
@@ -180,6 +271,8 @@ void EscapeHatchChecker::checkStatement(const Statement* stmt) {
     if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
         checkExpression(decl->expression.get());
         localType_[decl->identifier] = decl->type;
+    } else if (auto cdecl = dynamic_cast<const ContainerDeclaration*>(stmt)) {
+        localType_[cdecl->identifier] = cdecl->type;
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
         checkExpression(assign->expression.get());
         if (assign->target) {
@@ -198,6 +291,12 @@ void EscapeHatchChecker::checkStatement(const Statement* stmt) {
     } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
         checkExpression(whiles->condition.get());
         for (const auto& inner : whiles->body) {
+            checkStatement(inner.get());
+        }
+    } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+        checkExpression(fors->container.get());
+        localType_[fors->loopVarName] = fors->loopVarType;
+        for (const auto& inner : fors->body) {
             checkStatement(inner.get());
         }
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {

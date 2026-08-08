@@ -33,8 +33,11 @@ eat(std::move(a));               // a consumed
 use(h.ref);                      // ← dangles
 ```
 
-These map exactly to `tests/borrow_owner_reassign_use`, `_moved_use`,
-`_scope_end_use`, and `borrow_stored_in_field`.
+These map exactly to `tests/safety/observer_dangles_after_reassign.clg`,
+`observer_dangles_after_move.clg`, `observer_dangles_after_scope.clg`, and
+`ref_field_rejected.clg` (case (D) is sealed by construction in CeeLing — see
+Chapter 17 — rather than caught by the same provenance analysis as the other three,
+since the grammar has no `ref`-qualified field production at all).
 
 ## How CeeLing solves it
 
@@ -50,36 +53,34 @@ Three components (full detail in [Chapter 5](05-how-analysis-works.md)):
 
 ### Rejected — the canonical case (equivalent to what Rust rejects)
 
-```
-owned<Node> root = new Node(1);   // root: owner, live
-borrowed<Node> n = borrow(root);  // provenance: n <= root
-drop(root);                       // death: root = DEAD
-std::cout << n.key << std::endl;                     // use n → root DEAD → ❌ REJECT
-```
-
-Error (target form):
+In CeeLing's actual surface syntax (see `tests/safety/observer_dangles_after_move.clg`):
 
 ```
-error[semantic/dangling]: `n` is used after its owner `root` was moved away
-  --> prog.clg:30:11
-   |
-29 |     drop(root);      // root moved here
-30 |     std::cout << n.key << std::endl;    // n still references root
-   |           ^ `n` references `root`, which no longer has a live owner
-help: use `n` before `root` is moved, or copy the value out first
+Node root = new Node(1);   // root: owner, live
+ref Node n = root;         // provenance: n observes root
+sink(root);                // root moved into sink → death: root = DEAD
+std::cout << n.key << std::endl;   // use n → root DEAD → ❌ REJECT
+```
+
+Actual diagnostic:
+
+```
+error[semantic/use-after-move]: use of dangling observer `n` (its owner `root` is gone)
+  --> prog.clg:4:18
+  help: `n` observes `root`, which no longer has a live owner
 ```
 
 ### Accepted — owner still alive (control, must NOT be rejected)
 
 ```
-owned<Node> a = new Node(1);
-borrowed<Node> b = a;
-std::cout << b.v;                 // a still live → ✅ ACCEPT
+Node a = new Node(1);
+ref Node b = a;
+std::cout << b.v << std::endl;    // a still live → ✅ ACCEPT
 return 0;
 ```
 
-This positive control (`borrow_owner_alive_ok`) guards against a checker that is *too*
-aggressive — a safety analysis that rejects valid code is a bug too.
+This positive control (`tests/safety/observer_alive_ok.clg`) guards against a checker
+that is *too* aggressive — a safety analysis that rejects valid code is a bug too.
 
 ## Why this needs analysis, not just "use smart pointers"
 

@@ -1,0 +1,26 @@
+//@ expect: accept
+//@ reason: `a` is already a shared_ptr (explicit hint) before being pushed; push_back
+//@ reason: shares it (like storing into a field), so `a` stays usable afterward.
+//
+// A vector's element pointer kind is decided once across every push_back call site
+// targeting it (SmartPointerAnalyzer::containerElementIsShared) -- vector<unique_ptr>
+// and vector<shared_ptr> are different C++ types, so it can't vary per call. Whether
+// a SPECIFIC push shares or moves its argument depends on whether the argument's own
+// pointer kind already matches the container's decided element kind: here `a` is
+// already shared, and the element kind is shared (forced by this same push), so this
+// push shares -- a plain copy, `a` remains a live, usable owner.
+
+//@ptr shared Node.a
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    Node a = new Node(1);
+    v.push_back(a);
+    std::cout << a.v << std::endl;
+    return 0;
+}

@@ -48,6 +48,15 @@ public:
 private:
     void collectClassNames(const Program& program);
     bool isClassType(const std::string& type) const;
+    // "std::vector<Node>" -> "std::vector<std::shared_ptr<Node>>" or
+    // "std::vector<std::unique_ptr<Node>>", depending on `varName`'s scanned
+    // element kind (SmartPointerAnalyzer::containerElementIsShared -- decided once
+    // across every push_back call site targeting this variable across the whole
+    // program, see Chapter 18). "std::vector<int>" -> unchanged (no point wrapping
+    // a primitive). Returns `ceelingType` unchanged if it isn't a recognized
+    // container shape. `varName` may be empty for shapes where no specific
+    // variable identity applies (falls back to unique_ptr, the default).
+    std::string cppTypeFor(const std::string& ceelingType, const std::string& varName = "") const;
 
     // Declared parameter types for every free function / method, so a call argument
     // that is a bare `new T(...)` (no target variable of its own to key off) can look
@@ -79,6 +88,9 @@ private:
     // If `expr` evaluates to a smart-pointer-to-object (so member access uses `->`),
     // return the object's class name; otherwise "" (references/values use `.`).
     std::string exprObjectClass(const Expression* expr) const;
+    // If `expr` is a bare identifier naming a container-typed local/param, return
+    // its declared type string (e.g. "std::vector<Node>"); else "".
+    std::string containerVarType(const Expression* expr) const;
 
     // Expression emission.
     std::string emitExpression(const Expression* expr);
@@ -114,6 +126,10 @@ private:
     std::map<std::string, std::string> varClass_;  // smart-ptr local/param -> class name
     // ref-observer local/param -> class name (raw-pointer lowering; see VarKind::Reference).
     std::map<std::string, std::string> observerClass_;
+    // container local/param name -> declared CeeLing type string (e.g.
+    // "std::vector<Node>"), so a call-argument receiver can be checked against the
+    // library allow-list's share-vs-move rules (see library_summary.h).
+    std::map<std::string, std::string> containerVarType_;
     // Per-class field name -> declared type (for `this->` and nested `->` resolution).
     std::map<std::string, std::map<std::string, std::string>> classFields_;
     std::string currentClass_;  // class whose method is being emitted ("" = free fn)

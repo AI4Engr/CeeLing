@@ -166,9 +166,18 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        // SmartPointerAnalyzer runs before the dangling checker now: Phase 2.6
+        // container support needs it there too (DanglingChecker consults
+        // containerElementIsShared to know whether a specific push_back call
+        // shares or moves its argument -- see Chapter 18). Cheap and side-effect
+        // free, so running it unconditionally (even under --legacy-cpp, which
+        // doesn't otherwise need it) is simpler than threading a conditional.
+        SmartPointerAnalyzer analyzer;
+        analyzer.analyzeProgram(*program, source);
+
         // Memory-safety analysis: reject dangling / use-after-move before generating C++.
         DanglingChecker danglingChecker;
-        std::vector<DanglingError> danglingErrors = danglingChecker.check(*program);
+        std::vector<DanglingError> danglingErrors = danglingChecker.check(*program, analyzer);
         if (!danglingErrors.empty()) {
             for (const auto& err : danglingErrors) {
                 std::cerr << "error[semantic/use-after-move]: " << err.message << "\n";
@@ -191,8 +200,6 @@ int main(int argc, char* argv[]) {
         } else {
             // AST-driven generator (default): walks the validated Program, so an
             // unsupported/forbidden construct cannot appear in the output.
-            SmartPointerAnalyzer analyzer;
-            analyzer.analyzeProgram(*program, source);
             AstEmitter emitter(analyzer);
             cppCode = emitter.emit(*program);
         }

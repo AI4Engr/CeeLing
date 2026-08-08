@@ -1,0 +1,28 @@
+//@ expect: reject
+//@ reason: a std::vector<T> local participates in ordinary move tracking exactly like
+//@ reason: a class object: passing it to a plain function moves it, and using it
+//@ reason: afterward dangles.
+//
+// Proves container variables reuse 100% of the existing move-tracking machinery
+// (DanglingChecker::isObjectType recognizes std::vector<...> types) rather than being
+// invisible to the checker. Also exercises a pre-existing bug found while building
+// this fixture and fixed alongside it: a method call's RECEIVER (`v` in `v.size()`)
+// was never checked for moved-from status, only the call's arguments -- so
+// `sink(v); v.size();` would have silently passed before that fix.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(std::vector<Node> v) {
+}
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    sink(v);
+    std::cout << v.size() << std::endl;   // ERROR: v was moved into sink
+    return 0;
+}

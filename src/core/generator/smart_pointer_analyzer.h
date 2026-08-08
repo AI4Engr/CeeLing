@@ -54,6 +54,18 @@ public:
     const std::vector<AnalysisDiagnostic>& getDiagnostics() const;
     bool classRequiresSharedRoot(const std::string& className) const;
 
+    // Phase 2.6 container support: a vector's element pointer kind must be uniform
+    // (std::vector<unique_ptr<T>> and std::vector<shared_ptr<T>> are different C++
+    // types), decided once across every push_back call site targeting that
+    // container variable -- deliberately separate from the class-field/local
+    // pointerDecisions machinery above (self-contained, so it can't perturb those
+    // existing heuristics; see the .cpp for the exact rule). WEAK is never an
+    // element kind (back-reference detection is field-name-based and doesn't apply
+    // to container elements in this slice).
+    // Is `containerVarName`'s element kind SHARED (true) or UNIQUE (false, the
+    // default when no push_back call forces sharing)?
+    bool containerElementIsShared(const std::string& containerVarName) const;
+
 private:
     // First pass: collect all reference relationships
     void firstPassCollectReferences(const Program& program);
@@ -66,6 +78,13 @@ private:
                             const std::string& scopeName);
     void analyzeAssignmentStatement(const AssignmentStatement& stmt, const std::string& currentClass);
     void analyzeClassDeclaration(const ClassDeclaration& cls);
+
+    // Phase 2.6: scan every push_back call site across the whole program (mirrors
+    // the top-level firstPassCollectReferences walk, but self-contained -- own
+    // data, own recursive statement walk) to decide each container variable's
+    // element pointer kind. Runs once per analyzeProgram call.
+    void scanContainerElementKinds(const Program& program);
+    void scanContainerElementKindsInStatement(const Statement& stmt);
 
     void scanSource(const std::string& source);
     void parseAnnotationLine(const std::string& trimmedLine, int lineNumber);
@@ -102,6 +121,11 @@ private:
     std::map<std::string, std::pair<std::string, int>> bidirectionalAssignmentSeeds;
     std::vector<AnalysisDiagnostic> diagnostics;
     std::vector<std::string> reportLines;
+
+    // container variable name -> true if any push_back call site pushed an
+    // already-SHARED source (forcing the whole container's element kind to
+    // shared_ptr). Absent/false = unique_ptr (the default).
+    std::map<std::string, bool> containerElementShared_;
 };
 
 } // namespace cling

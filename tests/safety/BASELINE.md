@@ -19,14 +19,17 @@ Captured against `build/cling.exe` with **no safety analysis implemented**
 | `safety/observer_dangles_after_move.clg` | reject | **XFAIL** (missed — dangling not implemented) |
 | `safety/observer_dangles_after_reassign.clg` | reject | **XFAIL** |
 | `safety/observer_dangles_after_scope.clg` | reject | **XFAIL** |
-| `borrow_owner_alive_ok.clg` (legacy) | accept | **PASS** |
-| `borrow_owner_moved_use.clg` (legacy) | reject | **XFAIL** |
-| `borrow_owner_reassign_use.clg` (legacy) | reject | **XFAIL** |
-| `borrow_owner_scope_end_use.clg` (legacy) | reject | **XFAIL** |
-| `borrow_stored_in_field.clg` (legacy) | reject | **XFAIL** |
-| `borrow_dangling_rust_example.clg` (legacy) | reject | **XFAIL** |
+| `borrow_owner_alive_ok.clg` (legacy, since removed) | accept | **PASS** |
+| `borrow_owner_moved_use.clg` (legacy, since removed) | reject | **XFAIL** |
+| `borrow_owner_reassign_use.clg` (legacy, since removed) | reject | **XFAIL** |
+| `borrow_owner_scope_end_use.clg` (legacy, since removed) | reject | **XFAIL** |
+| `borrow_stored_in_field.clg` (legacy, since removed) | reject | **XFAIL** |
+| `borrow_dangling_rust_example.clg` (legacy, since removed) | reject | **XFAIL** |
 
-**Summary: PASS=2, XFAIL=9, FAIL=0.**
+**Summary: PASS=2, XFAIL=9, FAIL=0.** (Frozen historical snapshot — the six legacy
+`owned<>`/`borrowed<>` fixtures listed above were removed once every scenario they
+covered had a modern-syntax equivalent in `tests/safety/*.clg` passing for real; see
+"Current status" below.)
 
 ## What the numbers mean
 
@@ -47,11 +50,14 @@ Captured against `build/cling.exe` with **no safety analysis implemented**
 
 ## Fixture conventions
 
-- New-syntax fixtures live in `tests/safety/` and use the intended surface syntax:
-  **plain move semantics** (`Node b = a;` transfers ownership) and **`ref` observers**
-  (`ref Node n = ...;` is non-owning). No `owned<>`/`borrowed<>` annotations.
-- The `tests/borrow_*.clg` files are **legacy** scaffolding (annotated syntax),
-  retained for regression and tagged `//@ legacy:`.
+- Fixtures live in `tests/safety/` and use the intended surface syntax: **plain move
+  semantics** (`Node b = a;` transfers ownership) and **`ref` observers** (`ref Node n
+  = ...;` is non-owning). No `owned<>`/`borrowed<>` annotations anywhere in the suite
+  — the legacy `tests/borrow_*.clg` scaffolding fixtures (annotated syntax) were
+  removed once the modern suite covered every scenario they demonstrated for real
+  (see "Current status" below); `owned<>`/`borrowed<>` now appears only as prose
+  notation in the Language Guide (Chapters 2, 5) for explaining the analyzer's
+  internal model, never in an actual `.clg` file.
 - Each fixture declares its expectation with a `//@ expect: reject|accept` comment.
 
 ## Current status (Phase 1 landed)
@@ -139,3 +145,45 @@ generated C++ has been spot-checked to compile clean under g++
 `branch_merge_no_false_positive_accepted.clg`, which previously only asserted
 `cling.exe`'s own exit code (the rebind it exercises had no valid C++ lowering until
 Step 12 landed).
+
+Phase 1's default-reject-unknown-library-calls item (the last unchecked Phase 1 box)
+added 2 more fixtures: **PASS=27, XFAIL=0, FAIL=0** (at the time it landed).
+
+- `unknown_call_rejected.clg` — a call to a function CeeLing did not compile itself
+  (`mysteryFunction(a, b)`), with the result assigned to an object variable. Rejected
+  outright: CeeLing has no borrow/ownership summary for anything outside the program
+  (`#include` lines are passed through as opaque text, never parsed for
+  declarations), so treating an unknown call's return value as "a fresh, safe owner"
+  by default would silently defeat the auto-derived-summary mechanism the moment a
+  real external call existed. `std::cout << ...` stream output is exempt by
+  construction (a distinct AST shape, never a function call).
+- `known_call_accepted.clg` — positive control: a free function and a bare-name
+  (implicit-`this`) method call, both CeeLing-defined, are not flagged.
+
+**Then the 6 legacy `owned<>`/`borrowed<>` fixtures were removed** (`tests/borrow_*.clg`
+— `borrow_owner_alive_ok.clg`, `_moved_use.clg`, `_reassign_use.clg`,
+`_scope_end_use.clg`, `borrow_stored_in_field.clg`, `borrow_dangling_rust_example.clg`),
+bringing the count to PASS=21. Every scenario they demonstrated has a modern-syntax
+fixture in `tests/safety/` that actually exercises the real checker (the legacy files
+only "passed" their `//@ expect: reject` tag by failing to parse at all — see the
+`borrow_owner_alive_ok.clg` note above for why that was never a meaningful test of the
+scenario itself). Language Guide Chapters 2 and 11, which previously cited these files
+by name as worked examples, were rewritten to use the actual modern syntax and cite
+the real `tests/safety/*.clg` fixtures instead.
+
+Phase 2.6 slice 1 (`std::vector<T>` minimal usable set — Ch. 18, Step 13) added 4 more
+fixtures: **PASS=25, XFAIL=0, FAIL=0.**
+
+- `vector_push_back_and_for_accepted.clg` — declare, `push_back`, range-`for` iterate
+  with field access on the loop variable. The end-to-end proof this slice is usable;
+  compiles clean under g++.
+- `vector_push_back_shares_when_already_shared_accepted.clg` — an already-shared
+  source pushed into a vector stays usable afterward (the "shares" case).
+- `vector_push_back_moves_unique_source_rejected.clg` — positive control: a plain
+  (never-shared) source is consumed by `push_back`, same as any other call argument.
+  Proves `push_back` isn't unconditionally non-consuming.
+- `vector_moved_into_call_rejected.clg` — a container variable passed to an ordinary
+  function participates in the same move-tracking a class object would. Also the
+  fixture that surfaced a genuine pre-existing bug (not container-specific): a
+  method call's receiver (`v` in `v.size()`) was never checked for moved-from status,
+  only the call's arguments — fixed alongside this fixture, see Ch. 18.

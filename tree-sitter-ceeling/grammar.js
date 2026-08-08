@@ -9,12 +9,24 @@ module.exports = grammar({
     $.comment
   ],
 
+  // `generic_type identifier` is a common prefix of both `container_declaration`
+  // (no initializer: `std::vector<int> v;`) and `variable_declaration` (with
+  // initializer: `std::vector<int> v = ...;`) -- the parser cannot know which until
+  // it sees whether `;` or `=` follows the identifier, one token past where LALR
+  // state-merging would otherwise report an unresolved conflict. GLR resolves this
+  // correctly at parse time using that lookahead; this just tells the generator the
+  // ambiguity is expected and real (not a grammar bug to eliminate via precedence).
+  conflicts: $ => [
+    [$.container_declaration, $.type]
+  ],
+
   rules: {
     source_file: $ => repeat($.statement),
 
     statement: $ => choice(
       $.assignment_statement,
       $.variable_declaration,
+      $.container_declaration,
       $.function_declaration,
       $.return_statement,
       $.main_function,
@@ -22,6 +34,7 @@ module.exports = grammar({
       $.include_statement,
       $.if_statement,
       $.while_statement,
+      $.for_statement,
       $.expression_statement
     ),
 
@@ -48,6 +61,20 @@ module.exports = grammar({
       ';'
     ),
 
+    // A container declared without an initializer, e.g. `std::vector<int> v;` --
+    // default-constructs to empty. This is the ONE exception to CeeLing's definite-
+    // initialization rule (Phase 1, CLAUDE.md hatch #18): a container's default
+    // state (empty) is always well-defined and safe to read from, unlike a bare
+    // `int n;` (uninitialized scalar) or a bare `Node n;` (no legal empty-object
+    // state), so there is no safety reason to force an explicit initializer here.
+    // Restricted to $.generic_type (not $.type generally) so this exception can
+    // never apply to a plain class/primitive declaration.
+    container_declaration: $ => seq(
+      $.generic_type,
+      $.identifier,
+      ';'
+    ),
+
     // `ref` marks a non-owning observer: `ref Node b = a;`. Observers are local-only
     // (they must not appear as function parameters) and are watched by the dangling
     // checker for use-after-owner-death.
@@ -60,9 +87,30 @@ module.exports = grammar({
       'double',
       'string',
       'bool',
+      $.generic_type,        // std::vector<T> (Phase 2.6 containers)
       $.scoped_identifier,  // qualified names like std::vector (Phase 2.6 containers)
       $.identifier  // Add support for custom types (class names)
     ),
+
+    // A single-type-argument generic, e.g. `std::vector<Node>`. Recursive through
+    // $.type, so `std::vector<std::vector<int>>` parses without extra work (nested
+    // generics are unvalidated by the safety analysis for now, but not rejected at
+    // the grammar level). Two-argument generics (`std::map<K, V>`) are out of scope.
+    //
+    // `scoped_identifier '<'` is ambiguous with a comparison expression
+    // (`someScoped::Name < x`, e.g. as an operand -- rare, but grammatically legal
+    // today). generic_type only ever appears in $.type position, never in
+    // $.expression, so giving it higher precedence than the comparison alternative
+    // in binary_expression correctly favors "this is a type" whenever a type is
+    // expected and loses to "this is a comparison" everywhere else (there's no such
+    // position/precedence conflict for genuinely ambiguous top-level expression
+    // statements, since $.type is never itself a valid $.statement).
+    generic_type: $ => prec(10, seq(
+      $.scoped_identifier,
+      '<',
+      $.type,
+      '>'
+    )),
 
     comment: $ => token(seq('//', /.*/)),
 
@@ -180,6 +228,22 @@ module.exports = grammar({
     while_statement: $ => seq(
       'while',
       '(',
+      $.expression,
+      ')',
+      '{',
+      repeat($.statement),
+      '}'
+    ),
+
+    // Range-based for only: `for (Type name : container) { ... }`, matching native
+    // C++ range-for syntax 1:1 (no translation needed at emission). C-style
+    // `for(init;cond;incr)` is a separate, not-yet-supported grammar addition.
+    for_statement: $ => seq(
+      'for',
+      '(',
+      $.type,
+      $.identifier,
+      ':',
       $.expression,
       ')',
       '{',

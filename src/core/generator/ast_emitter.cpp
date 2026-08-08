@@ -1,4 +1,5 @@
 #include "ast_emitter.h"
+#include "library_summary.h"
 
 namespace cling {
 
@@ -20,7 +21,7 @@ std::string AstEmitter::emit(const Program& program) {
     // source `#include <memory>` doesn't collide with the one we require.
     std::set<std::string> emittedIncludes;
     for (const char* hdr : {"#include <memory>", "#include <utility>",
-                            "#include <iostream>"}) {
+                            "#include <iostream>", "#include <vector>"}) {
         if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
     }
     for (const auto& stmt : program.statements) {
@@ -125,6 +126,25 @@ bool AstEmitter::isClassType(const std::string& type) const {
     return classNames_.find(type) != classNames_.end();
 }
 
+std::string AstEmitter::containerVarType(const Expression* expr) const {
+    auto id = dynamic_cast<const Identifier*>(expr);
+    if (id == nullptr) return "";
+    auto it = containerVarType_.find(id->name);
+    return it == containerVarType_.end() ? "" : it->second;
+}
+
+std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::string& varName) const {
+    const std::string elem = vectorElementType(ceelingType);
+    if (elem.empty()) return ceelingType;
+    std::string elemCpp = elem;
+    if (isClassType(elem)) {
+        const std::string ptr = analyzer_.containerElementIsShared(varName)
+            ? "std::shared_ptr<" : "std::unique_ptr<";
+        elemCpp = ptr + elem + ">";
+    }
+    return "std::vector<" + elemCpp + ">";
+}
+
 AstEmitter::VarKind AstEmitter::kindOf(const std::string& name) const {
     auto it = varKinds_.find(name);
     return it == varKinds_.end() ? VarKind::Value : it->second;
@@ -199,6 +219,7 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     varKinds_.clear();
     varClass_.clear();
     observerClass_.clear();
+    containerVarType_.clear();
     const std::string savedClass = currentClass_;
     currentClass_ = ownerClass;
 
@@ -227,8 +248,11 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
             noteVar(pname, VarKind::SmartPtr);
             varClass_[pname] = ptype;
         } else {
-            sig += ptype + " " + pname;
+            sig += cppTypeFor(ptype, pname) + " " + pname;
             noteVar(pname, VarKind::Value);
+            if (isVectorType(ptype)) {
+                containerVarType_[pname] = ptype;
+            }
         }
     }
     sig += ")";
@@ -304,7 +328,10 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
                 << " = " << rhs << ";\n";
         } else {
             noteVar(decl->identifier, VarKind::Value);
-            out << pad << decl->type << " " << decl->identifier << " = "
+            if (isVectorType(decl->type)) {
+                containerVarType_[decl->identifier] = decl->type;
+            }
+            out << pad << cppTypeFor(decl->type, decl->identifier) << " " << decl->identifier << " = "
                 << emitExpression(decl->expression.get()) << ";\n";
         }
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
@@ -397,6 +424,49 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
             emitStatement(inner.get(), out, indent + 1);
         }
         out << pad << "}\n";
+    } else if (auto cdecl = dynamic_cast<const ContainerDeclaration*>(stmt)) {
+        // `std::vector<T> v;` -- no initializer needed; default-constructs empty.
+        // The container itself is a plain value (never smart-pointer-wrapped, see
+        // Chapter 18) -- VarKind::Value, same as any other plain-value local.
+        noteVar(cdecl->identifier, VarKind::Value);
+        containerVarType_[cdecl->identifier] = cdecl->type;
+        out << pad << cppTypeFor(cdecl->type, cdecl->identifier) << " " << cdecl->identifier << ";\n";
+    } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+        // Range-for matches native C++ syntax 1:1 -- no translation needed beyond
+        // the class-typed-element type mapping (Node -> shared_ptr<Node> or
+        // unique_ptr<Node>, matching the CONTAINER's own decided element kind --
+        // see cppTypeFor/SmartPointerAnalyzer::containerElementIsShared -- so the
+        // loop variable's type actually matches what the container yields).
+        std::string elemCppType = fors->loopVarType;
+        bool elementIsUnique = false;
+        if (isClassType(fors->loopVarType)) {
+            std::string containerName;
+            if (auto id = dynamic_cast<const Identifier*>(fors->container.get())) {
+                containerName = id->name;
+            }
+            elementIsUnique = !analyzer_.containerElementIsShared(containerName);
+            elemCppType = (elementIsUnique ? "std::unique_ptr<" : "std::shared_ptr<") +
+                          fors->loopVarType + ">";
+        }
+        // unique_ptr elements can't be copied, so the loop variable must bind by
+        // reference (`T&`); shared_ptr elements copy cheaply (refcount bump) and
+        // stay by-value, matching how CeeLing's model treats a shared_ptr local
+        // elsewhere.
+        out << pad << "for (" << elemCppType << (elementIsUnique ? "& " : " ")
+            << fors->loopVarName << " : " << emitExpression(fors->container.get()) << ") {\n";
+        if (isClassType(fors->loopVarType)) {
+            // The loop variable is a shared_ptr<T> per iteration -- register it like
+            // any other smart-pointer local so member access inside the body lowers
+            // `.` to `->` via the existing exprObjectClass machinery.
+            noteVar(fors->loopVarName, VarKind::SmartPtr);
+            varClass_[fors->loopVarName] = fors->loopVarType;
+        } else {
+            noteVar(fors->loopVarName, VarKind::Value);
+        }
+        for (const auto& inner : fors->body) {
+            emitStatement(inner.get(), out, indent + 1);
+        }
+        out << pad << "}\n";
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         out << pad << emitExpression(exprStmt->expression.get()) << ";\n";
     }
@@ -449,17 +519,64 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
     }
     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
         std::string prefix;
+        std::string receiverContainerType;  // "" unless recv is a known container local
+        std::string receiverName;
+        std::string methodName;
         if (auto m = dynamic_cast<const MemberAccess*>(call->callee.get())) {
             // Method call `recv.method(args)` -> `recv (-> or .) method(args)`.
             const std::string recv = emitExpression(m->object.get());
             const std::string op = exprObjectClass(m->object.get()).empty() ? "." : "->";
             prefix = recv + op + m->member;
+            receiverContainerType = containerVarType(m->object.get());
+            if (auto id = dynamic_cast<const Identifier*>(m->object.get())) {
+                receiverName = id->name;
+            }
+            methodName = m->member;
         } else {
             prefix = call->function_name;
         }
+        const bool receiverIsVector = isVectorType(receiverContainerType);
+        const bool elementIsShared = receiverIsVector && analyzer_.containerElementIsShared(receiverName);
         std::string s = prefix + "(";
         for (size_t i = 0; i < call->arguments.size(); ++i) {
             if (i > 0) s += ", ";
+            if (receiverIsVector && vectorMethodSharesArg(methodName, i)) {
+                // A container's element pointer kind is decided once across every
+                // push_back call site targeting it (see DanglingChecker::
+                // applyCallArgMoves, which this must produce matching results
+                // for). This specific push shares (copies, argument survives)
+                // only when the element kind is shared AND the argument is
+                // already a shared_ptr; otherwise it's a move (consuming the
+                // argument), wrapped in a shared_ptr construction if the element
+                // kind is shared but the argument itself is a unique_ptr.
+                if (auto neww = dynamic_cast<const NewExpression*>(call->arguments[i].get())) {
+                    // A bare `new T(...)` argument has no variable of its own --
+                    // use the container's decided element pointer kind directly.
+                    const std::string factory = elementIsShared ? "std::make_shared<" : "std::make_unique<";
+                    std::string arg = factory + neww->className + ">(";
+                    for (size_t j = 0; j < neww->arguments.size(); ++j) {
+                        if (j > 0) arg += ", ";
+                        arg += emitExpression(neww->arguments[j].get());
+                    }
+                    arg += ")";
+                    s += arg;
+                    continue;
+                }
+                auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
+                const std::string argClass = argId ? exprObjectClass(argId) : std::string{};
+                const bool argIsShared = !argClass.empty() &&
+                    analyzer_.getPointerType(argClass, argId->name) == PointerType::SHARED;
+                if (elementIsShared && argIsShared) {
+                    s += emitExpression(call->arguments[i].get());  // share: plain copy
+                } else if (elementIsShared) {
+                    // element=shared, arg=unique -> move into a shared_ptr wrapper.
+                    s += "std::shared_ptr<" + argClass + ">(" +
+                         emitMovedArg(call->arguments[i].get()) + ")";
+                } else {
+                    s += emitMovedArg(call->arguments[i].get(), calleeParam(*call, i));
+                }
+                continue;
+            }
             s += emitMovedArg(call->arguments[i].get(), calleeParam(*call, i));
         }
         s += ")";

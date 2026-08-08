@@ -42,6 +42,7 @@ set(CORE_SOURCES
     src/core/generator/dangling_checker.cpp
     src/core/generator/escape_hatch_checker.cpp
     src/core/generator/ast_emitter.cpp
+    src/core/generator/library_summary.cpp
 )
 
 # Optional Tree-sitter support

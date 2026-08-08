@@ -146,6 +146,25 @@ public:
     }
 };
 
+// A container declared without an initializer, e.g. `std::vector<int> v;` --
+// default-constructs to empty. The one exception to CeeLing's definite-
+// initialization rule (see CLAUDE.md hatch #18): a container's default (empty)
+// state is always well-defined and safe to read, unlike a bare scalar or class
+// declaration. `type` is always a generic-type string (e.g. "std::vector<int>");
+// the grammar restricts this production to $.generic_type, never a plain type.
+class ContainerDeclaration : public Statement {
+public:
+    std::string type;
+    std::string identifier;
+
+    ContainerDeclaration(const std::string& t, const std::string& id)
+        : type(t), identifier(id) {}
+
+    std::string toString() const override {
+        return type + " " + identifier + ";";
+    }
+};
+
 class AssignmentStatement : public Statement {
 public:
     // For a bare-name target (`a = ...`), `variable` holds the name and `target` is
@@ -320,6 +339,33 @@ public:
 
     std::string toString() const override {
         std::string result = "while (" + condition->toString() + ") {\n";
+        for (const auto& stmt : body) {
+            result += "    " + stmt->toString() + "\n";
+        }
+        result += "}";
+        return result;
+    }
+};
+
+// Range-based `for` only: `for (Type name : container) { ... }`. Matches native
+// C++ range-for 1:1, so the emitter needs no translation logic. `loopVarType`/
+// `loopVarName` are the per-iteration binding; `container` is the collection
+// expression being iterated.
+class ForStatement : public Statement {
+public:
+    std::string loopVarType;
+    std::string loopVarName;
+    ExpressionPtr container;
+    std::vector<StatementPtr> body;
+
+    ForStatement(const std::string& varType, const std::string& varName,
+                ExpressionPtr containerExpr, std::vector<StatementPtr> statements)
+        : loopVarType(varType), loopVarName(varName),
+          container(std::move(containerExpr)), body(std::move(statements)) {}
+
+    std::string toString() const override {
+        std::string result = "for (" + loopVarType + " " + loopVarName + " : " +
+                             container->toString() + ") {\n";
         for (const auto& stmt : body) {
             result += "    " + stmt->toString() + "\n";
         }

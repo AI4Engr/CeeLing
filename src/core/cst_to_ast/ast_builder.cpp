@@ -214,6 +214,10 @@ StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) 
         result = buildIfStatement(node, source);
     } else if (strcmp(node_type, "while_statement") == 0) {
         result = buildWhileStatement(node, source);
+    } else if (strcmp(node_type, "for_statement") == 0) {
+        result = buildForStatement(node, source);
+    } else if (strcmp(node_type, "container_declaration") == 0) {
+        result = buildContainerDeclaration(node, source);
     } else if (strcmp(node_type, "statement") == 0) {
         // If we get a generic "statement" node, look at its first child
         if (ts_node_child_count(node) > 0) {
@@ -246,6 +250,17 @@ StatementPtr ASTBuilder::buildVariableDeclaration(TSNode node, const std::string
     auto expr = buildExpression(expression_node, source);
 
     return std::make_unique<VariableDeclaration>(type, identifier, std::move(expr), isObserver);
+}
+
+StatementPtr ASTBuilder::buildContainerDeclaration(TSNode node, const std::string& source) {
+    // container_declaration: generic_type identifier ";"
+    TSNode type_node = ts_node_child(node, 0);
+    TSNode identifier_node = ts_node_child(node, 1);
+
+    std::string type = getNodeText(type_node, source);
+    std::string identifier = getNodeText(identifier_node, source);
+
+    return std::make_unique<ContainerDeclaration>(type, identifier);
 }
 
 StatementPtr ASTBuilder::buildAssignmentStatement(TSNode node, const std::string& source) {
@@ -759,6 +774,35 @@ StatementPtr ASTBuilder::buildWhileStatement(TSNode node, const std::string& sou
     }
 
     return std::make_unique<WhileStatement>(std::move(condition), std::move(body));
+}
+
+StatementPtr ASTBuilder::buildForStatement(TSNode node, const std::string& source) {
+    // for_statement: "for" "(" type identifier ":" expression ")" "{" repeat(statement) "}"
+    TSNode type_node = ts_node_child(node, 2);
+    TSNode identifier_node = ts_node_child(node, 3);
+    TSNode container_node = ts_node_child(node, 5); // skip ":"
+
+    std::string loopVarType = getNodeText(type_node, source);
+    std::string loopVarName = getNodeText(identifier_node, source);
+    auto container = buildExpression(container_node, source);
+
+    std::vector<StatementPtr> body;
+    uint32_t childCount = ts_node_child_count(node);
+    for (uint32_t i = 0; i < childCount; i++) {
+        TSNode child = ts_node_child(node, i);
+        const char* childType = ts_node_type(child);
+
+        if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        } else if (strcmp(childType, "statement") == 0) {
+            auto stmt = buildStatement(child, source);
+            if (!stmt) rejectUnbuildableChild(child, source);
+            body.push_back(std::move(stmt));
+        }
+    }
+
+    return std::make_unique<ForStatement>(loopVarType, loopVarName, std::move(container),
+                                          std::move(body));
 }
 
 ExpressionPtr ASTBuilder::buildMemberAccess(TSNode node, const std::string& source) {
