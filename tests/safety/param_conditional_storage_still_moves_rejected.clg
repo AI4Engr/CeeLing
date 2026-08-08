@@ -1,0 +1,29 @@
+//@ expect: reject
+//@ reason: documents an honest boundary, not a silent gap: storage behind a
+//@ reason: conditional (`if (x) { link = other; }`) is NOT detected by this slice's
+//@ reason: promoteParamsStoredInSharedFields (it only walks a body's TOP-LEVEL
+//@ reason: statements, deliberately not recursing into if/while/for -- promoting a
+//@ reason: param whose storage only happens on some paths would incorrectly promise
+//@ reason: sharing even on paths where the store never runs). `other` therefore stays
+//@ reason: unique_ptr and still moves -- the existing safe default, just possibly
+//@ reason: over-restrictive for this one pattern until a later slice widens detection.
+
+class Node {
+public:
+    int v;
+    Node link;
+    Node(int x) { v = x; }
+    void maybeAttach(Node other, bool cond) {
+        if (cond) {
+            link = other;
+        }
+    }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    a.maybeAttach(b, true);
+    std::cout << b.v << std::endl;   // ERROR: b was moved (conditional storage not detected)
+    return 0;
+}

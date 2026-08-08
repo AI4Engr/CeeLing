@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ reason: inheriting from a class this program does not declare. CeeLing cannot
+//@ reason: inherit from anything it did not compile itself -- an external base has no
+//@ reason: known field/method set, so its members could not be resolved (the
+//@ reason: flattening pass would have nothing to copy) or safety-checked. Rejected at
+//@ reason: parse time by ASTBuilder::validateInheritance with a targeted diagnostic,
+//@ reason: not a generic parse error.
+
+class Dog : public Missing {
+public:
+    int age;
+    Dog(int a) { age = a; }
+};
+
+int main() {
+    Dog d = new Dog(1);
+    return 0;
+}

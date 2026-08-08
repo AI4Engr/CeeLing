@@ -1,0 +1,22 @@
+//@ expect: reject
+//@ reason: an inheritance cycle (`A : B`, `B : A`). No valid base-before-derived
+//@ reason: order exists, so the member-flattening pass every analysis module runs
+//@ reason: would have no correct starting point -- this is a correctness
+//@ reason: prerequisite for that pass, not just politeness. Rejected at parse time
+//@ reason: by ASTBuilder::validateInheritance with a targeted diagnostic.
+
+class A : public B {
+public:
+    int x;
+    A(int v) { x = v; }
+};
+
+class B : public A {
+public:
+    int y;
+    B(int v) { y = v; }
+};
+
+int main() {
+    return 0;
+}

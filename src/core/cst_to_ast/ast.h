@@ -456,13 +456,20 @@ public:
 class ClassDeclaration : public Statement {
 public:
     std::string name;
+    // Single base class (`class D : public B`), or empty if this class has no base.
+    // Multiple inheritance is deliberately not representable here -- the grammar
+    // admits exactly one base, so "which base?" is never ambiguous for the
+    // member-flattening pass every analysis module runs at collection time.
+    std::string baseClass;
     std::vector<StatementPtr> members;
 
     ClassDeclaration(const std::string& className, std::vector<StatementPtr> classMembers)
         : name(className), members(std::move(classMembers)) {}
 
     std::string toString() const override {
-        std::string result = "class " + name + " {\npublic:\n";
+        std::string result = "class " + name;
+        if (!baseClass.empty()) result += " : public " + baseClass;
+        result += " {\npublic:\n";
         for (const auto& member : members) {
             result += "    " + member->toString() + "\n";
         }
@@ -504,6 +511,10 @@ public:
     std::vector<std::pair<std::string, std::string>> parameters;
     std::vector<StatementPtr> body;
     bool isConst = false;  // true if declared with a trailing `const` qualifier
+    // Polymorphic dispatch qualifiers, carried straight through to the generated
+    // C++ (CeeLing reuses the C++ compiler's vtable rather than building its own).
+    bool isVirtual = false;    // `virtual` before the return type
+    bool isOverride = false;   // `override` after the parameter list
 
     MethodDeclaration(const std::string& retType,
                      const std::string& methodName,
@@ -512,13 +523,16 @@ public:
         : returnType(retType), name(methodName), parameters(std::move(params)), body(std::move(statements)) {}
 
     std::string toString() const override {
-        std::string result = returnType + " " + name + "(";
+        std::string result;
+        if (isVirtual) result += "virtual ";
+        result += returnType + " " + name + "(";
         for (size_t i = 0; i < parameters.size(); ++i) {
             if (i > 0) result += ", ";
             result += parameters[i].first + " " + parameters[i].second;
         }
         result += ")";
         if (isConst) result += " const";
+        if (isOverride) result += " override";
         result += " {\n";
         for (const auto& stmt : body) {
             result += "    " + stmt->toString() + "\n";

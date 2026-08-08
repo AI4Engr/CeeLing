@@ -1,4 +1,5 @@
 #include "escape_hatch_checker.h"
+#include "class_hierarchy.h"
 #include "library_summary.h"
 
 namespace cling {
@@ -22,7 +23,7 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
                 if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
                     checkBody(method->body, method->parameters, cls->name);
                 } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
-                    checkBody(ctor->body, ctor->parameters, cls->name);
+                    checkBody(ctor->body, ctor->parameters, cls->name, /*isConstructor=*/true);
                 }
             }
         }
@@ -31,17 +32,30 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
 }
 
 void EscapeHatchChecker::collectClasses(const Program& program) {
-    for (const auto& stmt : program.statements) {
-        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
-            classNames_.insert(cls->name);
-            auto& fields = classFields_[cls->name];
-            for (const auto& member : cls->members) {
-                if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
-                    fields[field->identifier] = field->type;
-                } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                    if (method->name == "get") {
-                        classesWithOwnGet_.insert(cls->name);
-                    }
+    // Base-before-derived so a derived class inherits its base's already-flattened
+    // fields; a same-named field declared by the derived class then overwrites the
+    // inherited entry, which is the correct shadowing behavior. Flattening here is
+    // what lets every classFields_ lookup below stay an exact match with no
+    // base-chain walking (see class_hierarchy.h).
+    for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
+        classNames_.insert(cls->name);
+        auto& fields = classFields_[cls->name];
+        if (!cls->baseClass.empty()) {
+            if (auto baseIt = classFields_.find(cls->baseClass); baseIt != classFields_.end()) {
+                fields = baseIt->second;
+            }
+            // `.get()` is an ordinary user method if ANY class in the chain declares
+            // it -- inheriting a `get()` makes it just as legitimate a call.
+            if (classesWithOwnGet_.count(cls->baseClass) > 0) {
+                classesWithOwnGet_.insert(cls->name);
+            }
+        }
+        for (const auto& member : cls->members) {
+            if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                fields[field->identifier] = field->type;
+            } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                if (method->name == "get") {
+                    classesWithOwnGet_.insert(cls->name);
                 }
             }
         }
@@ -52,11 +66,31 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             knownFreeFunctions_.insert(fn->name);
-        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
-            auto& methods = classMethods_[cls->name];
-            for (const auto& member : cls->members) {
-                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                    methods.insert(method->name);
+        }
+    }
+    // Same base-before-derived flattening as collectClasses: without it,
+    // `d.baseMethod()` would fail isKnownCallable's exact lookup and be rejected by
+    // the default-reject-unknown-calls rule -- a safe failure, but a false one.
+    for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
+        auto& methods = classMethods_[cls->name];
+        auto& virtuals = classVirtualMethods_[cls->name];
+        if (!cls->baseClass.empty()) {
+            if (auto baseIt = classMethods_.find(cls->baseClass); baseIt != classMethods_.end()) {
+                methods = baseIt->second;
+            }
+            // A method stays virtual all the way down the chain once any ancestor
+            // declared it so -- that's exactly what makes calling it from a
+            // constructor a trap even in a class that never wrote `virtual` itself.
+            if (auto baseIt = classVirtualMethods_.find(cls->baseClass);
+                baseIt != classVirtualMethods_.end()) {
+                virtuals = baseIt->second;
+            }
+        }
+        for (const auto& member : cls->members) {
+            if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                methods.insert(method->name);
+                if (method->isVirtual || method->isOverride) {
+                    virtuals.insert(method->name);
                 }
             }
         }
@@ -117,15 +151,17 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
 
 void EscapeHatchChecker::checkBody(const std::vector<StatementPtr>& body,
                                     const std::vector<std::pair<std::string, std::string>>& params,
-                                    const std::string& ownerClass) {
+                                    const std::string& ownerClass, bool isConstructor) {
     localType_.clear();
     currentClass_ = ownerClass;
+    inConstructor_ = isConstructor;
     for (const auto& [type, name] : params) {
         localType_[name] = type;
     }
     for (const auto& stmtPtr : body) {
         checkStatement(stmtPtr.get());
     }
+    inConstructor_ = false;
 }
 
 std::string EscapeHatchChecker::resolveObjectType(const Expression* expr) const {
@@ -223,6 +259,44 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                      "CeeLing function/method instead.";
             errors_.push_back(e);
         }
+
+        // Virtual call from a constructor (CLAUDE.md Phase 2.7). In C++ this does NOT
+        // dispatch to the derived override -- the vtable still points at the base
+        // while the base's constructor runs -- so the code silently does something
+        // other than what it visually says. Purely structural: no provenance or
+        // liveness needed, just "is this a call, inside a constructor, to a method
+        // that is virtual anywhere in this class's hierarchy". Only constructors are
+        // checked because CeeLing has no destructor syntax (the other half of the
+        // classic trap simply cannot be written).
+        if (inConstructor_ && !currentClass_.empty()) {
+            // Both `this->method()` (bare name, implicit receiver) and an explicit
+            // same-class receiver resolve to the enclosing class's method set.
+            std::string virtualName;
+            if (!call->callee) {
+                virtualName = call->function_name;
+            } else if (auto m = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+                if (resolveObjectType(m->object.get()) == currentClass_) {
+                    virtualName = m->member;
+                }
+            }
+            if (!virtualName.empty()) {
+                auto clsIt = classVirtualMethods_.find(currentClass_);
+                if (clsIt != classVirtualMethods_.end() && clsIt->second.count(virtualName) > 0) {
+                    EscapeHatchError e;
+                    e.line = expr->loc.line;
+                    e.column = expr->loc.column;
+                    e.message = "virtual method `" + virtualName +
+                                "` called from a constructor of `" + currentClass_ + "`";
+                    e.help = "A virtual call inside a constructor does NOT dispatch to a "
+                             "derived class's override -- the object is still being built, "
+                             "so the base version runs instead. That makes the code do "
+                             "something different from what it looks like it does. Move the "
+                             "call to after construction, or call a non-virtual method.";
+                    errors_.push_back(e);
+                }
+            }
+        }
+
         checkExpression(call->callee.get());
         for (const auto& arg : call->arguments) {
             checkExpression(arg.get());

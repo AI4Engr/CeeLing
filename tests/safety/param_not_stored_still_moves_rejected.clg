@@ -1,0 +1,23 @@
+//@ expect: reject
+//@ reason: positive control -- a method that does NOT store its parameter into a
+//@ reason: field (ordinary use-and-discard) still consumes its argument normally.
+//@ reason: Proves the parameter-storage promotion doesn't over-correct into "nothing
+//@ reason: ever moves": `other`/`b` here are never stored anywhere, so `other`/`b`
+//@ reason: stay unique_ptr and `use(b)` after `a.inspect(b)` still moves and rejects.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+    void inspect(Node other) {
+        std::cout << other.v << std::endl;
+    }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    a.inspect(b);
+    std::cout << b.v << std::endl;   // ERROR: b was moved into a.inspect(b)
+    return 0;
+}

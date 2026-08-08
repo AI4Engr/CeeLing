@@ -1,4 +1,5 @@
 #include "ast_emitter.h"
+#include "class_hierarchy.h"
 #include "library_summary.h"
 
 namespace cling {
@@ -42,18 +43,36 @@ std::string AstEmitter::emit(const Program& program) {
 
 void AstEmitter::collectClassNames(const Program& program) {
     for (const auto& stmt : program.statements) {
-        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
-            classNames_.insert(cls->name);
-            auto& fields = classFields_[cls->name];
-            for (const auto& member : cls->members) {
-                if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
-                    fields[var->identifier] = var->type;
-                } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                    classMethodParams_[cls->name][method->name] = method->parameters;
-                }
-            }
-        } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             functionParams_[fn->name] = fn->parameters;
+        }
+    }
+    // Base-before-derived flattening. This is the highest-stakes of the four: unlike
+    // the checkers (whose exact-match misses fail SAFE, rejecting valid code),
+    // AstEmitter::fieldType returning "" for an inherited field makes
+    // exprObjectClass conclude "not a class type", so an inherited smart-pointer
+    // field would be emitted with `.` instead of `->` -- silently wrong codegen, not
+    // a rejection. Flattening here is what keeps that from happening.
+    for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
+        classNames_.insert(cls->name);
+        auto& fields = classFields_[cls->name];
+        auto& methodParams = classMethodParams_[cls->name];
+        if (!cls->baseClass.empty()) {
+            baseClasses_.insert(cls->baseClass);
+            if (auto baseIt = classFields_.find(cls->baseClass); baseIt != classFields_.end()) {
+                fields = baseIt->second;
+            }
+            if (auto baseIt = classMethodParams_.find(cls->baseClass);
+                baseIt != classMethodParams_.end()) {
+                methodParams = baseIt->second;
+            }
+        }
+        for (const auto& member : cls->members) {
+            if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                fields[var->identifier] = var->type;
+            } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                methodParams[method->name] = method->parameters;
+            }
         }
     }
 }
@@ -180,8 +199,17 @@ std::string AstEmitter::smartPointerType(const std::string& className,
 }
 
 std::string AstEmitter::factoryFor(const std::string& className, const std::string& varName,
-                                   const std::vector<ExpressionPtr>& args) {
-    const std::string ptr = smartPointerType(className, varName);
+                                   const std::vector<ExpressionPtr>& args,
+                                   const std::string& declaredType) {
+    // With inheritance, the CONSTRUCTED type and the DECLARED type differ:
+    // `Animal a = new Dog();` must build a `Dog` (make_*<Dog>) but choose its smart-
+    // pointer KIND from `a`'s own declared type `Animal` -- asking the analyzer about
+    // `Dog` would consult a different variable's ownership decisions entirely, and
+    // mismatching the kind produces `unique_ptr<Animal> = make_shared<Dog>(...)`,
+    // which does not compile. Without a base clause these are the same string, so
+    // non-inheriting programs are unaffected.
+    const std::string kindType = declaredType.empty() ? className : declaredType;
+    const std::string ptr = smartPointerType(kindType, varName);
     const std::string factory = (ptr == "std::unique_ptr") ? "std::make_unique" : "std::make_shared";
     std::string s = factory + "<" + className + ">(";
     for (size_t i = 0; i < args.size(); ++i) {
@@ -210,7 +238,34 @@ void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
 }
 
 void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out) {
-    out << "class " << cls.name << " {\npublic:\n";
+    out << "class " << cls.name;
+    if (!cls.baseClass.empty()) {
+        out << " : public " << cls.baseClass;
+    }
+    out << " {\npublic:\n";
+
+    // Two things the compiler generates for any class used as a base, both invisible
+    // to the user (CeeLing has no destructor or initializer-list syntax, so neither
+    // can conflict with something the user wrote):
+    //
+    //  * `virtual ~Base() = default;` -- destroying a Derived through a
+    //    `unique_ptr<Base>` is undefined behavior without it. A real memory-safety
+    //    hole, closed by construction rather than by a rule users must remember.
+    //  * a protected no-arg constructor -- a derived constructor implicitly calls the
+    //    base's no-arg constructor, but declaring ANY constructor (e.g. `Animal(int)`)
+    //    suppresses C++'s implicit default one. CeeLing has no base-initializer-list
+    //    syntax (`Dog(int a) : Animal(a)`), and deliberately does not add one: a
+    //    derived constructor just assigns the inherited fields directly in its own
+    //    body (`age = a;` already lowers to `this->age = a;` thanks to member
+    //    flattening). `protected` keeps it an implementation detail -- it exists for
+    //    derived classes to chain through, not for users to call.
+    if (baseClasses_.count(cls.name) > 0) {
+        out << indentStr(1) << "virtual ~" << cls.name << "() = default;\n";
+        out << "protected:\n";
+        out << indentStr(1) << cls.name << "() = default;\n";
+        out << "public:\n";
+    }
+
     for (const auto& member : cls.members) {
         if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
             // Member field. Object-typed fields become smart pointers.
@@ -225,7 +280,7 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
             emitFunction("", ctor->name, ctor->parameters, ctor->body, out, cls.name, 1);
         } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
             emitFunction(method->returnType, method->name, method->parameters, method->body,
-                         out, cls.name, 1, method->isConst);
+                         out, cls.name, 1, method->isConst, method->isVirtual, method->isOverride);
         }
     }
     out << "};\n\n";
@@ -234,7 +289,8 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
 void AstEmitter::emitFunction(const std::string& returnType, const std::string& name,
                               const std::vector<std::pair<std::string, std::string>>& params,
                               const std::vector<StatementPtr>& body, std::ostringstream& out,
-                              const std::string& ownerClass, int baseIndent, bool isConst) {
+                              const std::string& ownerClass, int baseIndent, bool isConst,
+                              bool isVirtual, bool isOverride) {
     // Each function has its own local variable scope; `currentClass_` enables `this->`
     // for field access inside a method/constructor.
     varKinds_.clear();
@@ -248,6 +304,7 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     // owning local (a smart pointer) can be returned directly (unique_ptr by default:
     // the callee constructs the object and hands sole ownership back to the caller).
     std::string sig;
+    if (isVirtual) sig += "virtual ";
     if (!returnType.empty()) {
         sig += isClassType(returnType) ? "std::unique_ptr<" + returnType + "> "
                                        : cppTypeFor(returnType, "") + " ";
@@ -278,6 +335,7 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     }
     sig += ")";
     if (isConst) sig += " const";
+    if (isOverride) sig += " override";
     // Class members are indented one level; free functions sit at column 0.
     const std::string pad = indentStr(baseIndent);
     out << pad << sig << " {\n";
@@ -295,7 +353,18 @@ std::string AstEmitter::emitMovedArg(const Expression* arg,
     if (auto id = dynamic_cast<const Identifier*>(arg)) {
         // Object-typed local or parameter (smart pointer): transfer ownership.
         // Field access and references are not moved here.
-        if (varClass_.find(id->name) != varClass_.end() && !isCurrentField(id->name)) {
+        if (auto it = varClass_.find(id->name); it != varClass_.end() && !isCurrentField(id->name)) {
+            // A shared_ptr is always safely copyable -- once SmartPointerAnalyzer's
+            // parameter-storage promotion (Chapter 18) has decided this variable is
+            // SHARED, moving it here would leave the CALLER's own local null, which
+            // defeats the entire point of the promotion (the checker proved this
+            // argument survives the call; std::move-ing it anyway would silently
+            // violate that). Emit a plain copy instead -- cheap (a refcount bump),
+            // and the only way "b stays usable after a.attach(b)" is actually true
+            // in the generated code, not just in DanglingChecker's model.
+            if (analyzer_.getPointerType(it->second, id->name) == PointerType::SHARED) {
+                return id->name;
+            }
             return "std::move(" + id->name + ")";
         }
     }
@@ -337,7 +406,9 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
             const std::string ptr = smartPointerType(decl->type, decl->identifier);
             std::string rhs;
             if (auto neww = dynamic_cast<const NewExpression*>(decl->expression.get())) {
-                rhs = factoryFor(neww->className, decl->identifier, neww->arguments);
+                // Construct `neww->className`, but pick the pointer kind from
+                // `decl->type` -- these differ for `Animal a = new Dog();`.
+                rhs = factoryFor(neww->className, decl->identifier, neww->arguments, decl->type);
             } else {
                 // `Node b = a;` transfers ownership: emit std::move(a).
                 rhs = emitMovedArg(decl->expression.get());

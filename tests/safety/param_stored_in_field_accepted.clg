@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ reason: a method that stores its parameter into a field (`link = other;`) does
+//@ reason: not consume the caller's argument -- the same "storing links, doesn't
+//@ reason: consume" precedent CLAUDE.md already applies to `a.b = obj;` extends to
+//@ reason: a store one call deep. `a.attach(b); b.attach(a);` compiles and runs.
+//
+// End-to-end proof: the single most common object-graph construction pattern
+// (builder-style `list.append(node)`, `tree.insert(child)`, ...) is expressible.
+// SmartPointerAnalyzer promotes `other`/`b`/`a` to shared_ptr (a parameter stored
+// into an already-shared field must itself be shared_ptr -- unique_ptr can't be
+// copied), DanglingChecker's generalized applyCallArgMoves rule recognizes any
+// SHARED argument survives any call, and AstEmitter's emitMovedArg emits a plain
+// copy instead of std::move for a SHARED argument -- all three must agree for this
+// to actually work at runtime, not just typecheck.
+
+class Node {
+public:
+    int v;
+    Node link;
+    Node(int x) { v = x; }
+    void attach(Node other) { link = other; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    a.attach(b);
+    b.attach(a);
+    std::cout << b.v << std::endl;
+    return 0;
+}

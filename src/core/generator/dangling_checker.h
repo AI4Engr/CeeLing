@@ -181,6 +181,11 @@ private:
     void checkReturnedReference(const Expression* expr);
 
     std::set<std::string> classNames_;
+    // className -> set of that class's field names. Lets processStatement recognize
+    // `link = other;` (bare identifier, implicit `this`) inside a method/constructor
+    // body as a field-store (link/share semantics), not a local reassignment --
+    // mirrors EscapeHatchChecker::classFields_, built once before any body is checked.
+    std::map<std::string, std::set<std::string>> classFields_;
     // Qualified summary key (summaryKey()) -> derived summary.
     std::map<std::string, FunctionSummary> summaries_;
     // Free-function name -> declared parameter list (needed to resolve a call's

@@ -1,0 +1,28 @@
+//@ expect: accept
+//@ reason: a constructor storing its parameter into a field is at least as common
+//@ reason: as a method doing so -- SmartPointerAnalyzer::promoteParamsStoredInSharedFields
+//@ reason: walks constructor bodies the same way it walks method bodies, so `x`
+//@ reason: stays usable after being passed into `new Chain(x)`.
+//
+// Chain.link is self-typed (Rule B fires, same reasoning as Node.link in the
+// method-storage fixture). Single-parameter constructor (CeeLing does not support
+// constructor overloading -- a separate, pre-existing limitation, not something
+// this fixture exercises): the constructor's own parameter IS the field being
+// linked to, so `new Chain(x)` both constructs a Chain and links it to `x` in one
+// step, proving constructor bodies get the same parameter-storage promotion
+// method bodies do.
+
+class Chain {
+public:
+    Chain link;
+    Chain(Chain l) {
+        link = l;
+    }
+};
+
+int main() {
+    Chain x = new Chain(nullptr);
+    Chain w = new Chain(x);
+    Chain v = new Chain(x);   // x still usable: constructor storage doesn't consume it
+    return 0;
+}

@@ -78,7 +78,8 @@ private:
                       const std::vector<std::pair<std::string, std::string>>& params,
                       const std::vector<StatementPtr>& body, std::ostringstream& out,
                       const std::string& ownerClass = "", int baseIndent = 0,
-                      bool isConst = false);
+                      bool isConst = false, bool isVirtual = false,
+                      bool isOverride = false);
     void emitStatement(const Statement* stmt, std::ostringstream& out, int indent);
 
     // Is `name` a field of the class we are currently emitting a method for?
@@ -103,8 +104,13 @@ private:
     std::string emitMovedArg(const Expression* arg,
                              const std::pair<std::string, std::string>& targetParam = {});
     std::string smartPointerType(const std::string& className, const std::string& varName) const;
+    // `className` is the type being CONSTRUCTED; `declaredType` (when it differs --
+    // i.e. `Animal a = new Dog();`) is the receiving variable's own declared type,
+    // which is what decides the smart-pointer KIND. Empty `declaredType` means "same
+    // as className", the only possibility before inheritance existed.
     std::string factoryFor(const std::string& className, const std::string& varName,
-                           const std::vector<ExpressionPtr>& args);
+                           const std::vector<ExpressionPtr>& args,
+                           const std::string& declaredType = "");
 
     static std::string indentStr(int indent) { return std::string(indent * 4, ' '); }
 
@@ -122,6 +128,13 @@ private:
 
     const SmartPointerAnalyzer& analyzer_;
     std::set<std::string> classNames_;
+    // Classes that some other class inherits from. Any such class gets an
+    // auto-generated `virtual ~Base() = default;` -- destroying a derived object
+    // through a base-typed owner is undefined behavior without one, and CeeLing has
+    // no destructor syntax, so the compiler emitting it is the ONLY way it can
+    // exist. That makes this hole closed by construction rather than by a rule the
+    // user has to remember.
+    std::set<std::string> baseClasses_;
     std::map<std::string, VarKind> varKinds_;  // variable representation in current unit
     std::map<std::string, std::string> varClass_;  // smart-ptr local/param -> class name
     // ref-observer local/param -> class name (raw-pointer lowering; see VarKind::Reference).

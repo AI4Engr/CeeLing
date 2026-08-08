@@ -32,15 +32,42 @@ real.
   `std::cout << ...` stream output. The old regex `CppGenerator` remains available via
   `--legacy-cpp` for comparison/debugging only — it does not offer the Phase 1
   guarantee, since it builds output from raw source text rather than the AST.
-- **Auto-derived return-provenance summaries** (CLAUDE.md component A) — CeeLing bans
-  `ref` function parameters, so every object-typed parameter is unconditionally moved
-  into the callee already; the only thing a summary needs to capture is whether a
-  function's return value aliases one of its own parameters (`T f(T a){ return a; }`)
-  or is always fresh. Computed once per function/method before the dangling check
-  runs; a call result assigned to a variable consults it and registers the right
-  provenance (alias → observer of the argument, same machinery as `ref`; fresh → new
-  owner) instead of assuming every call returns something brand new. See
+- **Auto-derived return-provenance summaries** (CLAUDE.md component A) — the only
+  thing a return-provenance summary needs to capture is whether a function's return
+  value aliases one of its own parameters (`T f(T a){ return a; }`) or is always
+  fresh. Computed once per function/method before the dangling check runs; a call
+  result assigned to a variable consults it and registers the right provenance
+  (alias → observer of the argument, same machinery as `ref`; fresh → new owner)
+  instead of assuming every call returns something brand new. See
   `tests/safety/summary_return_aliases_param.clg` / `summary_return_alias_dangles.clg`.
+- **Parameter borrowed/moved summaries** (CLAUDE.md component A's other half) —
+  CeeLing bans `ref` function parameters, but that alone does NOT mean every
+  object-typed parameter must be consumed: a method/constructor that stores its own
+  parameter into an already-shared field (`link = other;`) does not consume that
+  parameter, the same way `a.link = b;` at a call site already didn't. Closing this
+  gap required `SmartPointerAnalyzer` to infer `shared_ptr` for the parameter (a
+  `unique_ptr` genuinely cannot be copied, so "doesn't consume" is only true once the
+  parameter's own C++ type actually supports it) AND propagate that inference to
+  every call-site argument bound to it — a real three-module change (checker +
+  pointer-type inference + emitter), not just a checker-side relaxation. See
+  `tests/safety/param_stored_in_field_accepted.clg` (`a.attach(b); b.attach(a);`,
+  the single most common object-graph construction pattern) and siblings, and
+  Chapter 18's implementation notes for the full design.
+- **Single inheritance + `virtual`/`override`** — `class D : public B` (exactly one
+  base, `public` explicit), with real vtable dispatch through a base-typed owner
+  (`Animal a = new Dog(3); a.speak();` runs Dog's override). The core mechanism is
+  **member flattening**: each analysis module's collection pre-pass now visits
+  classes base-before-derived and copies a base's members down into each derived
+  class, so the ~40 exact-match "does class X have member Y" lookups across four
+  modules keep working unchanged. Two things the compiler generates that users
+  cannot write — and therefore cannot get wrong — close real holes by construction:
+  `virtual ~Base() = default;` for every base (destroying a Derived through a
+  `unique_ptr<Base>` is undefined behavior without it), and a `protected` no-arg
+  base constructor (CeeLing has no base-initializer-list syntax; a derived
+  constructor just assigns inherited fields in its own body). A virtual call from a
+  constructor is rejected (CLAUDE.md Phase 2.7's threat — it silently does not
+  dispatch to the override). See `tests/safety/inherit_virtual_dispatch_accepted.clg`
+  and siblings, and Chapter 18's implementation notes.
 - **Return-local-reference** (#2) — CeeLing has no `ref` return type, so a function's
   return is always owning; `return b;` is rejected whenever `b` is a `ref` observer
   declared in that function's own body (it can only be observing something local,

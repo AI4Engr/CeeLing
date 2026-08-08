@@ -65,9 +65,10 @@ private:
     std::string resolveDeclaredType(const Expression* expr) const;
 
     // Analyze one function/method/constructor body: resets per-body local types.
+    // `isConstructor` enables the virtual-call-from-constructor check for this body.
     void checkBody(const std::vector<StatementPtr>& body,
                     const std::vector<std::pair<std::string, std::string>>& params,
-                    const std::string& ownerClass);
+                    const std::string& ownerClass, bool isConstructor = false);
 
     void checkStatement(const Statement* stmt);
     void checkExpression(const Expression* expr);
@@ -88,6 +89,15 @@ private:
     // className -> set of method names declared on that class (constructors excluded
     // -- they are never called by name, only via `new T(...)`, a distinct AST node).
     std::map<std::string, std::set<std::string>> classMethods_;
+    // className -> method names that are `virtual` anywhere in that class's
+    // hierarchy (flattened like classMethods_, and a method marked `override` counts
+    // too -- it is virtual by definition even without repeating the keyword).
+    // Calling one of these from a constructor does NOT dispatch to the derived
+    // override in C++, so it is rejected; see checkBody's inConstructor_ handling.
+    std::map<std::string, std::set<std::string>> classVirtualMethods_;
+    // True while checking a constructor body (the only place the virtual-call trap
+    // applies -- CeeLing has no destructor syntax, so there are no destructor bodies).
+    bool inConstructor_ = false;
 
     // Per-body state (reset in checkBody).
     std::map<std::string, std::string> localType_;  // local/param name -> declared type

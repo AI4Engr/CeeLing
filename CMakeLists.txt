@@ -43,6 +43,7 @@ set(CORE_SOURCES
     src/core/generator/escape_hatch_checker.cpp
     src/core/generator/ast_emitter.cpp
     src/core/generator/library_summary.cpp
+    src/core/generator/class_hierarchy.cpp
 )
 
 # Optional Tree-sitter support
@@ -152,12 +153,19 @@ if(NOT EMSCRIPTEN)
     # AstEmitter (the default generator) doesn't emit the legacy generator's analysis-
     # report comment block, but independently derives the same pointer-type decisions;
     # check its actual output shape instead of the legacy-only report text.
+    #
+    # NEEDLE3 was `std::move(second)` until the parameter-storage-summary work
+    # (Chapter 18): `second` is a SHARED local (a shared_ptr is always safely
+    # copyable), so `Node tail = second;` emitting a plain copy instead of
+    # std::move-ing it is the CORRECT behavior, not a regression -- the old
+    # assertion was pinning down a real, if minor, pre-existing bug (unnecessarily
+    # nulling out `second` when nothing downstream needed it moved).
     add_test(NAME cling_test_bidirectional_analysis_report
         COMMAND ${CMAKE_COMMAND}
             -DFILE=${CMAKE_BINARY_DIR}/test_output_bidirectional_analysis.cpp
             -DNEEDLE1=std::shared_ptr<Node>\ next
             -DNEEDLE2=std::weak_ptr<Node>\ prev
-            -DNEEDLE3=std::move(second)
+            -DNEEDLE3=std::shared_ptr<Node>\ tail\ =\ second
             -P ${CMAKE_SOURCE_DIR}/tests/assert_contains.cmake)
     set_tests_properties(cling_test_bidirectional_analysis_report PROPERTIES
         DEPENDS cling_test_bidirectional_analysis)

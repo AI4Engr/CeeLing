@@ -1,0 +1,34 @@
+//@ expect: accept
+//@ reason: `Animal a = new Dog(3); a.speak();` must dispatch to Dog's override.
+//@ reason: This fixture is RUN, not just compiled -- dispatch is a runtime property,
+//@ reason: and `-fsyntax-only` would happily accept code that compiles but calls the
+//@ reason: base version (the same class of "compiles but does the wrong thing" bug
+//@ reason: the throw/catch work hit at Step 18).
+//
+// Also exercises the declared-vs-constructed type split in AstEmitter::factoryFor:
+// `a` is declared `Animal` but constructed as a `Dog`, so the smart-pointer KIND
+// comes from `Animal` while make_*<> names `Dog`. Getting that wrong produces
+// `unique_ptr<Animal> = make_shared<Dog>(...)`, which does not compile.
+
+class Animal {
+public:
+    int age;
+    Animal(int a) { age = a; }
+    virtual void speak() {
+        std::cout << "generic" << std::endl;
+    }
+};
+
+class Dog : public Animal {
+public:
+    Dog(int a) { age = a; }
+    void speak() override {
+        std::cout << "woof" << std::endl;
+    }
+};
+
+int main() {
+    Animal a = new Dog(3);
+    a.speak();
+    return 0;
+}

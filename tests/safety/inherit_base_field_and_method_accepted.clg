@@ -1,0 +1,28 @@
+//@ expect: accept
+//@ reason: a derived class can use an inherited field and call an inherited method.
+//@ reason: Both depend on the base-before-derived member FLATTENING every analysis
+//@ reason: module does at collection time (see class_hierarchy.h): without it,
+//@ reason: EscapeHatchChecker::isKnownCallable would not find `describe` (rejecting
+//@ reason: valid code -- a safe failure) and AstEmitter::fieldType would return "" for
+//@ reason: `age` (emitting `.` instead of `->` on a smart pointer -- a SILENTLY WRONG
+//@ reason: failure, which is why flattening matters most in the emitter).
+
+class Animal {
+public:
+    int age;
+    Animal(int a) { age = a; }
+    void describe() {
+        std::cout << age << std::endl;
+    }
+};
+
+class Dog : public Animal {
+public:
+    Dog(int a) { age = a; }
+};
+
+int main() {
+    Dog d = new Dog(7);
+    d.describe();
+    return 0;
+}

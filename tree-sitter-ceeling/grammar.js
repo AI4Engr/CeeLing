@@ -190,9 +190,16 @@ module.exports = grammar({
       '}'
     )),
 
+    // Single inheritance only: `class Derived : public Base { ... }`. `public` is
+    // required and explicit -- CeeLing has no private/protected inheritance, and
+    // spelling it out keeps the generated C++ literal instead of relying on a silent
+    // default. Multiple inheritance (including the pure-interface form) is a separate,
+    // later increment; the grammar deliberately admits exactly one base so that
+    // "which base?" is never ambiguous for the member-flattening pass downstream.
     class_declaration: $ => seq(
       'class',
       $.identifier,
+      optional(seq(':', 'public', $.identifier)),
       '{',
       'public',
       ':',
@@ -217,13 +224,20 @@ module.exports = grammar({
     // matching ordinary C++. CeeLing does not yet enforce const-correctness; the
     // qualifier is accepted syntactically and carried through so real C++ using it
     // (e.g. copied-in library code) parses cleanly.
+    //
+    // `virtual` (before the return type) and `override` (after the parameter list,
+    // alongside `const`) carry polymorphic dispatch through to the generated C++ --
+    // CeeLing does not implement its own vtable, it reuses the C++ compiler's. Both
+    // are placed exactly where ordinary C++ puts them, so the syntax reads the same.
     method_declaration: $ => seq(
+      optional('virtual'),
       $.type,
       $.identifier,
       '(',
       optional($.parameter_list),
       ')',
       optional('const'),
+      optional('override'),
       '{',
       repeat($.statement),
       '}'

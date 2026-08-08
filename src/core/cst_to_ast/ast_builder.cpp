@@ -4,6 +4,8 @@
 #include <cstring>
 #include <algorithm>
 #include <iostream>
+#include <map>
+#include <set>
 #include <sstream>
 
 namespace cling {
@@ -153,7 +155,54 @@ ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
     }
 
     ts_tree_delete(tree);
+    validateInheritance(*program);
     return program;
+}
+
+// A base clause must name a class this program actually declares, and the
+// inheritance graph must be acyclic. Both are correctness prerequisites, not just
+// politeness: every analysis module flattens inherited members at collection time by
+// walking base-before-derived, and an unknown base (nothing to copy from) or a cycle
+// (`A : B`, `B : A` -- no valid order exists) would otherwise silently produce a
+// wrong flattened view or loop forever.
+void ASTBuilder::validateInheritance(const Program& program) {
+    std::map<std::string, const ClassDeclaration*> classes;
+    for (const auto& stmt : program.statements) {
+        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            classes[cls->name] = cls;
+        }
+    }
+
+    for (const auto& [name, cls] : classes) {
+        if (cls->baseClass.empty()) continue;
+
+        if (classes.find(cls->baseClass) == classes.end()) {
+            std::ostringstream oss;
+            oss << "error[semantic/unknown-base-class]: class `" << name
+                << "` inherits from `" << cls->baseClass << "`, which is not a class "
+                   "declared in this program (line " << cls->loc.line << "). CeeLing "
+                   "cannot inherit from anything it did not compile itself -- an "
+                   "external base class has no known field/method set, so its members "
+                   "could not be resolved or safety-checked.";
+            throw std::runtime_error(oss.str());
+        }
+
+        // Walk up the chain from this class; revisiting `name` means a cycle.
+        std::set<std::string> seen{name};
+        std::string cursor = cls->baseClass;
+        while (!cursor.empty()) {
+            if (!seen.insert(cursor).second) {
+                std::ostringstream oss;
+                oss << "error[semantic/inheritance-cycle]: class `" << name
+                    << "` is part of an inheritance cycle (line " << cls->loc.line
+                    << "). A class cannot directly or indirectly inherit from itself.";
+                throw std::runtime_error(oss.str());
+            }
+            auto it = classes.find(cursor);
+            if (it == classes.end()) break;   // unknown base already reported above
+            cursor = it->second->baseClass;
+        }
+    }
 }
 
 // Stamp a node's source position from its originating CST node (1-based).
@@ -720,20 +769,33 @@ StatementPtr ASTBuilder::buildIncludeStatement(TSNode node, const std::string& s
 }
 
 StatementPtr ASTBuilder::buildClassDeclaration(TSNode node, const std::string& source) {
-    // class_declaration: "class" identifier "{" "public" ":" repeat(member_variable_declaration) constructor_declaration "}" optional(";")
+    // class_declaration: "class" identifier optional(":" "public" identifier)
+    //                    "{" "public" ":" repeat(member) "}" optional(";")
     TSNode name_node = ts_node_child(node, 1); // Skip "class"
     std::string className = getNodeText(name_node, source);
 
+    // With a base clause, the base name is a SECOND `identifier` child sitting
+    // directly under class_declaration (the `:` / `public` tokens are anonymous and
+    // carry no node). Without one, there is exactly one identifier child. So "the
+    // second identifier child, if present" is the base -- no field name needed.
+    std::string baseClass;
     std::vector<StatementPtr> members;
 
     // Parse all children to find class members
     uint32_t childCount = ts_node_child_count(node);
+    bool sawClassName = false;
     for (uint32_t i = 0; i < childCount; i++) {
         TSNode child = ts_node_child(node, i);
         const char* childType = ts_node_type(child);
 
         if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
             rejectUnbuildableChild(child, source);
+        } else if (strcmp(childType, "identifier") == 0) {
+            if (!sawClassName) {
+                sawClassName = true;   // the class's own name, already captured above
+            } else if (baseClass.empty()) {
+                baseClass = getNodeText(child, source);
+            }
         } else if (strcmp(childType, "member_variable_declaration") == 0 ||
             strcmp(childType, "constructor_declaration") == 0 ||
             strcmp(childType, "method_declaration") == 0) {
@@ -747,7 +809,9 @@ StatementPtr ASTBuilder::buildClassDeclaration(TSNode node, const std::string& s
         }
     }
 
-    return std::make_unique<ClassDeclaration>(className, std::move(members));
+    auto result = std::make_unique<ClassDeclaration>(className, std::move(members));
+    result->baseClass = baseClass;
+    return result;
 }
 
 StatementPtr ASTBuilder::buildConstructorDeclaration(TSNode node, const std::string& source) {
@@ -951,15 +1015,23 @@ ExpressionPtr ASTBuilder::buildSubscriptExpression(TSNode node, const std::strin
 }
 
 StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& source) {
-    // method_declaration: type identifier "(" optional(parameter_list) ")" "{" repeat(statement) "}"
-    TSNode return_type_node = ts_node_child(node, 0);
-    TSNode name_node = ts_node_child(node, 1);
+    // method_declaration: optional("virtual") type identifier "(" optional(parameter_list)
+    //                     ")" optional("const") optional("override") "{" repeat(statement) "}"
+    // A leading `virtual` shifts the type/name child indices by one, so detect it
+    // first rather than reading indices 0/1 unconditionally.
+    bool isVirtual = ts_node_child_count(node) > 0 &&
+                     strcmp(ts_node_type(ts_node_child(node, 0)), "virtual") == 0;
+    const uint32_t base = isVirtual ? 1 : 0;
+
+    TSNode return_type_node = ts_node_child(node, base + 0);
+    TSNode name_node = ts_node_child(node, base + 1);
     std::string returnType = getNodeText(return_type_node, source);
     std::string methodName = getNodeText(name_node, source);
 
     std::vector<std::pair<std::string, std::string>> parameters;
     std::vector<StatementPtr> body;
     bool isConst = false;
+    bool isOverride = false;
 
     // Parse all children to find parameters and body
     uint32_t childCount = ts_node_child_count(node);
@@ -987,6 +1059,8 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
             }
         } else if (strcmp(childType, "const") == 0) {
             isConst = true;
+        } else if (strcmp(childType, "override") == 0) {
+            isOverride = true;
         } else if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
             rejectUnbuildableChild(child, source);
         } else if (strcmp(childType, "statement") == 0) {
@@ -1001,6 +1075,8 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
 
     auto result = std::make_unique<MethodDeclaration>(returnType, methodName, std::move(parameters), std::move(body));
     result->isConst = isConst;
+    result->isVirtual = isVirtual;
+    result->isOverride = isOverride;
     return result;
 }
 

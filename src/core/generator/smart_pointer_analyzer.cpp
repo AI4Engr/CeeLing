@@ -1,7 +1,10 @@
 #include "smart_pointer_analyzer.h"
 
+#include "class_hierarchy.h"
+
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <iostream>
 #include <regex>
 #include <sstream>
@@ -141,6 +144,7 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     reportLines.clear();
 
     containerElementShared_.clear();
+    classMembersByClass_.clear();
 
     firstPassCollectReferences(program);
     if (!source.empty()) {
@@ -154,6 +158,15 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     // from a's own non-container usages) to know whether this push forces v's
     // element kind to shared_ptr.
     scanContainerElementKinds(program);
+
+    // Parameter-storage promotion runs after the two-pass decision (needs a
+    // field's own already-decided pointer kind to know whether storing a param
+    // into it forces the param to be shared), and call-site propagation runs
+    // after THAT (needs to know which parameters sub-pass 1 just promoted). See
+    // Chapter 18 for why this is a genuinely new third pass rather than an
+    // extension of the existing two.
+    promoteParamsStoredInSharedFields(program);
+    promoteSharedCallArguments(program);
 }
 
 PointerType SmartPointerAnalyzer::getPointerType(const std::string& className, const std::string& variableName) const {
@@ -311,6 +324,235 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
     }
 }
 
+void SmartPointerAnalyzer::promoteParamsStoredInSharedFields(const Program& program) {
+    for (const auto& stmt : program.statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr) continue;
+        for (const auto& member : cls->members) {
+            if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                promoteParamsInBody(method->body, cls->name, method->parameters);
+            } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                promoteParamsInBody(ctor->body, cls->name, ctor->parameters);
+            }
+        }
+    }
+}
+
+void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& body,
+                                               const std::string& className,
+                                               const std::vector<std::pair<std::string, std::string>>& params) {
+    // Only the unconditional, direct, single-hop case is promoted this slice: a
+    // top-level `field = param;` (bare identifier target naming a field of
+    // `className`, or a `this`-qualified member-access target -- CeeLing has no
+    // explicit `this.x` syntax, so only the bare form is reachable in practice)
+    // whose RHS is EXACTLY a parameter name. Storage behind a conditional, into a
+    // nested field, or via an intermediate expression is NOT detected -- the
+    // argument stays UNIQUE and still moves, the existing safe default (see
+    // dangling_checker.cpp's mirrored field-store recognition for the identical
+    // boundary). Not recursing into if/while/for bodies is deliberate scope, not
+    // an oversight: promoting a param whose storage only happens on some paths
+    // would incorrectly promise sharing even on paths where the store never runs.
+    for (const auto& stmtPtr : body) {
+        auto assign = dynamic_cast<const AssignmentStatement*>(stmtPtr.get());
+        if (assign == nullptr) continue;
+
+        std::string fieldName;
+        if (!assign->target) {
+            fieldName = assign->variable;  // bare identifier, implicit `this`
+        } else if (auto member = dynamic_cast<const MemberAccess*>(assign->target.get())) {
+            fieldName = member->member;
+        } else {
+            continue;
+        }
+
+        auto rhsId = dynamic_cast<const Identifier*>(assign->expression.get());
+        if (rhsId == nullptr) continue;
+
+        // RHS must be exactly one of this body's own parameters.
+        const bool rhsIsParam = std::any_of(params.begin(), params.end(),
+            [&](const auto& p) { return p.second == rhsId->name; });
+        if (!rhsIsParam) continue;
+
+        // The field's own declared type (registered by analyzeVariableDeclaration
+        // when the class body was first walked) tells us which (class, name) pair
+        // to ask getPointerType about.
+        const auto fieldTypeIt = symbolTypesByScope.find(makeSymbolKey(className, fieldName));
+        if (fieldTypeIt == symbolTypesByScope.end()) continue;
+        if (getPointerType(fieldTypeIt->second, fieldName) != PointerType::SHARED) continue;
+
+        // The parameter's own type tells us which (class, name) key to promote --
+        // registerParameters already gave every object-typed parameter a bare
+        // variableReferences entry to promote here.
+        auto paramTypeIt = std::find_if(params.begin(), params.end(),
+            [&](const auto& p) { return p.second == rhsId->name; });
+        if (paramTypeIt == params.end()) continue;
+        if (classNames.find(paramTypeIt->first) == classNames.end()) continue;
+
+        for (auto& [key, ref] : variableReferences) {
+            if (ref.className == paramTypeIt->first && ref.variableName == rhsId->name) {
+                pointerDecisions[key] = PointerType::SHARED;
+                pointerReasons[key] = "parameter is stored into an already-shared field";
+                ref.reason = pointerReasons[key];
+            }
+        }
+    }
+}
+
+namespace {
+// Local, transient lookup built once per promoteSharedCallArguments call: resolves
+// a callee (free function name, or "ClassName::methodName" for a method/
+// constructor) to its declared parameter list. Kept local rather than permanent
+// analyzer state -- nothing else in SmartPointerAnalyzer needs a general call-
+// target-to-parameters map, this pass is the only consumer.
+struct CalleeParams {
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> freeFunctions;
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> methods;      // "Class::method"
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> constructors; // "Class"
+};
+
+CalleeParams collectCalleeParams(const Program& program) {
+    CalleeParams out;
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            out.freeFunctions[fn->name] = fn->parameters;
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    out.methods[cls->name + "::" + method->name] = method->parameters;
+                } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    out.constructors[cls->name] = ctor->parameters;
+                }
+            }
+        }
+    }
+    return out;
+}
+} // namespace
+
+void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
+    const CalleeParams calleeParams = collectCalleeParams(program);
+
+    // Resolve a call/constructor expression's target parameter list, then promote
+    // every argument bound to an already-SHARED parameter to SHARED itself --
+    // otherwise the caller's own local stays UNIQUE and the promotion sub-pass 1
+    // just did is invisible at the call site (AstEmitter would still emit
+    // unique_ptr for the caller's variable). Argument resolution is deliberately
+    // lightweight (bare identifier only, via symbolTypesByScope's global-scope
+    // fallback), matching this codebase's existing "not full type inference"
+    // conservatism elsewhere (e.g. DanglingChecker::asObjectLocalName).
+    auto promoteArgsAgainstParams = [this](
+        const std::vector<ExpressionPtr>& args,
+        const std::vector<std::pair<std::string, std::string>>& params) {
+        for (size_t i = 0; i < args.size() && i < params.size(); ++i) {
+            const auto& [paramType, paramName] = params[i];
+            if (classNames.find(paramType) == classNames.end()) continue;
+            if (getPointerType(paramType, paramName) != PointerType::SHARED) continue;
+
+            auto argId = dynamic_cast<const Identifier*>(args[i].get());
+            if (argId == nullptr) continue;
+            const auto argTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, argId->name));
+            if (argTypeIt == symbolTypesByScope.end()) continue;
+
+            for (auto& [key, ref] : variableReferences) {
+                if (ref.className == argTypeIt->second && ref.variableName == argId->name) {
+                    pointerDecisions[key] = PointerType::SHARED;
+                    pointerReasons[key] = "passed to a parameter that is stored into an already-shared field";
+                    ref.reason = pointerReasons[key];
+                }
+            }
+        }
+    };
+
+    std::function<void(const Expression*)> visitExpr = [&](const Expression* expr) {
+        if (expr == nullptr) return;
+        if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+            for (const auto& arg : call->arguments) visitExpr(arg.get());
+            if (call->callee) {
+                // `recv.method(args)` -- resolve recv's class, then the class's
+                // method's parameter list.
+                if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+                    if (auto recvId = dynamic_cast<const Identifier*>(member->object.get())) {
+                        const auto recvTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, recvId->name));
+                        if (recvTypeIt != symbolTypesByScope.end()) {
+                            const auto paramsIt = calleeParams.methods.find(
+                                recvTypeIt->second + "::" + member->member);
+                            if (paramsIt != calleeParams.methods.end()) {
+                                promoteArgsAgainstParams(call->arguments, paramsIt->second);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Plain call `f(args)`.
+                const auto paramsIt = calleeParams.freeFunctions.find(call->function_name);
+                if (paramsIt != calleeParams.freeFunctions.end()) {
+                    promoteArgsAgainstParams(call->arguments, paramsIt->second);
+                }
+            }
+        } else if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
+            for (const auto& arg : neww->arguments) visitExpr(arg.get());
+            const auto paramsIt = calleeParams.constructors.find(neww->className);
+            if (paramsIt != calleeParams.constructors.end()) {
+                promoteArgsAgainstParams(neww->arguments, paramsIt->second);
+            }
+        } else if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+            visitExpr(bin->left.get());
+            visitExpr(bin->right.get());
+        } else if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+            visitExpr(un->operand.get());
+        } else if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+            visitExpr(member->object.get());
+        } else if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+            visitExpr(sub->object.get());
+            visitExpr(sub->index.get());
+        }
+    };
+
+    std::function<void(const Statement*)> visitStmt = [&](const Statement* stmt) {
+        if (stmt == nullptr) return;
+        if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+            visitExpr(exprStmt->expression.get());
+        } else if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+            visitExpr(decl->expression.get());
+        } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+            visitExpr(assign->expression.get());
+        } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+            visitExpr(ret->expression.get());
+        } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
+            visitExpr(ifs->condition.get());
+            for (const auto& inner : ifs->body) visitStmt(inner.get());
+            for (const auto& inner : ifs->elseBody) visitStmt(inner.get());
+        } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+            visitExpr(whiles->condition.get());
+            for (const auto& inner : whiles->body) visitStmt(inner.get());
+        } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+            visitExpr(fors->container.get());
+            for (const auto& inner : fors->body) visitStmt(inner.get());
+        } else if (auto tryStmt = dynamic_cast<const TryStatement*>(stmt)) {
+            for (const auto& inner : tryStmt->body) visitStmt(inner.get());
+            for (const auto& inner : tryStmt->catchBody) visitStmt(inner.get());
+        } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
+            visitExpr(throwStmt->expression.get());
+        }
+    };
+
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            for (const auto& inner : fn->body) visitStmt(inner.get());
+        } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
+            for (const auto& inner : mn->body) visitStmt(inner.get());
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    for (const auto& inner : method->body) visitStmt(inner.get());
+                } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    for (const auto& inner : ctor->body) visitStmt(inner.get());
+                }
+            }
+        }
+    }
+}
+
 void SmartPointerAnalyzer::firstPassCollectReferences(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto classDecl = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
@@ -319,7 +561,17 @@ void SmartPointerAnalyzer::firstPassCollectReferences(const Program& program) {
         }
     }
 
+    // Classes first, in base-before-derived order, so analyzeClassDeclaration can
+    // re-register an inherited field under the derived scope from the base's
+    // already-collected members. Everything else (functions, main) is analyzed
+    // afterward in ordinary input order -- it can only reference classes, never be
+    // referenced by one, so its relative position to the class walk doesn't matter.
+    for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
+        analyzeStatement(*cls);
+    }
+
     for (const auto& stmt : program.statements) {
+        if (dynamic_cast<const ClassDeclaration*>(stmt.get()) != nullptr) continue;
         analyzeStatement(*stmt);
     }
 }
@@ -416,7 +668,34 @@ void SmartPointerAnalyzer::analyzeClassDeclaration(const ClassDeclaration& cls) 
     classNames.insert(cls.name);
     classRelationships[cls.name].className = cls.name;
 
+    // Inherited fields need their own entries under the DERIVED class's scope, not
+    // just the base's: this analyzer keys everything by (scope, class, variable), so
+    // a derived instance's inherited field would otherwise have no entry at all and
+    // getPointerType would fall through to its SHARED default -- silently making
+    // every inherited field a shared_ptr regardless of actual ownership shape.
+    // Unlike the other three modules' flat maps, "flattening" here means re-running
+    // the base's member registration in the derived scope. Base-before-derived
+    // ordering is guaranteed by firstPassCollectReferences's caller.
+    if (!cls.baseClass.empty()) {
+        if (auto baseIt = classMembersByClass_.find(cls.baseClass);
+            baseIt != classMembersByClass_.end()) {
+            for (const auto& [fieldName, fieldType] : baseIt->second) {
+                registerReference(cls.name, fieldType, fieldName, 0);
+                registerSymbolType(cls.name, fieldName, fieldType);
+                classRelationships[cls.name].memberVariables.insert(fieldName);
+                classRelationships[cls.name].references.insert(fieldType);
+                classRelationships[fieldType].referencedBy.insert(cls.name);
+                classMembersByClass_[cls.name][fieldName] = fieldType;
+            }
+        }
+    }
+
     for (const auto& member : cls.members) {
+        if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+            if (classNames.find(field->type) != classNames.end()) {
+                classMembersByClass_[cls.name][field->identifier] = field->type;
+            }
+        }
         analyzeStatement(*member, cls.name);
     }
 }

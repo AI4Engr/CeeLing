@@ -1,4 +1,5 @@
 #include "dangling_checker.h"
+#include "class_hierarchy.h"
 #include "library_summary.h"
 
 namespace cling {
@@ -6,6 +7,7 @@ namespace cling {
 std::vector<DanglingError> DanglingChecker::check(const Program& program, const SmartPointerAnalyzer& analyzer) {
     errors_.clear();
     classNames_.clear();
+    classFields_.clear();
     collectClassNames(program);
     summaries_.clear();
     functionParams_.clear();
@@ -33,9 +35,23 @@ std::vector<DanglingError> DanglingChecker::check(const Program& program, const 
 }
 
 void DanglingChecker::collectClassNames(const Program& program) {
-    for (const auto& stmt : program.statements) {
-        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
-            classNames_.insert(cls->name);
+    // Base-before-derived so classFields_ is FLAT (a derived class's entry already
+    // contains its base's fields). Without this, a derived class's method body
+    // wouldn't recognize `inheritedField = param;` as a field-store and would treat
+    // it as an ordinary local reassignment -- the exact bug Step 19 fixed for
+    // non-inherited fields, reappearing one level up the hierarchy.
+    for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
+        classNames_.insert(cls->name);
+        auto& fields = classFields_[cls->name];
+        if (!cls->baseClass.empty()) {
+            if (auto baseIt = classFields_.find(cls->baseClass); baseIt != classFields_.end()) {
+                fields = baseIt->second;
+            }
+        }
+        for (const auto& member : cls->members) {
+            if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                fields.insert(field->identifier);
+            }
         }
     }
 }
@@ -103,13 +119,31 @@ void DanglingChecker::deriveSummaries(const Program& program) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             functionParams_[fn->name] = fn->parameters;
             summaries_[summaryKey("", fn->name)] = deriveSummaryForBody(fn->body, fn->parameters);
-        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
-            for (const auto& member : cls->members) {
-                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                    classMethodParams_[cls->name][method->name] = method->parameters;
-                    summaries_[summaryKey(cls->name, method->name)] =
-                        deriveSummaryForBody(method->body, method->parameters);
+        }
+    }
+    // Base-before-derived again, for the same reason: `d.inheritedMethod(x)` has to
+    // find both the parameter list (to resolve which argument binds where) and the
+    // derived summary. An inherited method that the derived class does NOT override
+    // keeps the base's summary verbatim -- it is literally the same body.
+    for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
+        auto& params = classMethodParams_[cls->name];
+        if (!cls->baseClass.empty()) {
+            if (auto baseIt = classMethodParams_.find(cls->baseClass);
+                baseIt != classMethodParams_.end()) {
+                params = baseIt->second;
+                for (const auto& [methodName, _] : baseIt->second) {
+                    auto baseSummary = summaries_.find(summaryKey(cls->baseClass, methodName));
+                    if (baseSummary != summaries_.end()) {
+                        summaries_[summaryKey(cls->name, methodName)] = baseSummary->second;
+                    }
                 }
+            }
+        }
+        for (const auto& member : cls->members) {
+            if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                params[method->name] = method->parameters;
+                summaries_[summaryKey(cls->name, method->name)] =
+                    deriveSummaryForBody(method->body, method->parameters);
             }
         }
     }
@@ -237,6 +271,38 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
                 continue;  // shares -- the argument stays a live owner
             }
         }
+
+        // Blanket rule, independent of the receiver/method: an argument whose OWN
+        // pointer type already resolves to SHARED never needs to move into ANY
+        // call (method, constructor via NewExpression at the VariableDeclaration/
+        // AssignmentStatement call sites, or free function) -- a std::shared_ptr
+        // is always safely copyable, so the source stays a live, usable owner
+        // regardless of what the callee does with its own copy. This generalizes
+        // the vector-specific share case above (which additionally has to decide
+        // whether a UNIQUE argument gets wrapped into a shared_ptr construction,
+        // still handled by that branch) to the ordinary case: a parameter that a
+        // method/constructor body stores into an already-shared field is promoted
+        // to SHARED by SmartPointerAnalyzer's own third pass (see Chapter 18), and
+        // once that's true, the argument bound to it is ALSO promoted to SHARED by
+        // that same pass -- so checking the argument's own pointer type here is
+        // sufficient, with no need to separately resolve the callee's summary.
+        //
+        // Restricted to genuinely class-typed arguments: SmartPointerAnalyzer::
+        // getPointerType's suffix-match has no entry at all for a container type
+        // like "std::vector<Node>" (pointerDecisions is only ever keyed by real
+        // class names), and its not-found fallback defaults to SHARED -- applying
+        // this rule to a container argument would incorrectly skip moving it
+        // (confirmed by a regression: vector_moved_into_call_rejected.clg went
+        // from PASS to XFAIL without this guard). A container's own move-vs-share
+        // question is exactly what the vector-specific branch above already
+        // handles per-method; this blanket rule must not also apply to it.
+        const std::string argName = asObjectLocalName(call->arguments[i].get());
+        const std::string argType = localType_.count(argName) ? localType_.at(argName) : "";
+        if (analyzer_ != nullptr && !argName.empty() && classNames_.count(argType) > 0 &&
+            analyzer_->getPointerType(argType, argName) == PointerType::SHARED) {
+            continue;
+        }
+
         if (std::string src = asObjectLocalName(call->arguments[i].get()); !src.empty()) {
             movedFrom_.insert(src);
         }
@@ -564,13 +630,25 @@ void DanglingChecker::processStatement(const Statement* stmt) {
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
         checkExpressionUses(assign->expression.get());
 
-        if (assign->target) {
-            // Member target `a.b = ...`: this stores into / links a field. It does NOT
-            // reassign or move the root object, and it does NOT consume the RHS — storing
-            // an object into a field is a link/share, not an ownership handoff that
-            // abandons the source (a linked-list node is used again right after linking).
-            // Just check the receiver and RHS aren't already dead.
-            checkExpressionUses(assign->target.get());
+        const bool isBareFieldStore = !assign->target && !currentClass_.empty() &&
+            objectLocals_.find(assign->variable) == objectLocals_.end() &&
+            observerNames_.find(assign->variable) == observerNames_.end() &&
+            classFields_.count(currentClass_) > 0 &&
+            classFields_.at(currentClass_).count(assign->variable) > 0;
+        if (assign->target || isBareFieldStore) {
+            // Member target `a.b = ...`, OR a bare identifier naming a field of the
+            // current class with implicit `this` (`link = other;` inside a method):
+            // both store into / link a field. Neither reassigns or moves the root
+            // object, and neither consumes the RHS — storing an object into a field is
+            // a link/share, not an ownership handoff that abandons the source (a
+            // linked-list node is used again right after linking). A local/observer of
+            // the same name (checked above) shadows the field, matching ordinary scope
+            // precedence. For a member target, also check the receiver isn't already
+            // dead (the RHS was already checked above); a bare field-store's receiver
+            // is the implicit, always-live `this`, so there's nothing extra to check.
+            if (assign->target) {
+                checkExpressionUses(assign->target.get());
+            }
         } else if (observerNames_.find(assign->variable) != observerNames_.end()) {
             // Assigning to an observer rebinds what it observes: `b = inner;`. A
             // plain rebind is a real (non-alias) observation, so it no longer gets

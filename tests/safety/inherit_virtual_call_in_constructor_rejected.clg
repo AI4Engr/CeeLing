@@ -1,0 +1,37 @@
+//@ expect: reject
+//@ reason: CLAUDE.md Phase 2.7's virtual-call-from-constructor threat. In C++ a
+//@ reason: virtual call inside a constructor does NOT dispatch to the derived
+//@ reason: override -- the vtable still points at the base while the base's
+//@ reason: constructor runs -- so `speak()` here silently runs Animal's version even
+//@ reason: when constructing a Dog. The code does something other than what it
+//@ reason: visually says, which is exactly the class of surprise CeeLing exists to
+//@ reason: remove. Purely structural check (no provenance/liveness): is this a call,
+//@ reason: inside a constructor, to a method virtual anywhere in the hierarchy?
+//
+// Only constructors need this check: CeeLing has no destructor syntax at all, so the
+// other half of the classic C++ trap simply cannot be written.
+
+class Animal {
+public:
+    int age;
+    Animal(int a) {
+        age = a;
+        speak();
+    }
+    virtual void speak() {
+        std::cout << "generic" << std::endl;
+    }
+};
+
+class Dog : public Animal {
+public:
+    Dog(int a) { age = a; }
+    void speak() override {
+        std::cout << "woof" << std::endl;
+    }
+};
+
+int main() {
+    Animal a = new Dog(3);
+    return 0;
+}

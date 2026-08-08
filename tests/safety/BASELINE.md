@@ -274,3 +274,88 @@ matching, no implicit conversion) — the naive emission compiled clean and then
 literals in `std::string(...)`. This is why the accept fixture is run, not just
 compiled — `-fsyntax-only` cannot catch a matching failure that only manifests
 when the exception is actually thrown.
+
+Parameter borrowed/moved summaries — `a.attach(b)` shouldn't consume `b` (Ch. 18,
+Step 19) added 5 more fixtures: **PASS=44, XFAIL=0, FAIL=0.**
+
+- `param_stored_in_field_accepted.clg` — the end-to-end proof:
+  `a.attach(b); b.attach(a);` compiles AND is actually **run** (not just
+  `-fsyntax-only`-checked), printing `2` with no crash. Confirms all three
+  modules (`DanglingChecker`, `SmartPointerAnalyzer`, `AstEmitter`) agree at
+  runtime, not just that each one's isolated logic looks correct in isolation —
+  the same discipline the `throw`/`catch` runtime bug (Step 18) established.
+- `param_stored_in_field_self_body_accepted.clg` — the prerequisite-bug fixture
+  in its narrowest form: inside `attach`'s own body, using `other` right after
+  `link = other;` must NOT be rejected. Before the fix, a bare-identifier
+  assignment target with implicit `this` was treated as an ordinary local
+  reassignment (no `classFields_`-equivalent existed to recognize it as a
+  field-store), so `other` was marked moved-from immediately — with no caller or
+  summary logic involved at all.
+- `param_stored_in_field_constructor_accepted.clg` — constructor bodies get the
+  same parameter-storage promotion method bodies do
+  (`SmartPointerAnalyzer::promoteParamsStoredInSharedFields` walks both). Also
+  the fixture that surfaced a genuine, pre-existing, UNRELATED bug (confirmed via
+  `git stash` with none of this step's changes applied): a constructor with more
+  than one parameter silently drops every parameter after the first from the
+  emitted C++ signature. Worked around by using a single-parameter constructor
+  rather than fixing that separate bug.
+- `param_not_stored_still_moves_rejected.clg` — positive control: a method that
+  does NOT store its parameter (ordinary use-and-discard) still consumes its
+  argument normally. Proves the promotion doesn't over-correct into "nothing ever
+  moves."
+- `param_conditional_storage_still_moves_rejected.clg` — storage behind a
+  conditional (`if (x) { link = other; }`) is deliberately NOT detected this
+  slice (`promoteParamsStoredInSharedFields` only walks a body's TOP-LEVEL
+  statements) — `other` stays `unique_ptr` and still moves, the existing safe
+  default, documented honestly as a real boundary rather than silently.
+
+**A real regression caught and fixed during this step's own verification sweep**
+(not anticipated in the plan): generalizing "a SHARED argument never moves" to
+every call, not just `push_back`, initially broke
+`vector_moved_into_call_rejected.clg` (PASS → XFAIL) — `SmartPointerAnalyzer::
+getPointerType`'s not-found fallback defaults to SHARED, and a container type
+like `std::vector<Node>` has no `pointerDecisions` entry at all, so the new rule
+incorrectly treated every vector argument as already-shared. Fixed by restricting
+the blanket rule to arguments whose declared type is a genuine registered class
+name. Full fixture sweep re-run afterward confirmed PASS=44, XFAIL=0 restored.
+
+**CTest note**: `cling_test_bidirectional_analysis_report`'s NEEDLE3 assertion
+changed from `std::move(second)` to `std::shared_ptr<Node> tail = second` — the
+old assertion was pinning down a real, if minor, pre-existing bug (`second` is a
+SHARED local; unnecessarily `std::move`-ing it into `tail` nulled out `second`
+even though nothing downstream needed it moved). The new behavior is more
+correct, not a regression.
+
+Single inheritance + `virtual`/`override` (Ch. 18, Step 20) added 6 more fixtures:
+**PASS=50, XFAIL=0, FAIL=0.**
+
+- `inherit_base_field_and_method_accepted.clg` — a derived class uses an inherited
+  field and calls an inherited method. Proves the base-before-derived member
+  FLATTENING works in both the safe-failing case (`EscapeHatchChecker::
+  isKnownCallable` would otherwise reject a valid inherited call) and the
+  silently-wrong one (`AstEmitter::fieldType` would otherwise return "" for an
+  inherited field, emitting `.` instead of `->` on a smart pointer). Run; prints 7.
+- `inherit_virtual_dispatch_accepted.clg` — `Animal a = new Dog(3); a.speak();`
+  **runs** and prints `woof`, not `generic`. Dispatch is a runtime property:
+  compile-only checking would happily accept code that calls the base version,
+  which is precisely the bug this feature exists to prevent. Also exercises
+  `factoryFor`'s declared-vs-constructed type split (`unique_ptr<Animal>` holding a
+  `make_unique<Dog>`).
+- `inherit_virtual_destructor_accepted.clg` — a derived object owned through a
+  base-typed variable. Both **run** (prints 16) and grepped for
+  `virtual ~Shape() = default;` in the emitted output, since the safety claim is
+  about what was generated. Also exercises the auto-generated protected no-arg base
+  constructor (CeeLing has no base-initializer-list syntax).
+- `inherit_unknown_base_rejected.clg` — inheriting from an undeclared class.
+  Targeted parse-time diagnostic, not a generic parse error.
+- `inherit_cycle_rejected.clg` — `A : B`, `B : A`. A correctness prerequisite, not
+  politeness: a cycle has no valid base-before-derived order for the flattening
+  pass to use.
+- `inherit_virtual_call_in_constructor_rejected.clg` — CLAUDE.md Phase 2.7's
+  virtual-call-from-constructor threat, landed on day one of inheritance support as
+  that entry prescribed. Only constructors are checked because CeeLing has no
+  destructor syntax, so the other half of the classic trap cannot be written.
+
+**Verified additive**: a non-inheriting program's emitted C++ contains zero
+occurrences of `virtual` or `: public` — existing single-class programs are
+completely unaffected by this step.

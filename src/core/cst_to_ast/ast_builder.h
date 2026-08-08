@@ -16,6 +16,11 @@ public:
 private:
     TSParser* parser;
 
+    // Post-parse whole-program check: every base clause names a declared class, and
+    // the inheritance graph is acyclic (a prerequisite for the base-before-derived
+    // member flattening every analysis module does at collection time).
+    void validateInheritance(const Program& program);
+
     StatementPtr buildStatement(TSNode node, const std::string& source);
     StatementPtr buildVariableDeclaration(TSNode node, const std::string& source);
     StatementPtr buildContainerDeclaration(TSNode node, const std::string& source);

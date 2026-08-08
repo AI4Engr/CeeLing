@@ -1,0 +1,26 @@
+//@ expect: accept
+//@ reason: the prerequisite bug this slice fixed, in its narrowest form: inside
+//@ reason: attach's OWN body, using `other` right after `link = other;` must NOT be
+//@ reason: rejected. Before the fix, DanglingChecker treated a bare-identifier
+//@ reason: assignment target (`link = other;`, implicit `this`) as an ordinary LOCAL
+//@ reason: reassignment rather than a field-store, so its "RHS moves into the
+//@ reason: reassigned name" rule marked `other` moved-from immediately -- with no
+//@ reason: caller or summary logic involved at all.
+
+class Node {
+public:
+    int v;
+    Node link;
+    Node(int x) { v = x; }
+    void attach(Node other) {
+        link = other;
+        std::cout << other.v << std::endl;
+    }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    a.attach(b);
+    return 0;
+}

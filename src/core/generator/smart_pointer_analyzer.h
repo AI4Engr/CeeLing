@@ -86,6 +86,27 @@ private:
     void scanContainerElementKinds(const Program& program);
     void scanContainerElementKindsInStatement(const Statement& stmt);
 
+    // A parameter that a method/constructor body stores into an already-SHARED
+    // field must itself be SHARED (a `shared_ptr` field can't hold a moved-in
+    // `unique_ptr` and leave the source usable -- see dangling_checker.cpp's
+    // AssignmentStatement field-store handling, which this mirrors). Self-
+    // contained third pass, runs once after secondPassDeterminePointerTypes (needs
+    // fields' own already-decided pointer kind), single pass (no fixed-point
+    // iteration -- see .cpp for the documented limitation this leaves).
+    void promoteParamsStoredInSharedFields(const Program& program);
+    void promoteParamsInBody(const std::vector<StatementPtr>& body, const std::string& className,
+                             const std::vector<std::pair<std::string, std::string>>& params);
+
+    // A call-site argument bound to a parameter that sub-pass 1 promoted to SHARED
+    // must itself become SHARED (otherwise the caller's local is still emitted as
+    // unique_ptr and the promotion is invisible at the call site). Runs after
+    // promoteParamsStoredInSharedFields. Its own recursive statement/expression
+    // walk lives entirely inside the .cpp (as local lambdas, not member functions)
+    // since analyzeStatement doesn't visit call expressions, control-flow bodies,
+    // or constructor-call (NewExpression) arguments at all, and nothing else in
+    // this class needs that walk.
+    void promoteSharedCallArguments(const Program& program);
+
     void scanSource(const std::string& source);
     void parseAnnotationLine(const std::string& trimmedLine, int lineNumber);
     void registerReference(const std::string& scopeName, const std::string& className,
@@ -126,6 +147,12 @@ private:
     // already-SHARED source (forcing the whole container's element kind to
     // shared_ptr). Absent/false = unique_ptr (the default).
     std::map<std::string, bool> containerElementShared_;
+
+    // className -> (object-typed fieldName -> its class), FLATTENED across the
+    // inheritance chain. Used by analyzeClassDeclaration to re-register a base's
+    // fields under each derived class's own scope (see the comment there for why
+    // this analyzer needs per-scope re-registration rather than a shared flat map).
+    std::map<std::string, std::map<std::string, std::string>> classMembersByClass_;
 };
 
 } // namespace cling

@@ -1081,3 +1081,294 @@ are different claims, and a checker/emitter pair proving memory safety doesn't
 automatically prove exception-matching correctness. Fixed by having `AstEmitter`
 force-wrap thrown string literals in `std::string(...)`, so the thrown type always
 matches the fixed `const std::string&` catch-clause type it also generates.
+
+## Step 19 — `a.attach(b)` shouldn't consume `b`: the parameter-storage summary that turned into three modules
+
+While scoping the next increment after slice 2, direct testing (not a hypothetical)
+found that CeeLing could not express the single most common object-graph
+construction pattern:
+
+```
+class Node {
+public:
+    Node link;
+    void attach(Node other) { link = other; }
+};
+...
+a.attach(b);
+b.attach(a);   // ERROR: b was moved into a.attach(b)
+```
+
+`a.link = b;` (a direct field store at the call site) was already correctly a
+link/share, not a move — the existing `AssignmentStatement` `target`-is-set path
+in `dangling_checker.cpp` handled that from Phase 2's earliest version. Going
+through a method didn't get the same treatment, because CLAUDE.md's component-A
+summary — "which parameters are borrowed, which are moved" — had only ever been
+implemented for the RETURN half (Step 8's `returnBorrowsParam`); every parameter
+had been unconditionally-moved since the checker's first version, on the
+reasonable-at-the-time assumption that banning `ref` parameters meant there was
+nothing else to summarize. That assumption held right up until a method's body
+could itself perform the exact same store-into-field CLAUDE.md already treats as
+non-consuming at the call site.
+
+### A prerequisite bug hiding inside the summary's own precondition
+
+Before any summary could even be *derived*, a narrower bug had to be found and
+fixed: inside `attach`'s own body, `link = other;` is a bare-identifier-LHS
+`AssignmentStatement` — the grammar only sets `AssignmentStatement::target` for a
+`member_access`/`subscript_expression` LHS, and `link = other;` with implicit
+`this` parses as a plain `identifier` LHS, exactly like an ordinary local variable
+assignment. `DanglingChecker` had no notion at all of "is this bare name a field
+of the current class" — no `classFields_`-equivalent map, unlike
+`EscapeHatchChecker`, which had built exactly this (`map<className,
+map<fieldName, fieldType>>`) since Phase 1. So `link = other;` fell into the
+"reassign a local" branch, and that branch's own rule — "the RHS being another
+object local moves that source" — marked `other` moved-from immediately, *inside*
+`attach`'s own body, before any caller or summary logic was ever involved. A
+`std::cout << other.v` two lines later inside `attach` itself already
+false-rejected, with no method call anywhere in the picture. Fixed with a new
+`classFields_` member (built the same way `collectClassNames` already built
+`classNames_`) and a `isBareFieldStore` check ahead of the existing
+"reassignment vs. rebind vs. field-store" branch in `processStatement` — a bare
+identifier naming a current-class field now gets exactly the same treatment a
+`MemberAccess` target already got, with a local/observer of the same name (an
+ordinary shadowing case) still taking precedence.
+
+### Why this couldn't stay checker-only: `unique_ptr` really can't be copied
+
+The natural next step — add a `paramsStoredInField` summary next to
+`returnBorrowsParam`, consult it in `applyCallArgMoves` — looked sufficient right
+up until the actual generated C++ was read. Before this step, `attach` compiled
+to `void attach(std::unique_ptr<Node> other) { this->link = std::move(other); }`,
+and the call site emitted `a->attach(std::move(b));`. That's not a checker
+artifact to relax — it's a real move, and a `unique_ptr` genuinely cannot be
+copied (its copy constructor is deleted). So "`b` doesn't get consumed" can only
+become true in the generated code if `b` (and `attach`'s own parameter `other`)
+actually become `shared_ptr<Node>` — which meant the real work was in
+`SmartPointerAnalyzer`, not `DanglingChecker`.
+
+Reading `SmartPointerAnalyzer` closely surfaced two more findings that reshaped
+the plan mid-investigation:
+
+- `registerParameters`'s own comment claimed a parameter stored into a field
+  "still gets promoted to SHARED via `scanSource`'s independent regex pass,
+  which already covers that case today." Empirically false for this exact
+  case: `scanSource`'s member-promotion rule
+  (`secondPassDeterminePointerTypes`, the `containingScope == className` check)
+  only fires for a class's OWN field entries, where the field's declaring scope
+  literally equals its own class name (`link`'s entry: scope "Node" == class
+  "Node"). A *parameter's* entry is scoped to `"Node::attach"`, which is never
+  equal to any class name — so this rule silently never fired for parameters at
+  all, and the comment's claim, true once, had gone stale as the codebase grew.
+- `analyzeStatement` (the AST-driven pass) has no case for `FunctionCall`,
+  `ExpressionStatement`, `IfStatement`, `WhileStatement`, or `ForStatement` — call
+  sites and control flow are completely invisible to it. This wasn't a small gap
+  to patch; it meant "propagate a promoted parameter's SHARED-ness to its
+  caller's argument" needed an entirely new kind of walk this analyzer had never
+  done before.
+
+### A third, self-contained pass — mirroring `scanContainerElementKinds`'s own precedent
+
+Rather than extend the tuned, delicate two-pass model (`firstPassCollectReferences`
++ `secondPassDeterminePointerTypes`) and risk its existing back-reference/
+bidirectional-assignment heuristics, the fix follows Step 13's own established
+pattern: a new, self-contained third pass, own data, own recursive walk, running
+strictly after the existing two-pass decision (because it needs to *read* that
+decision — a field only propagates its SHARED-ness to whatever's stored into it
+if the field itself is already known to be SHARED).
+
+Two sub-passes, run in order:
+
+1. **`promoteParamsStoredInSharedFields`** walks every method/constructor body's
+   TOP-LEVEL statements (deliberately not recursing into `if`/`while`/`for` — see
+   below), looking for `field = param;` where `field` resolves (via
+   `symbolTypesByScope`, populated when the class body was first walked) to an
+   already-SHARED type, and `param` is exactly one of that body's own
+   parameters. When found, it writes directly into `pointerDecisions[key] =
+   SHARED` for the parameter's own `VariableReference` entry — the same map
+   `secondPassDeterminePointerTypes` already populates, just written to a second
+   time by a different pass, which is safe because `getPointerType` just reads
+   whatever's there whenever it's asked, with no ordering assumption baked in
+   beyond "after the two-pass decision."
+2. **`promoteSharedCallArguments`** does the walk `analyzeStatement` never did:
+   a full recursive statement/expression traversal (local lambdas in the `.cpp`,
+   not new member functions, since nothing else in the class needs this shape of
+   walk) over every function/method/constructor body, resolving each
+   `FunctionCall`/`NewExpression` argument to the parameter it's bound to (via a
+   small, transient `CalleeParams` lookup built once per call, not permanent
+   state) and promoting the ARGUMENT's own entry to SHARED whenever the
+   parameter it feeds was promoted in sub-pass 1.
+
+**Explicitly not scoped, and documented as a real (not silent) limitation**: no
+recursion into conditional bodies for sub-pass 1 (`if (x) { link = other; }`
+doesn't promote `other` — promoting a parameter whose storage only happens on
+some paths would incorrectly promise sharing on paths where the store never
+runs), and no fixed-point iteration across multi-hop chains (`a.wrap(b);
+c.wrap(a);` where `wrap`'s field only becomes SHARED after seeing `a` promoted
+would need a second round to catch `c`'s argument). Both default to the existing
+safe UNIQUE behavior — over-restrictive, never unsafe, the same boundary-drawing
+principle used for slice 2's invalidation-summary scope and Step 17's map
+primitive-only restriction.
+
+### The blanket rule that made the checker/emitter side almost disappear
+
+The obvious next step — add a `paramsStoredInField` summary to
+`DanglingChecker::FunctionSummary`, consult it in `applyCallArgMoves`, do the
+matching lookup in `AstEmitter` — turned out to be unnecessary once the
+`SmartPointerAnalyzer` promotion was actually correct. The load-bearing
+observation: `std::shared_ptr` is *always* safely copyable, unconditionally, for
+any call whatsoever. So the question "does this call consume this argument"
+reduces entirely to "is the argument's own already-decided pointer type SHARED,"
+with **no need to separately resolve which callee it's going into or what that
+callee's summary says** — the promotion work above already guarantees that if an
+argument's own type is SHARED, some prior analysis has already established it's
+safe to copy anywhere. This generalizes the existing `push_back`-specific
+`vectorMethodSharesArg`/`elementIsShared && argIsShared` rule (Step 13) from "only
+this one hardcoded library method shares" to "any call, if the argument is
+already SHARED, shares" — one new guard in `applyCallArgMoves`'s per-argument
+loop, and a matching one in `AstEmitter::emitMovedArg` (emit a plain copy instead
+of `std::move(id)` when the argument's own `getPointerType` resolution is
+SHARED), both far smaller than a per-callee summary mechanism would have been.
+
+**A real regression this generalization introduced, caught by the fixture
+sweep, not anticipated in the plan**: `SmartPointerAnalyzer::getPointerType`'s
+suffix-match has no entry at all for a container type like `"std::vector<Node>"`
+(`pointerDecisions` is only ever keyed by genuine class names), and its
+not-found fallback unconditionally defaults to `PointerType::SHARED`. Applying
+the new blanket "SHARED argument never moves" rule without excluding container
+types made `vector_moved_into_call_rejected.clg` (`sink(v); v.size();`) flip
+from PASS to XFAIL — `v`'s type, `"std::vector<Node>"`, isn't a registered class
+name, so `getPointerType` fell through to its SHARED default and the new rule
+incorrectly treated the vector as never needing to move. Fixed by restricting
+the blanket rule to arguments whose declared type is a genuine `classNames_`
+entry (`classNames_.count(argType) > 0`) before consulting `getPointerType` at
+all — the vector-specific share logic (which already correctly handles a
+container's own move-vs-share question through `vectorMethodSharesArg`) is
+untouched and remains the only path for container arguments.
+
+### A pre-existing, unrelated bug found and deliberately left alone
+
+Writing the constructor-storage fixture surfaced a genuine, pre-existing bug with
+nothing to do with this step: a class with more than one constructor, or a single
+constructor with more than one parameter, has its later parameters silently
+dropped from the emitted C++ signature (confirmed on a stock two-parameter
+constructor with none of this step's changes applied, via `git stash`) — the
+parameter appears used in the constructor body (`this->w = other;`) but never
+declared in the signature, a guaranteed compile error. Out of scope for this
+step; the constructor-storage fixture
+(`param_stored_in_field_constructor_accepted.clg`) works around it by using a
+single-parameter constructor whose sole parameter is exactly the field being
+linked to, rather than fixing constructor-overload/multi-parameter emission.
+
+### Runtime proof, not just type-checking
+
+Given the previous step's lesson about compiling-but-not-matching, the primary
+fixture (`param_stored_in_field_accepted.clg`) is compiled AND actually run, not
+just checked with `-fsyntax-only`: `a.attach(b); b.attach(a); std::cout <<
+b.v;` must print `2`, not crash. It does — confirming all three modules (checker,
+pointer-type inference, emitter) actually agree at runtime, not just that each
+one's isolated logic looks locally correct.
+
+## Step 20 — Inheritance: flattening beats chain-walking, and two things users can't write
+
+CeeLing had no inheritance at all: no base clause, no `virtual`/`override`, no
+`ClassDeclaration::baseClass`. TODO.md had carried a designed-but-unimplemented
+entry for it since early on. Without it most real class hierarchies are
+inexpressible — a hard blocker for the YAML-parser milestone (a YAML node is
+naturally a polymorphic scalar/sequence/mapping hierarchy) and for the language
+being credible as "a safe subset of C++."
+
+### Measuring the blast radius first
+
+The decisive question wasn't "how do I parse a base clause" — it was "what breaks
+when a variable's class is no longer exactly its declared type." Counting the
+answer before designing anything: **~40 exact-class-match lookup sites** across four
+modules (`DanglingChecker` 4, `EscapeHatchChecker` 13, `AstEmitter` 7,
+`SmartPointerAnalyzer` 16). Every one asks "does class X have field/method Y" or
+"is X a known class," and every one silently becomes wrong under inheritance.
+
+Critically, the two failure modes are **not equally bad**, and noticing that shaped
+the priority:
+
+- `EscapeHatchChecker::isKnownCallable` fails **safe** — an inherited method isn't
+  found in the flat map, so `d.baseMethod()` is rejected by the
+  default-reject-unknown-calls rule. Annoying (valid code refused), not dangerous.
+- `AstEmitter::fieldType` fails **silently wrong** — an inherited field returns `""`,
+  so `exprObjectClass` concludes "not a class type" and emits `.` instead of `->` on
+  what is actually a smart pointer. A compile error at best; wrong code at worst.
+  This is the one that had to be right.
+
+### The structural finding that picked the design
+
+Reading all four collection passes side by side surfaced the thing that made this
+tractable: they are **identical in shape**. Every module builds its own private,
+*flat* `className -> members` map in a single pre-pass over `program.statements`
+(`EscapeHatchChecker::collectClasses`, `DanglingChecker::collectClassNames`,
+`AstEmitter::collectClassNames`, `SmartPointerAnalyzer::firstPassCollectReferences`).
+
+So rather than teach 40 lookup sites to walk a base chain — 40 chances to get it
+wrong, in four modules with different conventions — each collection pass instead
+visits classes **base-before-derived** and copies a base's already-flattened members
+down into its derived classes. Every downstream lookup then works **unchanged, with
+zero edits**. A derived member with the same name naturally overwrites the inherited
+entry, which is exactly correct shadowing.
+
+`class_hierarchy.h`'s `classesInBaseFirstOrder` provides that ordering once instead
+of it being re-derived (and re-bugged) four times. It's a new file rather than an
+addition to `library_summary.h` because that header is specifically about *std
+library* summaries — an AST-walking helper would muddy its purpose.
+
+`SmartPointerAnalyzer` is the one that doesn't use a flat map: it keys everything by
+`(scope, class, variable)`, so "flattening" there means **re-registering** a base's
+fields under the derived class's own scope. Without that, an inherited field has no
+entry at all and `getPointerType` falls through to its SHARED default — silently
+making every inherited field a `shared_ptr` regardless of actual ownership shape.
+
+### Two things the compiler generates because users can't
+
+The most useful discovery of this step: **CeeLing has no destructor syntax at all.**
+That reads like a gap; it's an advantage. Because CeeLing generates every destructor
+itself, it can unconditionally emit `virtual ~Base() = default;` for any class used
+as a base — closing the classic UB of deleting a Derived through a base pointer
+**by construction**, with no user-facing syntax and no way to forget it. That's a
+genuine memory-safety hole (exactly the kind CLAUDE.md's contract must not have),
+not a style nicety. It also removes half of Phase 2.7's virtual-call trap: there are
+no destructor bodies to check, only constructor bodies.
+
+The second generated member came from a problem the plan did **not** anticipate,
+found only by compiling the first working output: a derived constructor implicitly
+calls the base's *no-arg* constructor, but declaring any constructor (e.g.
+`Animal(int)`) suppresses C++'s implicit default one. Real C++ solves this with a
+base-initializer list (`Dog(int a) : Animal(a)`), which CeeLing has no syntax for —
+and deliberately still doesn't: adding one would grow the surface syntax CLAUDE.md
+explicitly tries to keep small. Instead the emitter generates a `protected` no-arg
+constructor for every base, and a derived constructor simply assigns the inherited
+fields directly in its own body (`age = a;` already lowers to `this->age = a;`
+thanks to flattening). `protected` keeps it an implementation detail — it exists for
+derived classes to chain through, not for users to call.
+
+### Declared type vs. constructed type
+
+`AstEmitter::factoryFor` had always assumed these were the same string, because
+before inheritance they always were. `Animal a = new Dog();` breaks that: the object
+constructed is a `Dog` (`make_*<Dog>`), but the smart-pointer **kind** must come from
+`a`'s own declared type `Animal` — asking the analyzer about `Dog` consults a
+different variable's ownership decisions entirely. Getting it backwards emits
+`std::unique_ptr<Animal> a = std::make_shared<Dog>(3);`, which does not compile. The
+fix is a fourth `declaredType` parameter defaulting to empty (meaning "same as
+className"), so every non-inheriting call site is untouched.
+
+### Runtime proof, again
+
+Both claims this step makes are runtime properties that `-fsyntax-only` cannot
+check, so both fixtures are **executed**:
+`inherit_virtual_dispatch_accepted.clg` must print `woof`, not `generic` — code that
+compiles but calls the base version would pass a compile-only check while being
+exactly the bug the feature exists to prevent. And
+`inherit_virtual_destructor_accepted.clg` is both run and grepped for
+`virtual ~Shape() = default;` in the emitted output, since the safety claim there is
+about what was generated, not merely that the program was accepted. This is the same
+discipline Step 18's `throw`-matching bug and Step 19 established.
+
+A final check worth doing explicitly: a non-inheriting program's emitted C++ contains
+**zero** occurrences of `virtual` or `: public`. Everything here is additive.

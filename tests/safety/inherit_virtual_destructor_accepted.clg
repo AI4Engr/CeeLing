@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ reason: destroying a Derived through a base-typed owner is undefined behavior
+//@ reason: unless the base has a virtual destructor. CeeLing has NO destructor
+//@ reason: syntax, so a user cannot write one (or forget to) -- AstEmitter emits
+//@ reason: `virtual ~Base() = default;` for every class used as a base, closing this
+//@ reason: hole BY CONSTRUCTION rather than by a rule users must remember.
+//
+// Verify by eye that the generated C++ actually contains `virtual ~Shape() = default;`
+// -- the safety claim here is about the emitted output, not just about the program
+// being accepted. The auto-generated protected no-arg base constructor is also
+// exercised: Circle's constructor implicitly chains through it, and CeeLing has no
+// base-initializer-list syntax (`Circle(int r) : Shape(r)`) to do it explicitly.
+
+class Shape {
+public:
+    int size;
+    Shape(int s) { size = s; }
+    virtual int area() {
+        return 0;
+    }
+};
+
+class Circle : public Shape {
+public:
+    Circle(int s) { size = s; }
+    int area() override {
+        return size * size;
+    }
+};
+
+int main() {
+    Shape s = new Circle(4);
+    std::cout << s.area() << std::endl;
+    return 0;
+}
