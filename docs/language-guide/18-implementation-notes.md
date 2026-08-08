@@ -607,19 +607,71 @@ the fix doesn't over-correct — the same rebind pattern but with *both* branche
 rebinding `obs` (to different owners) must still be rejected, since that really is
 ambiguous.
 
-### A separate gap this surfaced, not fixed here: `ref` rebinding has no C++ lowering
+### A separate gap this surfaced: `ref` rebinding had no C++ lowering (now fixed)
 
 Writing the false-positive fixture above surfaced an unrelated, pre-existing problem:
-`obs = b;` (rebinding a `ref` observer to a different owner) cannot be emitted as
-valid C++ at all. `AstEmitter` lowers `ref T x = y;` to a native reference, `T& x =
+`obs = b;` (rebinding a `ref` observer to a different owner) could not be emitted as
+valid C++ at all. `AstEmitter` lowered `ref T x = y;` to a native reference, `T& x =
 *y;` — and a native C++ reference is bound for its entire lifetime; there is no syntax
 to make an existing `T&` refer to something else afterward. `obs = b;` in the
-generated code is unavoidably interpreted by C++ as *assignment through* the
+generated code was unavoidably interpreted by C++ as *assignment through* the
 reference (copying `b`'s contents into whatever `obs` already refers to), which is not
-what CeeLing's rebind semantics mean and typically doesn't even type-check (a smart
+what CeeLing's rebind semantics mean and typically didn't even type-check (a smart
 pointer has no `operator=` accepting another smart pointer's pointee). The dangling
-checker's model of rebinding is correct — proven by the two fixtures above, which only
-assert `cling.exe`'s own exit code and don't require the emitted C++ to compile — but
-`AstEmitter`'s `ref`-to-`T&` lowering needs a different representation (most likely a
-pointer or an `optional<reference_wrapper<T>>`-shaped construct) to actually support
-rebinding. Tracked separately in `TODO.md`; not attempted in this pass.
+checker's own model of rebinding was already correct (`observerOf_[name] = newOwner`,
+with no move applied to the RHS); only the *emitter* was wrong.
+
+## Step 12 — `ref` observers: from `T&` to `T*`
+
+Fixed by changing what a `ref` observer lowers to. A native reference can't be
+rebound; a raw pointer can. So:
+
+```
+ref T x = y;      ->   T* x = (y).get();
+x = z;  (rebind)  ->   x = (z).get();
+ref T x = nullptr;  ->  T* x = nullptr;
+```
+
+This is not a reopening of the raw-pointer ban (Chapter 17, hatch #15/#14) — that
+ban is about what a user can *write* in a `.clg` file, checked by
+`EscapeHatchChecker` against the user's own AST, and it is completely untouched by
+this change. What changed is a codegen decision inside `AstEmitter`, for a construct
+(`ref`) whose safety the dangling checker has already fully established before any
+C++ is emitted. The raw pointer here is invisible from CeeLing source, unreachable
+from CeeLing source, and cannot be extended into a dangling one by anything the user
+writes — it exists purely as an implementation detail of a proof that already
+happened. Chapter 17 now has a short note making this "source vs. generated code"
+distinction explicit, since a reader inspecting `.cpp` output and seeing a raw
+pointer might otherwise wonder if the guarantee had quietly been dropped.
+
+The `.get()` calls in the generated code are the same story: `EscapeHatchChecker`
+rejects `.get()` in `.clg` source (Chapter 17), but that check runs on user-authored
+AST nodes and has no opinion about what `AstEmitter` writes into `.cpp` output — the
+compiler already calls `std::make_unique`/`std::make_shared` directly for `new`,
+which is exactly this same category of "internal codegen, not a user-reachable
+construct."
+
+Two smaller things fell out of the same fix, for free:
+
+- **Member access on observers now needs `->` in the generated code**, not `.`
+  (`obs.v` -> `obs->v`), since `obs` is now a pointer. This is handled by
+  `exprObjectClass` — the single function that already decides `.` vs `->` for smart
+  pointers — recognizing observer names via a new `observerClass_` map, populated
+  alongside the existing `VarKind::Reference` tag (which, it turned out, had been set
+  on declaration but never actually read by anything until now). Source-level syntax
+  doesn't change at all; `obs.v` is still written with a dot.
+- **A latent null-dereference bug disappeared as a side effect.** `ref Node b =
+  nullptr;` used to lower to `Node& b = *(nullptr);` — dereferencing a null pointer,
+  undefined behavior if it were ever compiled. This had never surfaced in a compiled
+  fixture because every existing `nullptr`-observer fixture
+  (`observer_dangles_after_scope.clg`) is an `//@ expect: reject` case, so codegen
+  never actually ran on it. With the `T*` lowering, `ref Node b = nullptr;` is simply
+  `Node* b = nullptr;` — valid, unremarkable C++.
+  `tests/safety/observer_nullptr_rebind_accepted.clg` is the first accept-case
+  fixture to exercise `ref ... = nullptr;` through to compiled output, closing the
+  gap for real rather than leaving it merely untested.
+
+`tests/safety/branch_merge_no_false_positive_accepted.clg` (from Step 11, exercising
+the rebind) now compiles under g++ where it previously only passed the dangling
+checker's own exit-code check — direct proof the fix closes the gap Step 11 left
+open.

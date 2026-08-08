@@ -105,6 +105,20 @@ dangling check can be bypassed — so sealing it is what makes Chapters 11–16 
 anything. A class that defines its own `get()` method is unaffected — see
 `tests/safety/get_on_user_method_accepted.clg`.
 
+**This rule is about source code the user writes, not about what the compiler
+generates.** `.get()` and raw pointers stay strictly forbidden anywhere in a `.clg`
+file — `EscapeHatchChecker` runs on the user's AST and knows nothing about codegen.
+But the generated `.cpp` output is free to use raw pointers internally as an
+implementation detail, the same way it already calls `std::make_unique`/
+`std::make_shared` directly rather than routing through anything CeeLing-visible. The
+concrete example: a `ref` observer is lowered to a raw `T*` in the generated C++ (not
+a native `T&`, which can't be rebound — see Chapter 18's implementation notes),
+extracted via a compiler-emitted `.get()` call on the smart pointer being observed.
+This is safe *because* the dangling checker has already proven, on the CeeLing side,
+that the observer cannot outlive what it observes — the raw pointer never appears in
+source, is never reachable from source, and exists only as generated-code plumbing
+for a construct whose safety was already established before any C++ was emitted.
+
 ### Accepted — a user's own `get()` method
 
 ```

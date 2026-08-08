@@ -2,6 +2,13 @@
 
 namespace cling {
 
+namespace {
+bool isNullptrLiteral(const Expression* expr) {
+    auto id = dynamic_cast<const Identifier*>(expr);
+    return id != nullptr && id->name == "nullptr";
+}
+} // namespace
+
 std::string AstEmitter::emit(const Program& program) {
     classNames_.clear();
     varKinds_.clear();
@@ -95,8 +102,14 @@ std::string AstEmitter::exprObjectClass(const Expression* expr) const {
             return isClassType(ft) ? ft : "";
         }
         // A smart-pointer local/parameter.
-        auto it = varClass_.find(id->name);
-        return it == varClass_.end() ? "" : it->second;
+        if (auto it = varClass_.find(id->name); it != varClass_.end()) {
+            return it->second;
+        }
+        // A `ref` observer (raw-pointer lowering -- also needs `->`).
+        if (auto it = observerClass_.find(id->name); it != observerClass_.end()) {
+            return it->second;
+        }
+        return "";
     }
     if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
         // The class of `a.b` is the declared type of field b in a's class.
@@ -185,6 +198,7 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     // for field access inside a method/constructor.
     varKinds_.clear();
     varClass_.clear();
+    observerClass_.clear();
     const std::string savedClass = currentClass_;
     currentClass_ = ownerClass;
 
@@ -260,10 +274,20 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
 
     if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
         if (decl->isObserver) {
-            // Observer: `ref T b = a;` -> `T& b = *a;` (native reference to the object).
+            // Observer: `ref T b = a;` -> `T* b = (a).get();`. A raw pointer (not a
+            // native `T&`) so it can be REBOUND later (`b = c;`, see the
+            // AssignmentStatement branch below) -- a `T&` cannot be rebound once
+            // initialized, which is exactly the gap this lowering closes. `.get()`
+            // here is compiler-generated code extracting the address from a smart
+            // pointer the dangling checker has already proven safe to observe, not a
+            // user-authored escape hatch (EscapeHatchChecker still rejects source-
+            // level `.get()` -- see Chapter 17's note on this distinction).
             noteVar(decl->identifier, VarKind::Reference);
-            out << pad << decl->type << "& " << decl->identifier << " = "
-                << "*(" << emitExpression(decl->expression.get()) << ");\n";
+            observerClass_[decl->identifier] = decl->type;
+            std::string rhs = isNullptrLiteral(decl->expression.get())
+                ? "nullptr"
+                : "(" + emitExpression(decl->expression.get()) + ").get()";
+            out << pad << decl->type << "* " << decl->identifier << " = " << rhs << ";\n";
         } else if (isClassType(decl->type)) {
             const std::string ptr = smartPointerType(decl->type, decl->identifier);
             std::string rhs;
@@ -297,11 +321,14 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
                                                    : assign->variable;
         }
         std::string rhs;
-        const bool rhsIsNullptr = [&] {
-            auto id = dynamic_cast<const Identifier*>(assign->expression.get());
-            return id != nullptr && id->name == "nullptr";
-        }();
-        if (auto neww = dynamic_cast<const NewExpression*>(assign->expression.get())) {
+        const bool rhsIsNullptr = isNullptrLiteral(assign->expression.get());
+        if (!memberTarget && kindOf(assign->variable) == VarKind::Reference) {
+            // `obs = b;` REBINDS the observer to a different object -- it does not
+            // move/consume `b` (matches DanglingChecker's model: rebinding an
+            // observer never marks the RHS moved-from). Lowered the same way as the
+            // declaration: `.get()` extracts the new address, or `nullptr` directly.
+            rhs = rhsIsNullptr ? "nullptr" : "(" + emitExpression(assign->expression.get()) + ").get()";
+        } else if (auto neww = dynamic_cast<const NewExpression*>(assign->expression.get())) {
             // `target = new T(...)` -> make_*<T>(...) with the target field's ptr kind.
             rhs = factoryFor(neww->className, ptrVar, neww->arguments);
         } else if (rhsIsNullptr && !ptrVar.empty() &&

@@ -111,7 +111,7 @@ PASS=22, XFAIL=0, FAIL=0.
   be accepted.
 
 Phase 2's branch-merge precision fix added 2 more fixtures:
-**PASS=24, XFAIL=0, FAIL=0.**
+PASS=24, XFAIL=0, FAIL=0.
 
 - `branch_merge_no_false_positive_accepted.clg` — an observer is rebound inside the
   `if` branch only; the `else` branch uses it observing its original, still-alive
@@ -122,3 +122,20 @@ Phase 2's branch-merge precision fix added 2 more fixtures:
   *different* owners. Positive control proving the fix doesn't over-correct: this case
   is genuinely ambiguous (a later use can't know which branch ran) and must stay
   rejected, per CLAUDE.md's conservative-reject rule.
+
+The `ref` observer `T*` lowering fix (Ch. 18, Step 12) added 1 more fixture:
+**PASS=25, XFAIL=0, FAIL=0.**
+
+- `observer_nullptr_rebind_accepted.clg` — a `ref` observer starts null, then is
+  rebound to a live owner before use. Proves the raw-pointer lowering handles both
+  `nullptr` and rebinding correctly; also the first accept-case fixture to exercise
+  `ref ... = nullptr;` through to compiled C++ (previously only reject-case fixtures
+  used that pattern, so a latent null-dereference bug in the old `T&` lowering never
+  actually got compiled).
+
+**Note on compiled-output verification**: every `//@ expect: accept` fixture's
+generated C++ has been spot-checked to compile clean under g++
+(`-std=c++17 -fsyntax-only`) as of the `ref`-lowering fix, including
+`branch_merge_no_false_positive_accepted.clg`, which previously only asserted
+`cling.exe`'s own exit code (the rebind it exercises had no valid C++ lowering until
+Step 12 landed).

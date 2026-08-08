@@ -15,9 +15,14 @@ namespace cling {
 // structurally rather than by fragile text substitution:
 //   * object variables      -> the smart-pointer type chosen by SmartPointerAnalyzer
 //   * `new T(...)`           -> std::make_unique / std::make_shared<T>(...)
-//   * `ref T x = y;`         -> `T& x = *y;`   (observer = native reference)
+//   * `ref T x = y;`         -> `T* x = (y).get();`   (observer = raw pointer, so it
+//     can be rebound -- `x = z;` -> `x = (z).get();` -- which a native `T&` cannot be.
+//     This is compiler-internal codegen for a construct the dangling checker has
+//     already proven safe, not a reopening of the source-level raw-pointer ban; see
+//     Chapter 17's note on the distinction.
 //   * `std::cout << e;`      -> emitted verbatim (native stream output, no `print`)
-//   * member access `a.b`    -> `a->b` for smart-pointer objects
+//   * member access `a.b`    -> `a->b` for smart-pointer objects AND `ref` observers
+//     (source stays `.` either way; exprObjectClass drives the lowering)
 //
 // EXPERIMENTAL / opt-in via the `--emit-ast` CLI flag; the regex-based CppGenerator
 // remains the default. Introduced incrementally.
@@ -94,8 +99,9 @@ private:
     // How a variable is represented in the generated C++, so member access and moves
     // are lowered correctly.
     enum class VarKind {
-        SmartPtr,   // std::unique_ptr/shared_ptr<T> -> access via `->`, movable
-        Reference,  // ref observer, lowered to `T&`   -> access via `.`
+        SmartPtr,   // std::unique_ptr/shared_ptr<T> -> access via `->` (generated)
+        Reference,  // ref observer, lowered to `T*`  -> access via `->` (generated);
+                    // source-level access stays `.` either way (see exprObjectClass)
         Value       // int/float/... or non-pointer    -> access via `.`
     };
 
@@ -106,6 +112,8 @@ private:
     std::set<std::string> classNames_;
     std::map<std::string, VarKind> varKinds_;  // variable representation in current unit
     std::map<std::string, std::string> varClass_;  // smart-ptr local/param -> class name
+    // ref-observer local/param -> class name (raw-pointer lowering; see VarKind::Reference).
+    std::map<std::string, std::string> observerClass_;
     // Per-class field name -> declared type (for `this->` and nested `->` resolution).
     std::map<std::string, std::map<std::string, std::string>> classFields_;
     std::string currentClass_;  // class whose method is being emitted ("" = free fn)

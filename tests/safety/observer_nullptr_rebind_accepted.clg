@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ reason: `b` starts as a null observer, then is rebound to a live owner before use.
+//
+// Proves the `ref`-observer raw-pointer lowering handles both `nullptr` and rebinding
+// correctly. Before the T* lowering (see Ch. 18), `ref Node b = nullptr;` compiled to
+// `Node& b = *(nullptr);` -- a null-pointer dereference, undefined behavior -- but this
+// never surfaced in a compiled fixture because every prior nullptr-observer fixture
+// was an `//@ expect: reject` case (codegen never ran on it). This fixture is the
+// first ACCEPT case exercising `ref ... = nullptr;`, so it's the first to actually
+// compile that path and prove the fix.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    ref Node b = nullptr;
+    Node a = new Node(1);
+    b = a;
+    std::cout << b.v << std::endl;
+    return 0;
+}
