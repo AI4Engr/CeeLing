@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ reason: positive control -- adding std::stoi/std::stod to the allow-list is
+//@ reason: NOT a blanket "any qualified call is fine" hole. An unregistered
+//@ reason: qualified free function still hits the default-reject-unknown-calls
+//@ reason: path (CLAUDE.md "default-reject, never default-allow") exactly like
+//@ reason: an unregistered bare-name call already did.
+
+int main() {
+    string s = "42";
+    int x = std::notARealFunction(s);
+    return 0;
+}

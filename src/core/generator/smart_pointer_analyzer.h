@@ -66,6 +66,23 @@ public:
     // default when no push_back call forces sharing)?
     bool containerElementIsShared(const std::string& containerVarName) const;
 
+    // A method's RETURN pointer kind, INFERRED (never annotated -- see
+    // inferAliasReturningMethods for the exact rule) from its body's own
+    // shape: a method whose every `return` hands back `this` or an object-
+    // typed field (never `new T(...)`) is classified ALIAS_RETURNING and gets
+    // SHARED here. Deliberately defaults to UNIQUE (not SHARED, unlike
+    // getPointerType's field/local fallback), so an ordinary object-returning
+    // method keeps today's unique_ptr/move-return behavior completely
+    // unchanged unless its body actually matches the alias-returning shape.
+    PointerType getMethodReturnPointerType(const std::string& className,
+                                           const std::string& methodName) const;
+
+    // Does `className` need `std::enable_shared_from_this<className>` as a
+    // compiler-generated base? True iff some ALIAS_RETURNING method's body
+    // contains a bare `return this;` -- auto-derived from the same inference
+    // pass, no user-facing annotation exists for this at all.
+    bool classNeedsSharedFromThis(const std::string& className) const;
+
 private:
     // First pass: collect all reference relationships
     void firstPassCollectReferences(const Program& program);
@@ -106,6 +123,26 @@ private:
     // or constructor-call (NewExpression) arguments at all, and nothing else in
     // this class needs that walk.
     void promoteSharedCallArguments(const Program& program);
+
+    // INFERS which methods return an ALIAS (shared_ptr) rather than transfer
+    // ownership (unique_ptr, the default), purely from each method body's own
+    // shape -- no annotation. A method is classified ALIAS_RETURNING iff every
+    // reachable `return` in it hands back `this`, an object-typed field of the
+    // same class, or a call to ANOTHER already-classified alias-returning
+    // method (the recursive-walker shape, e.g. yaml-cpp-style
+    // `return child.findOrAppendSibling(key);`). Runs as a genuine small
+    // fixed-point over each class's own methods (a "leaf" method like
+    // `siblingAt` must be classified before a caller like `operator[]` that
+    // depends on it), self-contained (own data, own recursive statement walk,
+    // mirrors scanContainerElementKinds's shape) -- see the .cpp for the exact
+    // per-round algorithm. Writes classification into methodReturnKinds_, and
+    // a field found under case (b) into explicitHints (SHARED) so it flows
+    // through the exact same lookup path every other field decision already
+    // uses. Also auto-derives classesNeedingSharedFromThis_ for any
+    // alias-returning method whose body contains a bare `return this;`. Runs
+    // BEFORE secondPassDeterminePointerTypes (so its explicitHints writes are
+    // picked up by that pass's applyExplicitHints call).
+    void inferAliasReturningMethods(const Program& program);
 
     void scanSource(const std::string& source);
     void parseAnnotationLine(const std::string& trimmedLine, int lineNumber);
@@ -153,6 +190,17 @@ private:
     // fields under each derived class's own scope (see the comment there for why
     // this analyzer needs per-scope re-registration rather than a shared flat map).
     std::map<std::string, std::map<std::string, std::string>> classMembersByClass_;
+
+    // "Class.method" -> the method's INFERRED return pointer kind (see
+    // inferAliasReturningMethods). Absent means "not alias-returning" --
+    // getMethodReturnPointerType then defaults to UNIQUE, NOT SHARED, unlike
+    // the field/local pointerDecisions fallback.
+    std::map<std::string, PointerType> methodReturnKinds_;
+
+    // Classes needing `std::enable_shared_from_this<T>` as a compiler-generated
+    // base, auto-derived (never user-annotated) from an alias-returning
+    // method's body containing `return this;`.
+    std::set<std::string> classesNeedingSharedFromThis_;
 };
 
 } // namespace cling

@@ -743,8 +743,17 @@
           "name": "type"
         },
         {
-          "type": "SYMBOL",
-          "name": "identifier"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "identifier"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "operator_method_name"
+            }
+          ]
         },
         {
           "type": "CHOICE",
@@ -816,6 +825,19 @@
         {
           "type": "STRING",
           "value": "}"
+        }
+      ]
+    },
+    "operator_method_name": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "operator[]"
+        },
+        {
+          "type": "STRING",
+          "value": "operator="
         }
       ]
     },
@@ -1588,6 +1610,10 @@
             {
               "type": "SYMBOL",
               "name": "identifier"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "scoped_identifier"
             },
             {
               "type": "SYMBOL",

@@ -151,6 +151,15 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                 }
             }
         }
+        // See AstEmitter::collectClassNames's identical pre-count -- only a
+        // genuinely overloaded method name (declared more than once) needs the
+        // arity-qualified key; every other method keeps its plain bare-name key.
+        std::map<std::string, int> nameCounts;
+        for (const auto& member : cls->members) {
+            if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                if (method->specializationArg.empty()) nameCounts[method->name]++;
+            }
+        }
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
                 // A specialization registers under its synthetic key ("as<int>"),
@@ -158,9 +167,18 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                 // reasoning. A call resolves to the right specialization's
                 // params/summary only when its own templateArg constructs the
                 // matching key (see resolveCallReturnAlias/applyCallArgMoves below).
-                const std::string key = method->specializationArg.empty()
-                    ? method->name
-                    : specializationKey(method->name, method->specializationArg);
+                // An OVERLOADED (same-name, different-arity) ordinary method keys
+                // by overloadKey(name, paramCount) instead, so a second
+                // declaration doesn't silently overwrite the first's params/
+                // summary (see class_hierarchy.h's overloadKey).
+                std::string key;
+                if (!method->specializationArg.empty()) {
+                    key = specializationKey(method->name, method->specializationArg);
+                } else if (nameCounts[method->name] > 1) {
+                    key = overloadKey(method->name, method->parameters.size());
+                } else {
+                    key = method->name;
+                }
                 params[key] = method->parameters;
                 summaries_[summaryKey(cls->name, key)] =
                     deriveSummaryForBody(method->body, method->parameters);
@@ -191,6 +209,30 @@ std::string DanglingChecker::asObjectLocalName(const Expression* expr) const {
         }
     }
     return {};
+}
+
+bool DanglingChecker::isOperatorAssignMutation(const AssignmentStatement& assign) const {
+    // Only a bare-identifier target reaches here (member/subscript targets are
+    // handled by earlier branches); `assign->target` is null in that case, so
+    // `assign.variable` is the whole LHS name.
+    auto typeIt = localType_.find(assign.variable);
+    if (typeIt == localType_.end()) return false;
+    const std::string& lhsClass = typeIt->second;
+    if (classNames_.find(lhsClass) == classNames_.end()) return false;  // not a class (container/primitive)
+    auto methodIt = classMethodParams_.find(lhsClass);
+    if (methodIt == classMethodParams_.end() || methodIt->second.count("operator=") == 0) {
+        return false;  // this class has no operator= -- ordinary reassignment path
+    }
+    // Same-class RHS (`n = otherNodeLocal;`) is ordinary ownership transfer, not a
+    // mutation -- only a type-mismatched RHS (RHS isn't an object local of this
+    // same class) means operator=.
+    if (auto rhsId = dynamic_cast<const Identifier*>(assign.expression.get())) {
+        auto rhsTypeIt = localType_.find(rhsId->name);
+        if (rhsTypeIt != localType_.end() && rhsTypeIt->second == lhsClass) {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::string DanglingChecker::asContainerSubscript(const Expression* expr) const {
@@ -233,10 +275,17 @@ std::string DanglingChecker::resolveCallReturnAlias(const Expression* expr) cons
         if (clsIt == classMethodParams_.end()) return {};
         // A call carrying a type argument resolves to the specialization's own
         // key -- see EscapeHatchChecker::isKnownCallable's identical reasoning.
-        const std::string methodKey = call->templateArg.empty()
+        std::string methodKey = call->templateArg.empty()
             ? member->member
             : specializationKey(member->member, call->templateArg);
         auto paramIt = clsIt->second.find(methodKey);
+        if (paramIt == clsIt->second.end() && call->templateArg.empty()) {
+            // Same overload-key retry as AstEmitter::calleeParam -- the bare name
+            // may have been registered under an arity key instead (deriveSummaries
+            // only does this for a genuinely overloaded method name).
+            methodKey = overloadKey(member->member, call->arguments.size());
+            paramIt = clsIt->second.find(methodKey);
+        }
         if (paramIt == clsIt->second.end()) return {};
         params = &paramIt->second;
         auto sumIt = summaries_.find(summaryKey(typeIt->second, methodKey));
@@ -701,6 +750,16 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             } else {
                 observerOf_.erase(assign->variable);
             }
+        } else if (isOperatorAssignMutation(*assign)) {
+            // `n = value;` where `n`'s declared type is a class that declares its
+            // own `operator=`, and `value` is NOT itself the same class (e.g.
+            // `n = "text";`): this is a MUTATING method call on the still-alive
+            // object (`n->operator=(value)`), not an ownership handoff -- `n`'s
+            // identity does not change, so none of the owner-death machinery below
+            // applies. The RHS was already use-checked above; if it's an object
+            // local of a DIFFERENT class this can't happen (AstEmitter/EscapeHatch-
+            // Checker's C++ type system would reject the resulting call at compile
+            // time, same as any other type-mismatched call argument).
         } else {
             // Reassigning an OWNER frees the object it used to hold. Any observer of
             // that owner is now pointing at a destroyed object → mark it dangling.

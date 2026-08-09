@@ -453,3 +453,125 @@ downstream lookups unchanged" pattern across all four analysis modules; template
 reused the identical per-method map structure via a synthetic lookup key
 (`specializationKey`, `class_hierarchy.h`) instead of adding new data structures
 anywhere.
+
+Qualified free-function calls (`std::stoi`/`std::stod`) added 2 more fixtures:
+**PASS=60, XFAIL=0, FAIL=0.**
+
+- `qualified_call_known_accepted.clg` — `std::stoi`/`std::stod` on the new
+  library allow-list (`library_summary.h`'s `isKnownQualifiedFreeFunction`).
+  Run, prints `42 3.5`.
+- `qualified_call_unknown_rejected.clg` — positive control: an unregistered
+  qualified free function still hits the default-reject-unknown-calls path —
+  adding two names to the allow-list is not a blanket "any `std::` call is
+  fine" hole.
+
+Value-returning `operator[]`/`operator=` overloading added 5 more fixtures:
+**PASS=65, XFAIL=0, FAIL=0.**
+
+- `operator_subscript_read_accepted.clg` — a class's own `operator[]` called
+  via `n[key]` in read position, routed through as an ordinary method call
+  (`n->operator[](key)`) since `n` is a smart pointer with no `operator[]` of
+  its own. Run, prints `42`.
+- `operator_assign_value_accepted.clg` — `n = "text";` on a class-typed `n`
+  whose class declares `operator=(string)`: a MUTATING call
+  (`n->operator=(...)`), not ownership reassignment — `n` is read again
+  right after via `.get()`, proving it's still the same live object. Run,
+  prints `99`.
+- `operator_subscript_write_rejected.clg` — positive control: `n[key] =
+  value;` on a class-typed receiver is rejected even though `operator[]`
+  itself exists and works in read position — real C++ needs a
+  REFERENCE-returning `operator[]` for the subsequent `=` to assign through,
+  and CeeLing has no `ref` return type yet. Rejected with a diagnostic
+  naming that limitation, not silently mis-emitted.
+- `operator_subscript_container_unaffected_accepted.clg` — regression proof:
+  ordinary `std::vector`/`std::map` subscript (read AND write) coexists with
+  a class's own `operator[]` in the same program with no cross-contamination
+  between the container and class-typed dispatch branches. Run.
+- `operator_assign_field_store_unaffected_accepted.clg` — **a real bug found
+  while re-testing the actual yaml-cling `yaml_node.clg`** against this
+  feature, not caught by the fixtures written before that re-test: a
+  bare-identifier FIELD store (`child = nullptr;`, implicit `this`, inside a
+  constructor) on a field whose class happens to declare `operator=` was
+  wrongly routed through the new operator= path
+  (`this->child->operator=(nullptr);`, which does not compile — `unique_ptr`
+  has no such overload) instead of an ordinary field store
+  (`this->child = nullptr;`). Fixed by excluding `isCurrentField` targets
+  from `AstEmitter`'s operator= detection; `DanglingChecker` was already safe
+  here since its equivalent `isBareFieldStore` check runs first. Run, prints
+  `1 0`.
+
+**Re-tested against the actual `yaml-cling/src-clg/yaml_node.clg`** after both
+slices landed: it now parsed and reached codegen (previously failed at
+`std::stoi` before either slice existed), but at that point still failed to
+COMPILE — stopped exactly at the reference-return shape (`return
+this->child;`/`return this;` from a method declared to return `Node`, lowered
+to `unique_ptr<Node>`, which is move-only and cannot be returned as a copy).
+This was the honest stopping point at the time — closed by the alias-return
+inference work below, landed in the same increment as the port's completion.
+
+Alias-returning-method INFERENCE (Ch. 18 Step 23) added 5 more fixtures:
+**PASS=70, XFAIL=0, FAIL=0.**
+
+A method whose body ONLY ever returns `this`, a same-class object-typed
+field, or a call to another already-classified alias-returning method (never
+`new T(...)`) is automatically classified to return `shared_ptr<T>` instead
+of the default `unique_ptr<T>` — purely structural inference over the method
+body, no annotation (a `//@ptr shared Class.method` hint was prototyped
+first and explicitly rejected: CLAUDE.md's "ownership is inferred, not
+annotated" rule applies to method returns exactly as it does to fields).
+This closes the reference-return need noted above WITHOUT a `ref` return
+type ever being built — yaml-cpp's `operator[]` returning an alias into the
+tree falls out of the existing smart-pointer-kind machinery once extended to
+methods.
+
+- `shared_return_alias_accepted.clg` — a method returning a same-class field
+  is inferred `shared_ptr`; mutating the result mutates the field itself.
+  Run, prints `77`.
+- `shared_return_this_accepted.clg` — `return this;` is inferred `shared_ptr`
+  and emits `shared_from_this()` (needs `std::enable_shared_from_this<T>`,
+  auto-added), NOT a raw `shared_ptr<T>(this)` — confirmed via direct probe
+  the latter compiles but creates a SECOND, independent control block (a
+  genuine double-free). Run, prints `1`.
+- `shared_return_inference_unaffected_accepted.clg` — regression proof: a
+  class with an alias-returning method ALSO declares an ordinary
+  `new`-returning method; the ordinary one stays `unique_ptr`, completely
+  unaffected by its sibling's inferred classification. Run, prints `5 9`.
+- `shared_return_namespaced_class_accepted.clg` — **a real bug found while
+  re-testing the actual yaml_node.clg**: the inference pass wrote its
+  findings under a class's bare name only (`"Node"`), never the
+  namespace-qualified one (`"YAML::Node"`) a namespaced local's declared
+  type actually uses, so `root["name"]` silently kept emitting `unique_ptr`
+  and failed to compile. Fixed with the same dual-registration every other
+  collection pass in this codebase already needed for namespaced classes.
+  Run, prints `5`.
+- `operator_subscript_two_overloads_accepted.clg` — the real yaml-cpp shape
+  (`operator[](string)` + `operator[](int)` on one class) no longer collide
+  in `classMethodParams_`'s move/pointer-kind bookkeeping (a real,
+  confirmed-but-not-yaml_node.clg-triggering bug: real C++ overload
+  resolution still picked the correct body regardless, but the checkers'
+  own internal state was corrupted for any overload taking an object-typed
+  argument). Fixed with `overloadKey(methodName, paramCount)`
+  (`class_hierarchy.h`). Run, prints `10 15`.
+
+**A second real bug found and fixed** during the same re-test, before the
+namespaced-class one above: a bare-identifier FIELD store (`child =
+nullptr;`, implicit `this`, inside `Node`'s own constructor) was wrongly
+routed through the alias-return machinery instead of an ordinary field
+store. Same root cause and same fix shape as `operator_assign_field_store_
+unaffected_accepted.clg` above (excluding `isCurrentField` targets), applied
+this time to `isSharedReturningCall`'s local-declaration companion check
+rather than the `operator=` detection.
+
+**The real end-to-end proof**: `yaml-cling/src-clg/yaml_node.clg`, entirely
+UNCHANGED (zero ownership annotations, matching its own header comment "NO
+ownership annotations — inference decides"), now both COMPILES and RUNS
+correctly. A driver program builds a small map and sequence by hand, reads
+them back through `.as<string>()`/`.as<int>()`/`operator[]`/`size()`, and
+prints correct output — verified via
+`yaml-cling/tests/run_node_smoke_rust_backend.sh` against
+`expected_node_smoke_rust_backend.txt`. One honestly-stated remaining
+limitation surfaced while writing the driver (not a `yaml_node.clg`-specific
+gap): a method call chained directly onto a subscript/call result
+(`root["name"].Scalar()`) is rejected, since every checker does lightweight,
+non-full-type-inference resolution — worked around with an intermediate
+variable at each chaining point, tracked as `yaml-cling/notes/GAPS.md`'s RB5.

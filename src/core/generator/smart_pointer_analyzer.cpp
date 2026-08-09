@@ -145,11 +145,20 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
 
     containerElementShared_.clear();
     classMembersByClass_.clear();
+    methodReturnKinds_.clear();
+    classesNeedingSharedFromThis_.clear();
 
     firstPassCollectReferences(program);
     if (!source.empty()) {
         scanSource(source);
     }
+    // Runs BEFORE secondPassDeterminePointerTypes: a field this pass decides
+    // needs SHARED (because some method returns it as an alias) writes into
+    // explicitHints, which secondPass's applyExplicitHints call then picks up
+    // through the exact same lookup path a real //@ptr hint would use --
+    // ownership is INFERRED here, never user-annotated (CLAUDE.md), but reuses
+    // the hint mechanism's plumbing rather than adding a parallel one.
+    inferAliasReturningMethods(program);
     secondPassDeterminePointerTypes();
 
     // Container element-kind scan runs AFTER the two-pass decision above, since it
@@ -256,6 +265,16 @@ bool SmartPointerAnalyzer::containerElementIsShared(const std::string& container
     return it != containerElementShared_.end() && it->second;
 }
 
+PointerType SmartPointerAnalyzer::getMethodReturnPointerType(const std::string& className,
+                                                              const std::string& methodName) const {
+    auto it = methodReturnKinds_.find(makeMemberKey(className, methodName));
+    return it != methodReturnKinds_.end() ? it->second : PointerType::UNIQUE;
+}
+
+bool SmartPointerAnalyzer::classNeedsSharedFromThis(const std::string& className) const {
+    return classesNeedingSharedFromThis_.find(className) != classesNeedingSharedFromThis_.end();
+}
+
 void SmartPointerAnalyzer::scanContainerElementKinds(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
@@ -321,6 +340,247 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
         for (const auto& inner : whiles->body) scanContainerElementKindsInStatement(*inner);
     } else if (auto fors = dynamic_cast<const ForStatement*>(&stmt)) {
         for (const auto& inner : fors->body) scanContainerElementKindsInStatement(*inner);
+    }
+}
+
+namespace {
+// Every `return <expr>;` reachable from `body`, recursing through if/while/for
+// the same way bodyReturnsThis does. Collected once per method and re-tested
+// against the current partial classification on each fixed-point round below.
+void collectReturnExpressions(const std::vector<StatementPtr>& body,
+                              std::vector<const Expression*>& out) {
+    for (const auto& stmtPtr : body) {
+        if (auto ret = dynamic_cast<const ReturnStatement*>(stmtPtr.get())) {
+            out.push_back(ret->expression.get());
+        } else if (auto ifs = dynamic_cast<const IfStatement*>(stmtPtr.get())) {
+            collectReturnExpressions(ifs->body, out);
+            collectReturnExpressions(ifs->elseBody, out);
+        } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmtPtr.get())) {
+            collectReturnExpressions(whiles->body, out);
+        } else if (auto fors = dynamic_cast<const ForStatement*>(stmtPtr.get())) {
+            collectReturnExpressions(fors->body, out);
+        }
+    }
+}
+} // namespace
+
+void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
+    // A method M is ALIAS_RETURNING (return type shared_ptr<T>, inferred, no
+    // annotation -- CLAUDE.md's "ownership is inferred, not annotated" applies
+    // to method returns exactly as it does to fields) iff EVERY return in its
+    // body is one of:
+    //   (a) `return this;`
+    //   (b) `return <field>;` -- a bare identifier or `this->field` naming an
+    //       object-typed field of the SAME class (never `new T(...)`, never
+    //       any other expression shape)
+    //   (c) `return <recv>.<method>(...);` where <method> is ANOTHER method
+    //       already classified ALIAS_RETURNING (the recursive-walker call
+    //       shape yaml-cpp's Node::findOrAppendSibling/siblingAt use)
+    // This is a genuine small fixed-point: `operator[]` calls
+    // findOrAppendSibling/siblingAt (case c), so those two "leaf" methods
+    // (which only ever hit cases a/b) must be classified FIRST. Bounded by
+    // method count per class -- classification only ever flips
+    // undecided -> decided, never back, so this always terminates.
+    for (const auto& stmt : program.statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr) continue;
+
+        // className.fieldName -> is this field object-typed (case (b) is only
+        // legal for an object-typed field; a primitive field is never an alias).
+        std::map<std::string, std::string> fieldTypes;
+        for (const auto& member : cls->members) {
+            if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                fieldTypes[var->identifier] = var->type;
+            }
+        }
+
+        std::vector<const MethodDeclaration*> methods;
+        for (const auto& member : cls->members) {
+            if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                methods.push_back(method);
+            }
+        }
+
+        std::set<std::string> aliasReturning;     // method names decided ALIAS_RETURNING this round
+        std::set<std::string> notAliasReturning;  // method names decided NOT this round
+        std::set<std::string> fieldsNeedingShared;
+
+        bool progressed = true;
+        while (progressed) {
+            progressed = false;
+            for (const auto* method : methods) {
+                if (aliasReturning.count(method->name) || notAliasReturning.count(method->name)) {
+                    continue;  // already classified
+                }
+                std::vector<const Expression*> returns;
+                collectReturnExpressions(method->body, returns);
+                if (returns.empty()) {
+                    notAliasReturning.insert(method->name);
+                    progressed = true;
+                    continue;
+                }
+
+                bool allResolved = true;   // every return matches a known case
+                bool anyUndecided = false; // at least one return depends on a
+                                           // not-yet-classified method (retry later)
+                std::set<std::string> fieldsThisMethod;
+                for (const Expression* expr : returns) {
+                    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+                        if (id->name == "this") continue;  // case (a)
+                        auto fIt = fieldTypes.find(id->name);
+                        if (fIt != fieldTypes.end() && classNames.count(fIt->second) > 0) {
+                            fieldsThisMethod.insert(id->name);  // case (b), bare
+                            continue;
+                        }
+                        allResolved = false;
+                        break;
+                    }
+                    if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+                        // `this->field` -- CeeLing has no explicit `this.x` source
+                        // syntax, but the AST can still carry it if ever produced;
+                        // treat identically to the bare form.
+                        if (auto recv = dynamic_cast<const Identifier*>(member->object.get());
+                            recv != nullptr && recv->name == "this") {
+                            auto fIt = fieldTypes.find(member->member);
+                            if (fIt != fieldTypes.end() && classNames.count(fIt->second) > 0) {
+                                fieldsThisMethod.insert(member->member);  // case (b)
+                                continue;
+                            }
+                        }
+                        allResolved = false;
+                        break;
+                    }
+                    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+                        // case (c): `<recv>.<method>(...)` (explicit receiver,
+                        // `call->callee` a MemberAccess) OR a bare `<method>(...)`
+                        // with an implicit `this` receiver (`call->callee` null,
+                        // name in call->function_name) -- either shape counts,
+                        // since the rule is about the CALLED method's own
+                        // classification, not which variable/field is calling it.
+                        std::string calledName;
+                        if (auto callMember = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+                            calledName = callMember->member;
+                        } else if (!call->callee) {
+                            calledName = call->function_name;
+                        }
+                        // Direct or implicit-this self-recursion (`return
+                        // next.findOrAppend(k);` inside findOrAppend itself, or
+                        // `return findOrAppend(k);`) can never block its own
+                        // classification: if every OTHER return in this method
+                        // matches the alias-returning shape, the recursive call
+                        // is consistent with (never refutes) that conclusion.
+                        // Without this, a method that only ever calls itself
+                        // (the exact walker shape this rule exists for) would
+                        // wait forever on its own not-yet-decided classification
+                        // and default to NOT alias-returning -- confirmed as a
+                        // real bug via a direct probe before this fix.
+                        if (!calledName.empty() && calledName == method->name) {
+                            continue;
+                        }
+                        if (!calledName.empty() && aliasReturning.count(calledName) > 0) {
+                            continue;
+                        }
+                        if (!calledName.empty() && notAliasReturning.count(calledName) > 0) {
+                            allResolved = false;
+                            break;
+                        }
+                        // Callee not yet classified -- retry this method on a
+                        // later round if it names a same-class method; otherwise
+                        // (calls something outside this class) this return can
+                        // never resolve to alias.
+                        if (!calledName.empty()) {
+                            bool calleeIsSameClassMethod = false;
+                            for (const auto* m : methods) {
+                                if (m->name == calledName) { calleeIsSameClassMethod = true; break; }
+                            }
+                            if (calleeIsSameClassMethod) { anyUndecided = true; continue; }
+                        }
+                        allResolved = false;
+                        break;
+                    }
+                    // `new T(...)` or any other expression shape -> not alias-returning.
+                    allResolved = false;
+                    break;
+                }
+
+                if (!allResolved) {
+                    notAliasReturning.insert(method->name);
+                    progressed = true;
+                } else if (!anyUndecided) {
+                    aliasReturning.insert(method->name);
+                    fieldsNeedingShared.insert(fieldsThisMethod.begin(), fieldsThisMethod.end());
+                    progressed = true;
+                }
+                // else: still depends on an undecided sibling method -- leave
+                // unclassified, retry next round.
+            }
+        }
+        // Anything still unclassified after the loop stabilizes (a genuine
+        // mutual-recursion cycle between two never-resolving methods) defaults
+        // to NOT alias-returning -- the same conservative "ambiguous -> safe
+        // default" CeeLing applies elsewhere, not a silent guess toward SHARED.
+
+        // Dual-register under the QUALIFIED name too (`YAML::Node` alongside
+        // `Node`), matching every other collection pass in this codebase --
+        // `exprObjectClass`/`resolveDeclaredType`-equivalent lookups in
+        // AstEmitter/DanglingChecker key by the RECEIVER's declared type
+        // string, which is "YAML::Node" for a `YAML::Node n;` local. Without
+        // this, `n["key"]`'s shared-return classification would silently miss
+        // for any namespaced class (confirmed as a real bug via the actual
+        // yaml_node.clg: `root["name"]` kept emitting unique_ptr because
+        // "YAML::Node" was never a key in methodReturnKinds_/explicitHints,
+        // only the bare "Node" was).
+        std::vector<std::string> classKeys = {cls->name};
+        if (!cls->namespaceName.empty()) {
+            classKeys.push_back(cls->namespaceName + "::" + cls->name);
+        }
+        for (const auto& name : aliasReturning) {
+            for (const auto& classKey : classKeys) {
+                methodReturnKinds_[makeMemberKey(classKey, name)] = PointerType::SHARED;
+            }
+        }
+        // A field returned by an alias-returning method needs the SAME SHARED
+        // decision every other field lookup already goes through
+        // (getPointerType consults this exact map) -- reuses explicitHints
+        // itself rather than adding a parallel map, since it's already exactly
+        // "className.fieldName -> forced PointerType". Deliberately does NOT
+        // touch explicitHintLines (no source line exists for an inferred
+        // decision): nothing reads explicitHintLines except
+        // applyExplicitHints's own "did every USER-WRITTEN hint match
+        // something" diagnostic sweep, which iterates explicitHintLines, not
+        // explicitHints -- so these inferred entries never appear in that
+        // sweep and never trigger a spurious "hint didn't match" diagnostic.
+        for (const auto& fieldName : fieldsNeedingShared) {
+            for (const auto& classKey : classKeys) {
+                explicitHints[makeMemberKey(classKey, fieldName)] = PointerType::SHARED;
+            }
+        }
+        for (const auto& name : aliasReturning) {
+            const bool anyReturnsThis = [&] {
+                for (const auto* method : methods) {
+                    if (method->name != name) continue;
+                    std::vector<const Expression*> returns;
+                    collectReturnExpressions(method->body, returns);
+                    for (const Expression* expr : returns) {
+                        if (auto id = dynamic_cast<const Identifier*>(expr);
+                            id != nullptr && id->name == "this") {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }();
+            if (anyReturnsThis) {
+                // A class returning `this` as a shared_ptr must itself ALWAYS be
+                // constructed as shared_ptr (shared_from_this() requires the
+                // object to already be owned by a shared_ptr) -- reuses the exact
+                // mechanism classesNeedingSharedRoots already provides for
+                // back-reference/bidirectional cases, so ordinary `new ClassName()`
+                // sites need no changes to pick up make_shared.
+                classesNeedingSharedFromThis_.insert(cls->name);
+                classesNeedingSharedRoots.insert(cls->name);
+            }
+        }
     }
 }
 

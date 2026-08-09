@@ -175,8 +175,10 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         return it->second.count(key) > 0;
     }
     // Plain call `f(args)`: either a free function, or -- inside a method body -- a
-    // bare same-class method call with an implicit `this` receiver.
+    // bare same-class method call with an implicit `this` receiver, or a qualified
+    // library free function on the allow-list (`std::stoi(x)`).
     if (call.templateArg.empty() && knownFreeFunctions_.count(call.function_name) > 0) return true;
+    if (call.templateArg.empty() && isKnownQualifiedFreeFunction(call.function_name)) return true;
     if (!currentClass_.empty()) {
         auto it = classMethods_.find(currentClass_);
         if (it != classMethods_.end()) {
@@ -348,6 +350,29 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
         return;
     }
     if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        // `n[key]` on a CLASS-typed receiver (not a container) means the user's own
+        // `operator[]` -- subject to the same default-reject-unknown-calls rule an
+        // ordinary method call already gets, since it's really `n.operator[](key)`
+        // in disguise. A container receiver (vector/map) is unaffected: this only
+        // fires when resolveObjectType finds an actual class.
+        const std::string objClass = resolveObjectType(sub->object.get());
+        if (!objClass.empty()) {
+            auto it = classMethods_.find(objClass);
+            const bool hasOperatorSubscript = it != classMethods_.end() &&
+                it->second.count("operator[]") > 0;
+            if (!hasOperatorSubscript) {
+                EscapeHatchError e;
+                e.line = expr->loc.line;
+                e.column = expr->loc.column;
+                e.message = "call to unknown function/method `operator[]`";
+                e.help = "`" + sub->object->toString() + "` is a " + objClass +
+                         ", which has no `operator[]` method -- CeeLing has no borrow/"
+                         "ownership summary for anything it did not compile itself, so "
+                         "subscripting a class value is rejected unless the class "
+                         "declares its own `operator[]`.";
+                errors_.push_back(e);
+            }
+        }
         checkExpression(sub->object.get());
         checkExpression(sub->index.get());
         return;
@@ -397,6 +422,28 @@ void EscapeHatchChecker::checkStatement(const Statement* stmt) {
         localType_[cdecl->identifier] = cdecl->type;
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
         checkExpression(assign->expression.get());
+        if (auto sub = dynamic_cast<const SubscriptExpression*>(assign->target.get())) {
+            // `n[key] = value;` on a CLASS-typed (not container) receiver needs a
+            // REFERENCE-returning `operator[]` to mean anything in real C++ (the
+            // reference is what the subsequent `= value` actually assigns through).
+            // CeeLing has no `ref`-return capability yet (see TODO.md/Ch. 9), so
+            // this is rejected outright regardless of whether `operator[]` itself
+            // exists -- read position (`x = n[key];`) has no such problem and stays
+            // supported; only the write-through-subscript shape is unsupported.
+            const std::string objClass = resolveObjectType(sub->object.get());
+            if (!objClass.empty()) {
+                EscapeHatchError e;
+                e.line = stmt->loc.line;
+                e.column = stmt->loc.column;
+                e.message = "assignment through `operator[]` is not supported";
+                e.help = "`" + sub->object->toString() + "` is a " + objClass +
+                         "; `" + sub->object->toString() + "[key] = value` would need "
+                         "operator[] to return a reference, which CeeLing does not yet "
+                         "support (no `ref` return type). Add a named setter method "
+                         "instead (e.g. `void set(key, value)`).";
+                errors_.push_back(e);
+            }
+        }
         if (assign->target) {
             checkExpression(assign->target.get());
         }

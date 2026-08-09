@@ -151,6 +151,14 @@ private:
     // for every "what does this ref/alias observe" call site.
     std::string resolveObservedOwner(const Expression* expr) const;
 
+    // Is `assign` a bare-identifier target of the form `n = value;` where `n`'s
+    // declared type is a class that declares its own `operator=`, and `value`
+    // isn't itself an object local of that same class? True means this is really
+    // `n->operator=(value)`, a MUTATING call on the still-alive object, not
+    // ownership reassignment -- the AssignmentStatement branch must skip the
+    // owner-death/move logic for it.
+    bool isOperatorAssignMutation(const AssignmentStatement& assign) const;
+
     // A known invalidating library call (only `push_back` this slice -- see
     // library_summary.h) kills every existing observer of its container receiver:
     // the backing store may have reallocated, so any `ref`/subscript-derived

@@ -246,6 +246,10 @@
           "named": true
         },
         {
+          "type": "scoped_identifier",
+          "named": true
+        },
+        {
           "type": "subscript_expression",
           "named": true
         }
@@ -412,6 +416,10 @@
           "named": true
         },
         {
+          "type": "operator_method_name",
+          "named": true
+        },
+        {
           "type": "parameter_list",
           "named": true
         },
@@ -497,6 +505,11 @@
         }
       ]
     }
+  },
+  {
+    "type": "operator_method_name",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "parameter_list",
@@ -1029,6 +1042,14 @@
   {
     "type": "observer_qualifier",
     "named": true
+  },
+  {
+    "type": "operator=",
+    "named": false
+  },
+  {
+    "type": "operator[]",
+    "named": false
   },
   {
     "type": "override",

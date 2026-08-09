@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ reason: a method whose body ONLY returns `this` is INFERRED alias-returning, no
+//@ reason: annotation needed. `return this;` must NOT emit a raw `shared_ptr<T>(this)`
+//@ reason: (a second, independent control block -- a genuine double-free bug in real
+//@ reason: C++), but `shared_from_this()` instead, which aliases the object's OWN
+//@ reason: existing control block. This needs the class itself to inherit
+//@ reason: `std::enable_shared_from_this<T>` (auto-derived, no separate class-level
+//@ reason: annotation -- see SmartPointerAnalyzer::classNeedsSharedFromThis) AND to
+//@ reason: always be constructed as shared_ptr (shared_from_this() requires the
+//@ reason: object to already be owned by one -- classesNeedingSharedRoots is reused
+//@ reason: for this, the same mechanism back-reference/bidirectional cases already
+//@ reason: force a shared root through).
+//@ run: 1
+
+class Node {
+public:
+    int val;
+    Node(int v) {
+        val = v;
+    }
+    Node self() {
+        return this;
+    }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node s = a.self();
+    std::cout << s.val << std::endl;
+    return 0;
+}

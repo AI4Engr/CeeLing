@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ reason: a call to a qualified library free function on the allow-list
+//@ reason: (`std::stoi`/`std::stod`) is accepted -- the same
+//@ reason: library_summary.h allow-list mechanism that already covers
+//@ reason: std::vector<T>/std::string METHODS now also covers qualified free
+//@ reason: FUNCTIONS. Needed no DanglingChecker or AstEmitter changes: neither
+//@ reason: takes/returns an object type, so no move/summary machinery applies,
+//@ reason: and the plain-call emission path already emits the qualified name
+//@ reason: verbatim.
+//@ run: 42 3.5
+
+int main() {
+    string s = "42";
+    int x = std::stoi(s);
+    string d = "3.5";
+    double y = std::stod(d);
+    std::cout << x << " " << y << std::endl;
+    return 0;
+}

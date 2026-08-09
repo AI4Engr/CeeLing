@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ reason: yaml-cpp's real Node shape declares TWO operator[] overloads on the same
+//@ reason: class (string key for map access, int index for sequence access). A
+//@ reason: real bug was found and fixed while investigating this: classMethodParams_
+//@ reason: (AstEmitter/DanglingChecker) keyed both overloads under the SAME bare
+//@ reason: "operator[]" string, so the second declaration silently overwrote the
+//@ reason: first's parameter info -- harmless for calls with only primitive
+//@ reason: arguments (confirmed: real C++ overload resolution still picks the right
+//@ reason: body at each call site regardless), but wrong for move/pointer-kind
+//@ reason: bookkeeping on any overload taking an object-typed argument. Fixed via
+//@ reason: overloadKey(name, paramCount) (class_hierarchy.h), applied only when a
+//@ reason: class genuinely declares more than one method of the same name.
+//@ run: 10 15
+
+class Box {
+public:
+    int sval;
+    Box(int s) {
+        sval = s;
+    }
+    int operator[](string key) {
+        return sval;
+    }
+    int operator[](int index) {
+        return sval + index;
+    }
+};
+
+int main() {
+    Box b = new Box(10);
+    int x = b["k"];
+    int y = b[5];
+    std::cout << x << " " << y << std::endl;
+    return 0;
+}

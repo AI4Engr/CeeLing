@@ -121,4 +121,9 @@ bool isPrimitiveType(const std::string& type) {
     return kKnown.count(type) > 0;
 }
 
+bool isKnownQualifiedFreeFunction(const std::string& qualifiedName) {
+    static const std::set<std::string> kKnown = {"std::stoi", "std::stod"};
+    return kKnown.count(qualifiedName) > 0;
+}
+
 } // namespace cling

@@ -1,0 +1,36 @@
+//@ expect: accept
+//@ reason: a method whose body ONLY returns a same-class field (never `new T(...)`)
+//@ reason: is INFERRED to return an ALIAS, not an independent copy -- no annotation
+//@ reason: needed (CLAUDE.md: "ownership is inferred, not annotated"). Mutating the
+//@ reason: result mutates the field itself (yaml-cpp's Node::operator[] needs
+//@ reason: exactly this to make `node["a"]["b"] = "c"`-style chaining meaningful).
+//@ reason: A method whose return doesn't match this shape keeps today's
+//@ reason: unique_ptr/move-return behavior completely unchanged (see the sibling
+//@ reason: _unaffected_ fixture).
+//@ run: 77
+
+class Node {
+public:
+    int val;
+    Node child;
+    Node(int v) {
+        val = v;
+        child = nullptr;
+    }
+    Node getChild() {
+        return child;
+    }
+    void setChild(int v) {
+        child = new Node(v);
+    }
+};
+
+int main() {
+    Node a = new Node(1);
+    a.setChild(5);
+    Node c1 = a.getChild();
+    Node c2 = a.getChild();
+    c1.val = 77;
+    std::cout << c2.val << std::endl;
+    return 0;
+}

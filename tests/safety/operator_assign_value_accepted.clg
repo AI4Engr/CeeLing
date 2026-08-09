@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ reason: a class overloading `operator=(string)` is invoked when a bare-
+//@ reason: identifier assignment's RHS type does NOT match the LHS's declared
+//@ reason: class (`n = "text";`) -- this is a MUTATING call
+//@ reason: (`n->operator=(...)`) on the still-alive object, not ownership
+//@ reason: reassignment: DanglingChecker must not treat it as an owner-death
+//@ reason: event (n is read again right after via .get()), and AstEmitter must
+//@ reason: emit a method call instead of ordinary move/reassignment codegen.
+//@ reason: An ordinary same-class reassignment (`Node b = a; b = a2;`) is the
+//@ reason: unaffected control case, exercised by every other accept fixture
+//@ reason: that reassigns an object local.
+//@ run: 99
+
+class Box {
+public:
+    int val;
+    Box(int v) { val = v; }
+    void operator=(string text) {
+        val = 99;
+    }
+    int get() {
+        return val;
+    }
+};
+
+int main() {
+    Box b = new Box(5);
+    b = "text";
+    std::cout << b.get() << std::endl;
+    return 0;
+}

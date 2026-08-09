@@ -1,0 +1,36 @@
+//@ expect: accept
+//@ reason: regression proof for the operator[]/operator= work: ordinary
+//@ reason: std::vector/std::map subscript (read AND write) is completely
+//@ reason: unaffected by the new class-typed dispatch branches in
+//@ reason: EscapeHatchChecker/AstEmitter -- both container and class-typed
+//@ reason: subscripting coexist in the same program without cross-
+//@ reason: contamination (the class-typed branch only fires when
+//@ reason: resolveObjectType/exprObjectClass finds an actual class, never a
+//@ reason: container).
+//@ run: 10 two
+
+class Box {
+public:
+    int val;
+    Box(int v) { val = v; }
+    int operator[](string key) {
+        return val;
+    }
+};
+
+int main() {
+    std::vector<int> v;
+    v.push_back(10);
+    int first = v[0];
+
+    std::map<int, string> m;
+    m[1] = "one";
+    m[2] = "two";
+    string second = m[2];
+
+    Box b = new Box(999);
+    int unused = b["k"];
+
+    std::cout << first << " " << second << std::endl;
+    return 0;
+}

@@ -282,11 +282,17 @@ module.exports = grammar({
     // DECLARATION, never in expression position, so neither competes with
     // binary_expression's comparison rule the way the call-site type argument
     // (template_call, below) does -- no conflict risk here.
+    //
+    // The method NAME may be an ordinary identifier or one of the two supported
+    // operator names (operator_method_name, below) -- narrowly scoped to
+    // `operator[]`/`operator=` only, the shape yaml-cpp's Node needs. General
+    // operator overloading (operator+, operator<<, ...) is a separate, unstarted
+    // TODO.md item, not this.
     method_declaration: $ => seq(
       optional($.method_type_parameter),
       optional('virtual'),
       $.type,
-      $.identifier,
+      choice($.identifier, $.operator_method_name),
       optional($.method_specialization),
       '(',
       optional($.parameter_list),
@@ -297,6 +303,13 @@ module.exports = grammar({
       repeat($.statement),
       '}'
     ),
+
+    // `operator[]` or `operator=` as a method name. Kept as its own token (not
+    // built from separate `operator`/`[`/`]`/`=` terminals) so it can never be
+    // mistaken for `operator` used as an ordinary identifier elsewhere -- there is
+    // no other place in the grammar `operator` is meaningful, so this is
+    // unambiguous.
+    operator_method_name: $ => choice('operator[]', 'operator='),
 
     // `<T>` before a method's return type: declares ONE type parameter, usable only
     // as that method's own return type (`<T> T as()`). Enforced in ast_builder.cpp,
@@ -454,8 +467,13 @@ module.exports = grammar({
       ']'
     )),
 
+    // A plain call's callee may be a qualified free function (`std::stoi(x)`) as
+    // well as a bare identifier -- library allow-list calls only, never a
+    // user-defined qualified name (CeeLing has no qualified declarations of its
+    // own to call). No new ambiguity: a scoped_identifier callee is only ever
+    // followed by `(` here, never `<` the way generic_type's scoped_identifier is.
     function_call: $ => seq(
-      choice($.identifier, $.member_access, $.subscript_expression),
+      choice($.identifier, $.scoped_identifier, $.member_access, $.subscript_expression),
       '(',
       optional($.argument_list),
       ')'

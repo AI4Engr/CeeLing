@@ -88,6 +88,18 @@ void AstEmitter::collectClassNames(const Program& program) {
                 methodParams = baseIt->second;
             }
         }
+        // Count bare-name occurrences first: only a class that genuinely OVERLOADS
+        // a method (declares more than one with the same name, e.g. yaml-cpp-style
+        // `operator[](string)` + `operator[](int)`) needs the arity-qualified key
+        // below -- every other, non-overloaded method keeps the plain bare-name
+        // key it always had, so this can't perturb any existing single-method
+        // lookup's key shape.
+        std::map<std::string, int> nameCounts;
+        for (const auto& member : cls->members) {
+            if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                if (method->specializationArg.empty()) nameCounts[method->name]++;
+            }
+        }
         for (const auto& member : cls->members) {
             if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
                 fields[var->identifier] = var->type;
@@ -95,10 +107,19 @@ void AstEmitter::collectClassNames(const Program& program) {
                 // A specialization registers under its synthetic key ("as<int>"),
                 // matching EscapeHatchChecker/DanglingChecker's identical
                 // reasoning -- calleeParam below resolves a `.as<int>()` call to
-                // this same key via call.templateArg.
-                const std::string key = method->specializationArg.empty()
-                    ? method->name
-                    : specializationKey(method->name, method->specializationArg);
+                // this same key via call.templateArg. An OVERLOADED (same-name,
+                // different-arity) ordinary method instead keys by
+                // overloadKey(name, paramCount), so a second declaration doesn't
+                // silently overwrite the first's parameter info (see
+                // class_hierarchy.h's overloadKey for the exact scope/limits).
+                std::string key;
+                if (!method->specializationArg.empty()) {
+                    key = specializationKey(method->name, method->specializationArg);
+                } else if (nameCounts[method->name] > 1) {
+                    key = overloadKey(method->name, method->parameters.size());
+                } else {
+                    key = method->name;
+                }
                 methodParams[key] = method->parameters;
             }
         }
@@ -130,10 +151,19 @@ std::pair<std::string, std::string> AstEmitter::calleeParam(const FunctionCall& 
         if (objClass.empty()) return {};
         auto clsIt = classMethodParams_.find(objClass);
         if (clsIt == classMethodParams_.end()) return {};
-        const std::string methodKey = call.templateArg.empty()
+        std::string methodKey = call.templateArg.empty()
             ? member->member
             : specializationKey(member->member, call.templateArg);
         auto paramIt = clsIt->second.find(methodKey);
+        if (paramIt == clsIt->second.end() && call.templateArg.empty()) {
+            // The bare name may have been registered under an overload key
+            // instead (collectClassNames only does this for a genuinely
+            // overloaded method name) -- retry with the call's own argument
+            // count, which is the same key shape the overloaded method's real
+            // arity was registered under.
+            methodKey = overloadKey(member->member, call.arguments.size());
+            paramIt = clsIt->second.find(methodKey);
+        }
         if (paramIt == clsIt->second.end()) return {};
         params = &paramIt->second;
     } else {
@@ -207,6 +237,28 @@ std::string AstEmitter::containerVarType(const Expression* expr) const {
     if (id == nullptr) return "";
     auto it = containerVarType_.find(id->name);
     return it == containerVarType_.end() ? "" : it->second;
+}
+
+bool AstEmitter::isSharedReturningCall(const Expression* expr) const {
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        if (!call->callee || !call->templateArg.empty()) return false;
+        auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+        if (member == nullptr) return false;
+        const std::string objClass = exprObjectClass(member->object.get());
+        if (objClass.empty()) return false;
+        return analyzer_.getMethodReturnPointerType(objClass, member->member) == PointerType::SHARED;
+    }
+    if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        // `n[key]` on a class-typed receiver desugars to `n.operator[](key)` for
+        // emission purposes (see the SubscriptExpression branch in
+        // emitExpression) -- the SAME shared-return check applies, just keyed
+        // by the synthetic method name "operator[]" instead of a real
+        // MemberAccess's member name.
+        const std::string objClass = exprObjectClass(sub->object.get());
+        if (objClass.empty()) return false;
+        return analyzer_.getMethodReturnPointerType(objClass, "operator[]") == PointerType::SHARED;
+    }
+    return false;
 }
 
 std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::string& varName) const {
@@ -304,8 +356,24 @@ void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
 
 void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out) {
     out << "class " << cls.name;
-    if (!cls.baseClass.empty()) {
-        out << " : public " << cls.baseClass;
+    // `std::enable_shared_from_this<T>` is a SEPARATE, compiler-generated base from
+    // the user's own `cls.baseClass` (single inheritance) -- auto-derived whenever
+    // some method's `@ptr shared` return contains `return this;` (see
+    // SmartPointerAnalyzer::classNeedsSharedFromThis), never user-annotated. Comma-
+    // joins with an ordinary base clause if both happen to apply (real C++ allows
+    // multiple base specifiers here; this combination just isn't exercised by any
+    // current fixture).
+    std::vector<std::string> bases;
+    if (!cls.baseClass.empty()) bases.push_back("public " + cls.baseClass);
+    if (analyzer_.classNeedsSharedFromThis(cls.name)) {
+        bases.push_back("public std::enable_shared_from_this<" + cls.name + ">");
+    }
+    if (!bases.empty()) {
+        out << " : ";
+        for (size_t i = 0; i < bases.size(); ++i) {
+            if (i > 0) out << ", ";
+            out << bases[i];
+        }
     }
     out << " {\npublic:\n";
 
@@ -357,7 +425,8 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
                 out << indentStr(1) << "template<typename " << method->typeParameter << ">\n";
             }
             emitFunction(method->returnType, method->name, method->parameters, method->body,
-                         out, cls.name, 1, method->isConst, method->isVirtual, method->isOverride);
+                         out, cls.name, 1, method->isConst, method->isVirtual, method->isOverride,
+                         method->name);
         }
     }
     out << "};\n\n";
@@ -378,7 +447,7 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
                               const std::vector<std::pair<std::string, std::string>>& params,
                               const std::vector<StatementPtr>& body, std::ostringstream& out,
                               const std::string& ownerClass, int baseIndent, bool isConst,
-                              bool isVirtual, bool isOverride) {
+                              bool isVirtual, bool isOverride, const std::string& methodName) {
     // Each function has its own local variable scope; `currentClass_` enables `this->`
     // for field access inside a method/constructor.
     varKinds_.clear();
@@ -387,15 +456,25 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     containerVarType_.clear();
     const std::string savedClass = currentClass_;
     currentClass_ = ownerClass;
+    const bool savedReturnsShared = currentMethodReturnsShared_;
+    // Only an explicit `@ptr shared Class.method` hint can make a return
+    // shared_ptr -- getMethodReturnPointerType defaults to UNIQUE with no hint,
+    // so an ordinary object-returning method's behavior is completely unchanged.
+    currentMethodReturnsShared_ = !methodName.empty() && !ownerClass.empty() &&
+        analyzer_.getMethodReturnPointerType(ownerClass, methodName) == PointerType::SHARED;
 
     // Signature. An object return type is lowered to a smart pointer so the body's
-    // owning local (a smart pointer) can be returned directly (unique_ptr by default:
-    // the callee constructs the object and hands sole ownership back to the caller).
+    // owning local (a smart pointer) can be returned directly (unique_ptr by
+    // default: the callee constructs the object and hands sole ownership back to
+    // the caller; shared_ptr only when an explicit @ptr hint says this method's
+    // return aliases rather than transfers -- see the ReturnStatement branch
+    // below for the matching copy-vs-move choice).
     std::string sig;
     if (isVirtual) sig += "virtual ";
     if (!returnType.empty()) {
-        sig += isClassType(returnType) ? "std::unique_ptr<" + returnType + "> "
-                                       : cppTypeFor(returnType, "") + " ";
+        sig += isClassType(returnType)
+            ? (currentMethodReturnsShared_ ? "std::shared_ptr<" : "std::unique_ptr<") + returnType + "> "
+            : cppTypeFor(returnType, "") + " ";
     }
     sig += name + "(";
     for (size_t i = 0; i < params.size(); ++i) {
@@ -434,6 +513,7 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     if (baseIndent == 0) out << "\n";  // blank line only between top-level definitions
 
     currentClass_ = savedClass;
+    currentMethodReturnsShared_ = savedReturnsShared;
 }
 
 std::string AstEmitter::emitMovedArg(const Expression* arg,
@@ -491,12 +571,26 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
                 : "(" + emitExpression(decl->expression.get()) + ").get()";
             out << pad << decl->type << "* " << decl->identifier << " = " << rhs << ";\n";
         } else if (isClassType(decl->type)) {
-            const std::string ptr = smartPointerType(decl->type, decl->identifier);
+            // A local initialized from a @ptr-shared-hinted method's return MUST
+            // itself be shared_ptr -- the C++ initializer expression is already a
+            // shared_ptr (see emitFunction's return-type lowering), so declaring
+            // the local unique_ptr does not compile. Bypasses the ordinary
+            // smartPointerType field/local lookup entirely for this one case
+            // (confirmed as a real bug via a direct probe: `Node c = a.getChild();`
+            // previously emitted `unique_ptr<Node> c = a->getChild();`, a hard
+            // compile error, since getChild()'s own return is shared_ptr<Node>).
+            const bool sharedFromCall = isSharedReturningCall(decl->expression.get());
+            const std::string ptr = sharedFromCall ? "std::shared_ptr"
+                                                    : smartPointerType(decl->type, decl->identifier);
             std::string rhs;
             if (auto neww = dynamic_cast<const NewExpression*>(decl->expression.get())) {
                 // Construct `neww->className`, but pick the pointer kind from
                 // `decl->type` -- these differ for `Animal a = new Dog();`.
                 rhs = factoryFor(neww->className, decl->identifier, neww->arguments, decl->type);
+            } else if (sharedFromCall) {
+                // The call's result is an ALIAS (see emitFunction/ReturnStatement),
+                // not something to move -- a plain copy of the shared_ptr handle.
+                rhs = emitExpression(decl->expression.get());
             } else {
                 // `Node b = a;` transfers ownership: emit std::move(a).
                 rhs = emitMovedArg(decl->expression.get());
@@ -529,6 +623,35 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         } else {
             lhs = isCurrentField(assign->variable) ? "this->" + assign->variable
                                                    : assign->variable;
+        }
+        // `n = value;` where `n` is class-typed and `value`'s type does NOT match
+        // that class (e.g. `n = "text";`) means the user's own `operator=`, not
+        // ordinary owner-reassignment -- `n->operator=(value);`, a mutating call on
+        // the still-alive object, not a move/rebind. An ordinary same-class
+        // reassignment (`Node b = a;`-shaped `n = a;`) is unaffected: its RHS IS
+        // class-typed and falls through to the existing move path below.
+        //
+        // EXCLUDES a bare-identifier FIELD store (`child = nullptr;`, implicit
+        // `this` -- isCurrentField true): that's an ordinary field link/store (same
+        // category as `a.b = x;`), never an operator= mutation, even though the
+        // field's declared type is class-typed and nullptr/`new Node(...)` aren't
+        // "the same class" by this check's own RHS test. Without this exclusion,
+        // resetting an object-typed field to nullptr or a fresh `new` was wrongly
+        // routed through operator= -- found by re-running the real yaml_node.clg
+        // (`this->child->operator=(nullptr);`, which doesn't compile).
+        if (!memberTarget && !subscriptTarget && !isCurrentField(assign->variable)) {
+            Identifier lhsId(assign->variable);
+            const std::string lhsClass = exprObjectClass(&lhsId);
+            if (!lhsClass.empty() && exprObjectClass(assign->expression.get()) != lhsClass) {
+                auto clsIt = classMethodParams_.find(lhsClass);
+                const bool hasOperatorAssign = clsIt != classMethodParams_.end() &&
+                    clsIt->second.count("operator=") > 0;
+                if (hasOperatorAssign) {
+                    out << pad << lhs << "->operator=(" << emitExpression(assign->expression.get())
+                        << ");\n";
+                    return;
+                }
+            }
         }
         std::string rhs;
         const bool rhsIsNullptr = isNullptrLiteral(assign->expression.get());
@@ -567,7 +690,22 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         // local is not used after the return). Non-object returns (`return 0;`,
         // `return a.value;`) fall through unchanged.
         std::string rhs;
-        if (auto neww = dynamic_cast<const NewExpression*>(ret->expression.get())) {
+        auto retId = dynamic_cast<const Identifier*>(ret->expression.get());
+        if (currentMethodReturnsShared_ && retId != nullptr && retId->name == "this") {
+            // `return this;` from a @ptr-shared-hinted method: shared_from_this()
+            // aliases the object's OWN existing shared_ptr control block (set up by
+            // enable_shared_from_this, wired in by emitClass/classNeedsSharedFromThis
+            // whenever this pattern is detected) -- NOT `shared_ptr<T>(this)`, which
+            // would create a second, independent control block and double-free.
+            rhs = "shared_from_this()";
+        } else if (currentMethodReturnsShared_) {
+            // A @ptr-shared-hinted method's return is an ALIAS, never a transfer:
+            // `return child;`/`return this->child;` must copy the shared_ptr handle
+            // (refcount bump), leaving the field itself live and usable afterward --
+            // the same "copy, don't move" choice a shared field-store assignment
+            // (`a.b = obj;`) already makes, applied here to `return` instead.
+            rhs = emitExpression(ret->expression.get());
+        } else if (auto neww = dynamic_cast<const NewExpression*>(ret->expression.get())) {
             // Force make_unique to match the lowered return type (unique_ptr<T>),
             // rather than asking the analyzer for a named-variable decision.
             rhs = "std::make_unique<" + neww->className + ">(";
@@ -817,6 +955,16 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         return objStr + op + member->member;
     }
     if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        // A class-typed receiver's `n[key]` means the user's own `operator[]`
+        // method, not container indexing -- `n` is a smart pointer, and
+        // `unique_ptr<T>`/`shared_ptr<T>` have no operator[] of their own (or, for
+        // shared_ptr, a different one entirely), so this MUST route through an
+        // ordinary method call (`n->operator[](key)`), never literal `n[key]`.
+        const std::string objClass = exprObjectClass(sub->object.get());
+        if (!objClass.empty()) {
+            return emitExpression(sub->object.get()) + "->operator[](" +
+                   emitExpression(sub->index.get()) + ")";
+        }
         // `v[i]` lowers 1:1 to C++ `v[i]` -- std::vector's operator[] is exactly
         // what CeeLing's subscript syntax means, no translation needed.
         return emitExpression(sub->object.get()) + "[" + emitExpression(sub->index.get()) + "]";

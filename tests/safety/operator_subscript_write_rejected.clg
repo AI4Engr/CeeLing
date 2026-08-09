@@ -1,0 +1,24 @@
+//@ expect: reject
+//@ reason: positive control -- `n[key] = value;` on a class-typed receiver is
+//@ reason: rejected even though `operator[]` itself exists and works fine in
+//@ reason: READ position (see operator_subscript_read_accepted.clg). Real C++
+//@ reason: needs operator[] to return a REFERENCE for the subsequent `=` to
+//@ reason: assign through, and CeeLing has no `ref` return type yet (TODO.md/
+//@ reason: Ch. 9) -- rejected with a targeted diagnostic pointing at the real
+//@ reason: limitation, not silently emitted as something that fails to
+//@ reason: compile or (worse) compiles into the wrong thing.
+
+class Box {
+public:
+    int val;
+    Box(int v) { val = v; }
+    int operator[](string key) {
+        return val;
+    }
+};
+
+int main() {
+    Box b = new Box(5);
+    b["key"] = 10;
+    return 0;
+}

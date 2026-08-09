@@ -167,6 +167,44 @@ real.
   under a synthetic key (`specializationKey`) instead of adding anything new. See
   `tests/safety/template_as_basic_accepted.clg` and siblings, and Chapter 18 Step
   21 for the full design.
+- **Qualified free-function calls** (`std::stoi`, `std::stod`) — a new
+  `library_summary.h` allow-list entry for qualified FREE FUNCTIONS
+  (distinct from the existing method allow-lists); needed zero
+  `DanglingChecker`/`AstEmitter` changes since neither function has any
+  object-typed argument or return value. See
+  `tests/safety/qualified_call_known_accepted.clg`.
+- **`operator[]`/`operator=` overloading** — a class may declare and call
+  its own `operator[]`/`operator=`. `n[key] = value;` (assignment THROUGH a
+  subscript) is still rejected outright, since that specific shape needs a
+  real C++ reference return from `operator[]`, which CeeLing does not
+  attempt to support in general — but the aliasing NEED that motivated it
+  (yaml-cpp's chained `node["a"]["b"] = "c"`) is covered by the next bullet,
+  a narrower, sufficient solution. See
+  `tests/safety/operator_subscript_read_accepted.clg`,
+  `operator_subscript_two_overloads_accepted.clg` (multiple overloads on one
+  class, e.g. `operator[](string)` + `operator[](int)`), and Chapter 18 Step
+  22.
+- **Alias-returning methods, INFERRED** — a method whose body only ever
+  returns `this`, a same-class object-typed field, or a call to another
+  already-classified alias-returning method (never `new T(...)`) is
+  automatically classified to return `shared_ptr<T>` (aliasing the object
+  graph) instead of the default `unique_ptr<T>` (ownership transfer) — no
+  annotation, purely structural inference over the method body, matching
+  CLAUDE.md's "ownership is inferred, not annotated" rule. This is what
+  actually closes the reference-return need above: yaml-cpp's
+  `Node::operator[]` returns an alias into the tree by construction (every
+  return in its body matches the rule), so `node["a"]` mutating the tree
+  falls out for free without a `ref` return type ever existing. `return
+  this;` from such a method emits `shared_from_this()` (needs
+  `std::enable_shared_from_this<T>`, auto-added as a compiler-generated
+  base — never a raw `shared_ptr<T>(this)`, which would create a second,
+  independent control block and double-free). See
+  `tests/safety/shared_return_alias_accepted.clg`,
+  `shared_return_this_accepted.clg`,
+  `shared_return_namespaced_class_accepted.clg`, and Chapter 18 Step 23. The
+  real `yaml-cling/src-clg/yaml_node.clg` now compiles AND runs correctly
+  end-to-end with zero ownership annotations — see
+  `yaml-cling/tests/run_node_smoke_rust_backend.sh`.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**
@@ -273,8 +311,11 @@ The minimum for the single-threaded 99.99% contract:
 > **dangling (#1–#8) + null (#9) + use-after-move (#10) + bounds (#11) + sealed
 > escape hatches (#13–#18).**
 
-Language expressiveness (light/general generics, lambdas, range-for, operator
-overloading, multiple inheritance) is tracked separately in `TODO.md` — safety is
-the foundation, expressiveness is the house built on top. `enum`, `namespace`, and
-the narrow return-type-generic-method slice of templates are done (see "Working
-today" above).
+Language expressiveness (light/general generics, lambdas, range-for, general
+operator overloading, multiple inheritance) is tracked separately in `TODO.md`
+— safety is the foundation, expressiveness is the house built on top. `enum`,
+`namespace`, the narrow return-type-generic-method slice of templates,
+qualified free-function calls, `operator[]`/`operator=` overloading, and
+INFERRED alias-returning methods (the actual solution to the
+reference-returning-method need — no `ref` return type was built or is
+needed) are done (see "Working today" above).

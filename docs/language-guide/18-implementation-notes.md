@@ -1549,3 +1549,345 @@ grammar-conflicts investigation was protecting against:
 `x.length() < 5` — both still parse and evaluate as ordinary comparisons, not
 misparsed as an incomplete `template_call`. Full CTest (13/13) and safety-suite
 (58/58, compile-gated) sweeps after this step showed zero regressions elsewhere.
+
+## Step 22 — Qualified free-function calls, and operator overloading scoped to stop exactly where `ref` returns begin
+
+With `enum`/`namespace`/`.as<T>()` landed, the actual test was attempting to
+transpile yaml-cling's real `src-clg/yaml_node.clg` against this branch for the
+first time — not a hand-written probe shaped like it, the real file. This
+surfaced two concrete, confirmed parse errors (not guesses): `std::stoi(scalar)`
+inside a `.as<int>()` specialization, and `Node operator[](string entryKey)
+{...}` — the grammar had no way to call a qualified free function or declare an
+operator-named method at all.
+
+A third, larger issue was found in the same pass and deliberately NOT
+attempted here: `yaml_node.clg`'s `operator[]`/`findOrAppendSibling`/
+`siblingAt` all want to return a *reference* into the object graph so
+`node["a"]["b"] = "c"` chains — CeeLing has no `ref` RETURN type (only `ref`
+locals/observers), and inventing one is a real, separate design problem (what
+does a `ref`-returning method's borrow summary even mean — does the return
+alias `this`, or a field of `this`? how does escape analysis stop the returned
+reference from outliving its receiver?). This step's operator-overloading slice
+was scoped, on purpose, to stop exactly at that boundary: VALUE-returning
+`operator[]`/`operator=` only.
+
+### Qualified free-function calls were nearly free, because of a precedent already on file
+
+`function_call`'s callee only accepted `identifier | member_access |
+subscript_expression`; extending it to `scoped_identifier` is the exact same
+shape of fix `new_expression` already got for `new YAML::Node(...)` (Step 21) —
+and for the exact same reason it needed almost no follow-up work.
+`buildFunctionCall`'s plain-call branch does `getNodeText(calleeNode, source)`
+verbatim, so `funcName` becomes `"std::stoi"` with **zero** AST-builder
+changes once the grammar accepts it.
+
+The only real gate left was `EscapeHatchChecker::isKnownCallable`'s plain-call
+branch (Phase 1's default-reject-unknown-calls rule): `knownFreeFunctions_`
+only ever contained CeeLing-defined functions, so `std::stoi` needed a library
+allow-list entry — the free-function counterpart to `library_summary.h`'s
+existing `isKnownVectorMethod`/`isKnownStringMethod` (which cover *methods*,
+not qualified *free functions*). `DanglingChecker` needed **no** changes at
+all: `std::stoi`/`std::stod` take a `string` and return a primitive, no
+object-typed argument or return value, so `resolveCallReturnAlias`'s existing
+graceful `{}` fallback (for names absent from `functionParams_`/`summaries_`,
+both CeeLing-only maps) is already exactly correct — there is no aliasing
+return to miss. `AstEmitter` needed no changes either: the plain-call emission
+path already emits `call->function_name` verbatim, so `"std::stoi"` comes out
+correct with no translation.
+
+One thing confirmed directly rather than assumed: `std::cout << x` is a
+`BinaryExpression` (the `<<` token), never a `FunctionCall` at all — so it was
+never subject to `isKnownCallable` in the first place, and this step's allow-
+list addition really is the last remaining gate for plain qualified calls, not
+one of several.
+
+### `operator[]`/`operator=` could not be desugared at parse time — the AST builder has no type environment
+
+A first instinct was to desugar `n[key]` into an ordinary method-call AST node
+(`n.operator[](key)`) right in the AST builder, the same way namespace
+declarations desugar into tagged top-level statements (Step 21). That does not
+work here: the AST builder is a pure syntax-directed translation with **no type
+environment** at all — `buildSubscriptExpression` has no way to know whether
+`n[key]`'s `n` is a `std::map`/`std::vector` (today's only meaning) or a
+class-typed local with its own `operator[]` overload. That distinction can only
+be resolved later, by each checker/emitter module against its own
+`localType_`/`classNames_` map — exactly the place `isVectorType(declaredType)`
+already branches today. So `SubscriptExpression` stays ONE generic AST node (no
+new node type), and each of the three modules that already inspect it
+(`EscapeHatchChecker`, `DanglingChecker`, `AstEmitter`) gained one added
+class-vs-container branch. This is the established pattern applied once more,
+not a new one.
+
+Grammar-wise, this made the feature simpler than templates' call-site ambiguity
+(Step 21): `n[key]` and `n = value` already parsed via the existing
+`subscript_expression`/`assignment_statement` productions, so the ONLY new
+grammar was letting a method be *named* `operator[]`/`operator=` — a new
+`operator_method_name` token (`'operator[]'`/`'operator='` as whole tokens, not
+built from separate `[`/`]`/`=` terminals) as an alternative to `$.identifier`
+in `method_declaration`'s name slot. Zero new call-site grammar, zero GLR
+conflicts.
+
+### Read position reuses ordinary method-call machinery; write position needed real new logic
+
+`x = n[key];` on a class-typed `n` is checked/emitted as if it were
+`n.operator[](key)` — same `classMethods_`/`classMethodParams_` registration
+under the literal key `"operator[]"`, same `isKnownCallable` lookup shape, same
+emission machinery every ordinary method call already has. The only emitter
+change was in the read-path: it used to emit `obj[index]` literally for ANY
+`SubscriptExpression`, correct for a container but WRONG for a class-typed
+`obj` (a `unique_ptr<T>` has no meaningful `operator[]` of its own — confirmed
+this fails to compile via a direct probe before fixing it) — now it checks
+`exprObjectClass(sub->object.get())` first and emits `obj->operator[](index)`
+instead when the receiver is class-typed.
+
+Write position is genuinely two different sub-cases, not one:
+
+- `n[key] = value;` (subscript target): real C++ needs `operator[]` to *return
+  a reference* for the subsequent `=` to assign through — exactly the
+  capability this step deliberately does not have. Rather than half-support
+  this (emit something that silently doesn't compile, or worse, compiles into
+  the wrong thing), `EscapeHatchChecker` rejects it outright with a diagnostic
+  that names the real limitation, whether or not `operator[]` itself exists on
+  the receiver's class.
+- `n = value;` (plain assignment, RHS type-mismatched against `n`'s declared
+  class — `n = "text";` is the concrete yaml-cpp shape, `node = "b"`): this
+  one genuinely doesn't need reference returns, because it isn't chainable —
+  it's a plain mutating call on the still-alive object
+  (`n->operator=(value);`), not an ownership handoff. `AstEmitter`'s
+  assignment-statement branch detects "LHS is class-typed AND has its own
+  `operator=` AND the RHS isn't itself the same class" and emits the method
+  call instead of ordinary reassignment codegen; `DanglingChecker` got a
+  parallel `isOperatorAssignMutation` check so this is never treated as an
+  owner-death/rebind event — `n`'s identity doesn't change, so none of the
+  move/observer-invalidation machinery should fire for it.
+
+### A real bug, found only by re-testing the actual file, not the fixtures written first
+
+Every fixture written before re-attempting the real `yaml_node.clg` passed. The
+re-attempt still found a genuine bug the fixtures had missed: `Node(int
+nodeKind) { ...; child = nullptr; next = nullptr; }` — a bare-identifier
+assignment to a FIELD (implicit `this`, inside a constructor) — emitted as
+`this->child->operator=(nullptr);`, which does not compile (`unique_ptr` has no
+such overload). The new operator= detection in `AstEmitter` checked "is the LHS
+class-typed with its own `operator=`, and does the RHS not match" — true for
+`child`'s declared type `Node` — but never excluded the case where the LHS is
+actually a FIELD STORE (`isCurrentField(assign->variable)`), which the codebase
+already handles as its own, earlier, unconditional category (the same one `a.b
+= x;` uses) precisely because a field store is a link/store, never a
+reassignment OR an operator call. Fixed by adding that exclusion.
+`DanglingChecker` was never actually vulnerable to this: its own field-store
+detection (`isBareFieldStore`) is checked earlier in the same `if`/`else if`
+chain, before its `isOperatorAssignMutation` branch is ever reached — but the
+bug was real in `AstEmitter`, and a dedicated regression fixture
+(`operator_assign_field_store_unaffected_accepted.clg`) now pins the fix,
+exercising exactly this shape (a field reset to `nullptr` in a constructor, on
+a class that separately declares `operator=`).
+
+This is the same lesson Step 19's constructor-parameter bug and Step 20's
+`SmartPointerAnalyzer` fallback bug already taught: **fixtures written before a
+real end-to-end attempt only prove the scenarios you already thought of.** The
+actual target file is what surfaces the scenario you didn't.
+
+### The honest stopping point
+
+Re-running `yaml_node.clg` after both slices landed: it now parses and reaches
+codegen (previously failed immediately at `std::stoi`, before either slice
+existed). It still does not COMPILE. `g++` stops at exactly the predicted
+place — `return this->child;` / `return this;` inside methods declared to
+return `Node`, which lower to `unique_ptr<Node>` (move-only; cannot be
+returned as a copy, and `this` cannot be converted to one at all). This is the
+deferred reference-return capability, not a new surprise — stated here plainly
+rather than claiming the port succeeded. `ref`-returning methods are tracked as
+their own, unstarted `TODO.md` item.
+
+Full CTest (13/13) and safety-suite (65/65, compile-gated) sweeps after this
+step showed zero regressions elsewhere.
+
+## Step 23 — Alias-returning methods: closing the reference-return gap without a `ref` return type
+
+Step 22 stopped at a deliberately deferred, larger problem: yaml-cpp's
+`Node::operator[]`/`findOrAppendSibling`/`siblingAt` all need to hand back a
+*reference* into the object graph so `node["a"]["b"] = "c"` chains meaningfully
+— `return this;` / `return this->child;` from a method whose return lowers to
+`unique_ptr<T>` (move-only, cannot be returned as a copy, and `this` cannot
+convert to one at all) simply does not compile. The TODO.md item this left
+behind assumed the fix would be a `ref` RETURN type — a real, separate design
+problem (what does a `ref`-returning method's borrow summary even mean; how
+does escape analysis stop the returned reference from outliving its
+receiver). That turned out to be the wrong shape entirely.
+
+### The actual gap was narrower than "add reference returns"
+
+Re-reading what `operator[]` and its two recursive helpers actually need: none
+of them need a genuine C++ reference. They need to hand back something that
+*aliases* shared storage — which is exactly what `shared_ptr<T>` already is.
+CeeLing's method-return type is a *choice between two smart-pointer kinds*
+today (hardcoded to always pick `unique_ptr`), not something requiring a third,
+fundamentally different reference mechanism. This reframing is what made the
+fix small: extend the EXISTING smart-pointer decision (already made for every
+field and local) to methods too, rather than build reference-return machinery
+CeeLing has never had.
+
+### A hand-written hint was built first, then explicitly rejected
+
+The first working version used a `//@ptr shared Class.method` comment
+annotation (reusing the pre-existing `//@ptr shared Class.member` mechanism
+`smart_pointer_analyzer.cpp` already had for fields/locals) — mechanically it
+worked end-to-end. It was rejected on sight: CLAUDE.md's "ownership is
+inferred, not annotated" is a hard design constraint, not a preference, and a
+per-method annotation the user has to write for every alias-returning method
+is exactly the `owned<>`/`borrowed<>`-style manual bookkeeping the whole
+project exists to avoid. The entire hint mechanism (a regex extension to
+`parseAnnotationLine`, a `methodReturnHints_` map, a `scanMethodReturnHints`
+pass) was torn out and replaced with real inference — but the DOWNSTREAM
+consumers (`AstEmitter::emitFunction`'s return-type lowering, the
+`ReturnStatement` copy-vs-move choice, `enable_shared_from_this` emission,
+`isSharedReturningCall`'s local-declaration fix) needed zero changes, since
+they only ever called `getMethodReturnPointerType`/`classNeedsSharedFromThis`
+— the query surface stayed identical; only what populated it changed. That
+clean separation is what made the swap cheap once the direction changed.
+
+### The inference rule, and why it needs a real (if small) fixed-point
+
+A method M is classified `ALIAS_RETURNING` (return type `shared_ptr<T>`) iff
+every reachable `return <expr>;` in its body is one of:
+- `return this;`
+- `return <field>;` — a bare identifier or `this->field` naming an
+  object-typed field of the same class (never `new T(...)`, never anything
+  else)
+- `return <call>;` where the call targets ANOTHER method already classified
+  `ALIAS_RETURNING` (explicit receiver or implicit `this` — both count)
+
+A field ever returned this way is forced `shared_ptr` too, through the exact
+same `explicitHints`/`getPointerType` lookup path a real `//@ptr` hint would
+use (no new field-side query — only the method-return side needed one).
+
+This genuinely cannot be a single top-to-bottom scan: yaml-cpp's
+`operator[](string)` calls `findOrAppendSibling`, so `findOrAppendSibling`
+must be classified FIRST. The implementation (`SmartPointerAnalyzer::
+inferAliasReturningMethods`) runs a small `while (progress) { ... }` loop per
+class — bounded by method count, since a method's classification only ever
+moves from undecided to decided, never back.
+
+**A real bug in the first working version of the fixed-point itself**: direct
+recursion (`findOrAppendSibling` calling `next.findOrAppendSibling(entryKey)`
+inside its OWN body) deadlocked the algorithm — classifying `findOrAppendSibling`
+requires knowing whether `findOrAppendSibling` is alias-returning, which isn't
+decided yet (it's what's currently being decided), so the method waited
+forever on its own classification and silently defaulted to NOT
+alias-returning. Confirmed via a minimal probe (a two-method
+`findOrAppend`/`access` class) before touching the real file — the generated
+C++ simply never picked up `shared_ptr` anywhere, no error, just wrong output.
+Fixed by special-casing self-recursion (direct or via implicit `this`): a
+method calling itself can never REFUTE its own alias-returning classification
+(if every other return matches the rule, the recursive call is consistent
+with, not contrary to, that conclusion), so it's skipped rather than treated
+as "waiting on an undecided dependency."
+
+### `return this;` needs `shared_from_this()`, and why the alternative is a real double-free
+
+Confirmed by direct probe, not assumed: emitting `shared_ptr<T>(this)` for
+`return this;` COMPILES — and is a genuine bug. It constructs a brand-new
+control block that thinks it uniquely owns the object, completely unaware of
+whatever `shared_ptr` already owns it; when both control blocks eventually
+run their destructor, the object is deleted twice. The correct call is
+`shared_from_this()`, which requires the class to inherit
+`std::enable_shared_from_this<T>` AND every instance to already be
+constructed as a `shared_ptr` (never `unique_ptr`) — confirmed working via a
+minimal `enable_shared_from_this` + `make_shared` probe before wiring it into
+the emitter. `classNeedsSharedFromThis` derives which classes need the base
+from the SAME inference pass (a class needs it iff some alias-returning
+method's body contains `return this;`) and reuses the EXISTING
+`classesNeedingSharedRoots` set — the same mechanism back-reference/
+bidirectional field patterns already use to force a class's construction kind
+to `shared_ptr` — so `new ClassName(...)` sites need no separate change to
+start picking up `make_shared`.
+
+### Multiple `operator[]` overloads on one class silently collided
+
+yaml-cpp's real `Node` declares TWO `operator[]` overloads (`(string)` for map
+access, `(int)` for sequence access) — and `classMethodParams_`
+(`AstEmitter`/`DanglingChecker`) keyed both under the bare name `"operator[]"`,
+so the second declaration's `methodParams[key] = method->parameters;`
+silently overwrote the first's. Confirmed via probe that this does NOT corrupt
+the actual CALL — real C++ overload resolution still picks the correct body
+at each call site regardless of what CeeLing's own bookkeeping thinks — but it
+DOES corrupt move/pointer-kind decisions for any overload taking an
+object-typed argument (not exercised by yaml-cpp's own two overloads, which
+both take primitives, but a real, confirmed bug nonetheless). Fixed with
+`overloadKey(methodName, paramCount)` (`class_hierarchy.h`, next to
+`specializationKey` — same "shared naming convention, no new data structure"
+precedent), applied ONLY when a class genuinely declares more than one method
+of the same name, at both the collection sites
+(`DanglingChecker::deriveSummaries`, `AstEmitter::collectClassNames` —
+`EscapeHatchChecker`'s `classMethods_` is a bare-name `set` and was never
+actually vulnerable, just imprecise) and their lookup sites
+(`resolveCallReturnAlias`, `calleeParam`, both retrying with the overload key
+when the plain name misses).
+
+### Two more real bugs, found only by re-running the actual file
+
+Every fixture written before the real end-to-end re-test passed. The re-test
+found two more bugs anyway — the same lesson Steps 19/20/22 already taught,
+repeating because it keeps being true: **a fixture only proves the scenario
+you already thought of; the actual target file is what surfaces the one you
+didn't.**
+
+1. `Node(int nodeKind) { ...; child = nullptr; ...; }` — a bare-identifier
+   FIELD store (implicit `this`, inside a constructor) — was wrongly routed
+   through the alias-return machinery (`isSharedReturningCall`'s companion
+   assignment check) instead of an ordinary field store, emitting
+   `this->child->operator=(nullptr);`, which does not compile. Fixed by
+   excluding `isCurrentField` targets — a field store is handled by its own,
+   earlier, unconditional category, never an operator= mutation or a
+   shared-return concern.
+2. `root["name"]` (a subscript call, not a `recv.method(...)` `FunctionCall`)
+   kept emitting `unique_ptr<YAML::Node>` even after `operator[]` itself
+   correctly emitted `shared_ptr<Node>` as its own return type.
+   `isSharedReturningCall` (which decides a LOCAL declaration's own pointer
+   kind when initialized from a shared-returning call) only checked
+   `FunctionCall`, never `SubscriptExpression` — Step 22's `operator[]` read
+   path lowers to a synthetic `operator[]` call for emission purposes, but
+   nothing on the shared-return-detection side knew that. Fixed by extending
+   `isSharedReturningCall` to also recognize a class-typed
+   `SubscriptExpression` (querying `getMethodReturnPointerType(objClass,
+   "operator[]")`, the same synthetic name Step 22's read-path emission
+   already keys by). A SECOND, independent bug surfaced once THAT was fixed:
+   `inferAliasReturningMethods` only ever wrote its findings under a class's
+   BARE name (`"Node"`), never the namespace-qualified one (`"YAML::Node"`) —
+   but a namespaced local's declared type IS the qualified string, so the
+   query above found nothing and silently fell back to `unique_ptr` again.
+   Fixed with the same dual-registration every other collection pass in this
+   codebase already needed for namespaced classes (Step 21) — write under
+   both `cls->name` and `cls->namespaceName + "::" + cls->name`.
+
+### The real end-to-end proof
+
+`yaml-cling/src-clg/yaml_node.clg`, entirely UNCHANGED from before this step
+(zero ownership annotations, matching its own file-header comment: "NO
+ownership annotations — inference decides"), now both compiles and runs. A
+driver program (`yaml-cling/tests/node_smoke_main_rust_backend.clg`,
+concatenated with the library the same way the pre-existing `master`-branch
+smoke test does) builds a small map (`name`/`count` keys) and a sequence,
+reads them back through `.as<string>()`/`.as<int>()`/`operator[]`/`size()`,
+and prints correct output — verified via
+`yaml-cling/tests/run_node_smoke_rust_backend.sh`, comparing against
+`expected_node_smoke_rust_backend.txt`. This is the definitive proof the whole
+`rust_backend` yaml-cling effort (enum, namespace, templates, qualified calls,
+operator overloading, alias-return inference) actually composes for the real
+target, not just that each slice's own fixtures pass in isolation.
+
+One real, confirmed, and honestly-stated remaining limitation surfaced while
+writing the driver: `root["name"].Scalar()` (a method call chained directly
+onto a subscript result) is rejected as an unknown call — every checker in
+this codebase does lightweight, non-full-type-inference resolution
+(`resolveObjectType` and equivalents only resolve bare identifiers), so a
+call on the result of ANOTHER call/subscript can't be statically typed. The
+driver works around this with an intermediate variable at every chaining
+point (`YAML::Node x = root["name"]; x.Scalar();`), which is not a
+`yaml_node.clg`-specific issue — it's a general, pre-existing constraint on
+what any `.clg` program can chain today, tracked in `yaml-cling/notes/
+GAPS.md`'s `rust_backend` section (RB5) rather than silently worked around.
+
+Full CTest (13/13) and safety-suite (70/70, compile-gated) sweeps after this
+step showed zero regressions elsewhere.

@@ -1,0 +1,39 @@
+//@ expect: accept
+//@ reason: a real bug found while re-testing the actual yaml-cling yaml_node.clg
+//@ reason: (namespace Node, alias-returning operator[]): inferAliasReturningMethods
+//@ reason: only wrote its classification into methodReturnKinds_/explicitHints under
+//@ reason: the class's BARE name ("Node"), never the namespace-qualified one
+//@ reason: ("NS::Node") -- but a namespaced local's declared type IS the qualified
+//@ reason: string, so `n["key"]`'s call-site check (isSharedReturningCall) queried a
+//@ reason: key that was never written and silently defaulted to UNIQUE, producing
+//@ reason: `unique_ptr<NS::Node> x = root->operator[](...)`, which does not compile
+//@ reason: (operator[] itself correctly returns shared_ptr). Same dual-registration
+//@ reason: pattern every other collection pass in this codebase already needed for
+//@ reason: namespaced classes, applied here too.
+//@ run: 5
+
+namespace NS {
+    class Node {
+    public:
+        int val;
+        Node child;
+        Node(int v) {
+            val = v;
+            child = nullptr;
+        }
+        Node get() {
+            return child;
+        }
+        void set(int v) {
+            child = new Node(v);
+        }
+    };
+}
+
+int main() {
+    NS::Node root = new NS::Node(1);
+    root.set(5);
+    NS::Node c = root.get();
+    std::cout << c.val << std::endl;
+    return 0;
+}

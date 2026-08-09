@@ -44,4 +44,26 @@ inline std::string specializationKey(const std::string& methodName, const std::s
     return methodName + "<" + typeArg + ">";
 }
 
+// The internal lookup key for one overload of an OVERLOADED method (same name,
+// different parameter list) -- `overloadKey("operator[]", 1)` -> "operator[]/1".
+// Reused verbatim by every module's classMethods_/classMethodParams_-style maps,
+// same "no new data structures" reasoning as specializationKey. Only classes that
+// genuinely declare more than one method of the same name need this: collection
+// passes key by PLAIN bare name as before for the common non-overloaded case, and
+// only switch to this key when a real name collision is detected, keeping the
+// common case's key shape (and therefore every other lookup site) unchanged.
+//
+// Deliberately keyed by PARAMETER COUNT only, not full parameter types: distinct
+// argument counts is enough to disambiguate CeeLing's actual overload shapes
+// (e.g. yaml-cpp-style `operator[](string)` vs `operator[](int)`, both arity 1,
+// still collide under this key -- call-site resolution for THOSE needs the
+// call's own argument shape, not just count, and is intentionally not attempted
+// here; real C++ overload resolution already picks the right body correctly at
+// the call site regardless, so this key only protects the SEPARATE concern of a
+// checker/emitter module's internal move/pointer-kind bookkeeping from
+// cross-contaminating between overloads of different arity).
+inline std::string overloadKey(const std::string& methodName, size_t paramCount) {
+    return methodName + "/" + std::to_string(paramCount);
+}
+
 } // namespace cling

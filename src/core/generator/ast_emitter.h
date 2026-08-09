@@ -74,12 +74,17 @@ private:
     void emitClass(const ClassDeclaration& cls, std::ostringstream& out);
     // `ownerClass` is the enclosing class for methods/constructors (empty for free
     // functions); inside it, bare field names are lowered to `this->field`.
+    // `name` is what actually gets EMITTED (may be a qualified/specialized name,
+    // e.g. `Node::as<int>`, for an out-of-class specialization); `methodName` is
+    // the method's own BARE name, used ONLY to look up a `@ptr shared` return
+    // hint (analyzer_.getMethodReturnPointerType) -- empty for constructors/free
+    // functions/main, where no such hint is meaningful.
     void emitFunction(const std::string& returnType, const std::string& name,
                       const std::vector<std::pair<std::string, std::string>>& params,
                       const std::vector<StatementPtr>& body, std::ostringstream& out,
                       const std::string& ownerClass = "", int baseIndent = 0,
                       bool isConst = false, bool isVirtual = false,
-                      bool isOverride = false);
+                      bool isOverride = false, const std::string& methodName = "");
     void emitStatement(const Statement* stmt, std::ostringstream& out, int indent);
 
     // Is `name` a field of the class we are currently emitting a method for?
@@ -92,6 +97,13 @@ private:
     // If `expr` is a bare identifier naming a container-typed local/param, return
     // its declared type string (e.g. "std::vector<Node>"); else "".
     std::string containerVarType(const Expression* expr) const;
+    // Is `expr` a call (`recv.method(...)`, receiver resolvable via exprObjectClass)
+    // to a method with a `@ptr shared` return hint? A local declared from such a
+    // call's result must ITSELF be shared_ptr (its C++ initializer is already a
+    // shared_ptr; declaring the local unique_ptr does not compile) -- see the
+    // VariableDeclaration branch in emitStatement, the one call site that needs
+    // this alongside the ordinary smartPointerType(decl->type, ...) lookup.
+    bool isSharedReturningCall(const Expression* expr) const;
 
     // Expression emission.
     std::string emitExpression(const Expression* expr);
@@ -146,6 +158,11 @@ private:
     // Per-class field name -> declared type (for `this->` and nested `->` resolution).
     std::map<std::string, std::map<std::string, std::string>> classFields_;
     std::string currentClass_;  // class whose method is being emitted ("" = free fn)
+    // True while emitting a method whose return was `@ptr shared`-hinted --
+    // ReturnStatement emits a COPY (aliasing) instead of emitMovedArg's move in
+    // this case. False (the default) preserves today's unique_ptr move-return
+    // behavior unchanged for every method without a hint.
+    bool currentMethodReturnsShared_ = false;
 };
 
 } // namespace cling

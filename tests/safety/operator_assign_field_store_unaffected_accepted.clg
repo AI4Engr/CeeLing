@@ -1,0 +1,38 @@
+//@ expect: accept
+//@ reason: regression proof for a real bug found while re-testing the actual
+//@ reason: yaml-cling yaml_node.clg against this feature: a bare-identifier
+//@ reason: FIELD store (`child = nullptr;`, implicit `this`) on a field whose
+//@ reason: declared class happens to declare `operator=` was wrongly routed
+//@ reason: through the operator= mutation path (`this->child->operator=(nullptr)`,
+//@ reason: which does not compile -- unique_ptr has no such overload) instead of
+//@ reason: an ordinary field store (`this->child = nullptr;`). Fixed by excluding
+//@ reason: isCurrentField targets from the operator= detection in AstEmitter --
+//@ reason: field stores are handled by their own, earlier, unconditional branch.
+//@ run: 1 0
+
+class Node {
+public:
+    int val;
+    Node child;
+    void operator=(string text) {
+        val = -1;
+    }
+    Node(int v) {
+        val = v;
+        child = nullptr;
+    }
+    bool hasChild() {
+        if (!child) {
+            return false;
+        }
+        return true;
+    }
+};
+
+int main() {
+    Node a = new Node(1);
+    a.child = new Node(2);
+    Node b = new Node(3);
+    std::cout << a.hasChild() << " " << b.hasChild() << std::endl;
+    return 0;
+}

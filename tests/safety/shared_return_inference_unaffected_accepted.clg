@@ -1,0 +1,39 @@
+//@ expect: accept
+//@ reason: regression proof for the alias-returning-method INFERENCE: a class
+//@ reason: that has an alias-returning method (getChild, which only ever returns
+//@ reason: its own field `child`) also declares an ordinary object-returning
+//@ reason: method (clone, which returns `new Node(...)`) in the same file -- the
+//@ reason: ordinary method must still emit unique_ptr and a real move-return,
+//@ reason: completely unaffected by its sibling's inferred SHARED classification.
+//@ reason: getMethodReturnPointerType defaults to UNIQUE per (class, method) pair,
+//@ reason: not per-class, so one alias-returning method never leaks its SHARED
+//@ reason: kind onto an unrelated sibling method.
+//@ run: 5 9
+
+class Node {
+public:
+    int val;
+    Node child;
+    Node(int v) {
+        val = v;
+        child = nullptr;
+    }
+    Node getChild() {
+        return child;
+    }
+    void setChild(int v) {
+        child = new Node(v);
+    }
+    Node clone() {
+        return new Node(val);
+    }
+};
+
+int main() {
+    Node a = new Node(5);
+    a.setChild(9);
+    Node copy = a.clone();
+    Node kid = a.getChild();
+    std::cout << copy.val << " " << kid.val << std::endl;
+    return 0;
+}

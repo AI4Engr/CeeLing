@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ reason: a class overloading `operator[]` is callable via ordinary subscript
+//@ reason: syntax (`n[key]`) in READ position -- narrowly scoped to VALUE-
+//@ reason: returning operator[] (not the yaml-cpp chained-reference shape,
+//@ reason: which needs a `ref` return CeeLing doesn't have yet). `n[key]`
+//@ reason: routes through AstEmitter as an ordinary method call
+//@ reason: (`n->operator[](key)`), since `n` is a smart pointer and has no
+//@ reason: operator[] of its own to accidentally call instead.
+//@ run: 42
+
+class Box {
+public:
+    int val;
+    Box(int v) { val = v; }
+    int operator[](string key) {
+        return val;
+    }
+};
+
+int main() {
+    Box b = new Box(42);
+    int x = b["anything"];
+    std::cout << x << std::endl;
+    return 0;
+}

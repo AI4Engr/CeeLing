@@ -64,4 +64,12 @@ std::string mapValueType(const std::string& type);
 // since they're always plain-copy values.
 bool isPrimitiveType(const std::string& type);
 
+// Is `qualifiedName` (e.g. "std::stoi") a known qualified FREE function this
+// allow-list covers? Grown incrementally, same discipline as every other allow-
+// list here -- currently just the two yaml-cling needs for `.as<int>()`/
+// `.as<double>()`. Both take a `string` and return a primitive: no object-typed
+// argument or return value, so unlike the vector/string method allow-lists above,
+// no share-vs-move or invalidation summary is needed for these.
+bool isKnownQualifiedFreeFunction(const std::string& qualifiedName);
+
 } // namespace cling
