@@ -146,6 +146,27 @@ real.
   does NOT match (exact-type matching, no implicit conversion) — would have
   compiled clean but `std::terminate`'d at runtime. See
   `tests/safety/throw_catch_basic_accepted.clg` and siblings.
+- **`enum` (unscoped)** — needed zero dangling-analysis changes: an enum type name
+  matches none of the "is this an object type" checks, so it's already treated
+  like `int`. See `tests/safety/enum_basic_accepted.clg`.
+- **`namespace` (desugared to name-qualification)** — `namespace X { class C {...}
+  }` is flattened at parse time into a top-level `ClassDeclaration` tagged
+  `namespaceName = "X"`; every analysis module dual-registers it under both its
+  bare name and its qualified name (`"Node"` and `"YAML::Node"`), the same
+  collection-time-flattening instinct Step 20's inheritance work established.
+  Nested namespaces are rejected, not supported. See
+  `tests/safety/namespace_class_accepted.clg` and siblings.
+- **Return-type-generic methods with specializations (`.as<T>()`)** — narrowly
+  scoped to the shape yaml-cpp needs: a primary generic `<T> T method() {...}`
+  plus concrete specializations `ConcreteType method<ConcreteType>() {...}`,
+  called as `n.as<int>()`. Not general C++ templates (see TODO.md's "light
+  generics" item for the larger, unscoped feature). The only real risk was a
+  grammar-level ambiguity between `x.as<int>()` and an ordinary comparison chain
+  at the same expression position, resolved with a `conflicts:` entry; the
+  checker/emitter mechanism reuses every module's existing per-method lookup maps
+  under a synthetic key (`specializationKey`) instead of adding anything new. See
+  `tests/safety/template_as_basic_accepted.clg` and siblings, and Chapter 18 Step
+  21 for the full design.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**
@@ -252,6 +273,8 @@ The minimum for the single-threaded 99.99% contract:
 > **dangling (#1–#8) + null (#9) + use-after-move (#10) + bounds (#11) + sealed
 > escape hatches (#13–#18).**
 
-Language expressiveness (generics, lambdas, range-for, operator overloading,
-inheritance) is tracked separately in `TODO.md` — safety is the foundation,
-expressiveness is the house built on top.
+Language expressiveness (light/general generics, lambdas, range-for, operator
+overloading, multiple inheritance) is tracked separately in `TODO.md` — safety is
+the foundation, expressiveness is the house built on top. `enum`, `namespace`, and
+the narrow return-type-generic-method slice of templates are done (see "Working
+today" above).

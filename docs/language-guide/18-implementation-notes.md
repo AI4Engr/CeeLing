@@ -1372,3 +1372,180 @@ discipline Step 18's `throw`-matching bug and Step 19 established.
 
 A final check worth doing explicitly: a non-inheriting program's emitted C++ contains
 **zero** occurrences of `virtual` or `: public`. Everything here is additive.
+
+## Step 21 — `enum`, `namespace`, and `.as<T>()`: the three features a real yaml-cling port needed
+
+A companion project (`yaml-cling`) had prior work written against an earlier,
+reference-based CeeLing architecture that already had `namespace`/`enum`/
+templates/operator overloading. That architecture and this branch's
+provenance-table dangling checker are genuinely different designs — the old files
+were kept only as a shape-of-the-target reference, not ported as code. Restarting
+`yaml-cling` on this branch meant closing the specific gap: yaml-cpp-shaped code
+needs `enum` (node kind tags), `namespace` (the `YAML::` prefix), and
+`node.as<T>()` (a scalar's text parsed differently depending on the caller's
+requested return type — `stoi` for `int`, `stod` for `double`, identity for
+`string`). All three landed together, in that order, each reusing a pattern the
+inheritance work (Step 20) had already established rather than inventing new
+mechanisms.
+
+### `enum`: the cheapest possible feature, because C++'s unscoped enum already IS an int
+
+Deliberately **unscoped**, not `enum class`: yaml-cling-shaped code stores a node's
+kind tag in a plain `int` field and compares it against enumerators directly
+(`kind == NodeType::Scalar`), which needs the implicit enumerator→int conversion
+only an unscoped enum gives for free. This is why the feature needed **zero**
+changes to `DanglingChecker`'s move/observer tracking: an enum type name matches
+none of `classNames_`, `isVectorType`, or `isMapType`, so every existing "is this
+an object type" check already falls through to treating it like `int`/`bool` — the
+correct behavior — without a single new branch anywhere in the checker.
+
+The one real bug this surfaced was in a fixture, not the compiler:
+`enum_basic_accepted.clg`'s first draft asserted `//@ run: 2` for `Scalar` in
+`enum Kind { Null, Scalar, Sequence };`, but `Scalar` is enumerator index 1, not 2.
+The compile gate's run tier (Step 4.5) caught the mismatch immediately
+(`FAIL (ran, expected '2', got '1')`) — the compiler was right, the test was
+wrong. Small, but a real validation of why the run tier exists: a `-fsyntax-only`
+check alone would have let a fixture asserting the wrong fact pass forever.
+
+### `namespace`: desugar to name-qualification, reuse inheritance's flattening pattern
+
+Two designs were on the table: give `AstEmitter` a real nested-namespace-aware
+emission path, or desugar `namespace X { class C {...} }` at PARSE time into a
+top-level `ClassDeclaration` tagged `namespaceName = "X"`, then have
+`AstEmitter` re-wrap it in an actual `namespace X { ... }` block on the way out.
+Desugaring won: it means exactly one module (the AST builder) understands
+namespaces exist at all; every other module — `DanglingChecker`,
+`EscapeHatchChecker`, `SmartPointerAnalyzer` — sees an ordinary, if
+oddly-named, top-level class. This is the same "solve it once at the edge, leave
+the middle unchanged" instinct behind Step 20's member flattening.
+
+`buildNamespaceDeclaration` walks the namespace body and tags each
+`ClassDeclaration`/`EnumDeclaration` it finds with the enclosing namespace's name;
+a nested `namespace` inside a `namespace` is rejected outright with a targeted
+diagnostic rather than silently flattened or accepted (`namespace_nested_rejected.
+clg`) — nesting was never a requirement and silently getting it wrong (e.g.
+losing a qualifier level) would be worse than refusing it.
+
+**The actual work was DUAL-REGISTRATION, and it touched four modules because each
+one keeps separate, independently-keyed state.** A namespaced class must be findable
+under both its bare name (`"Node"`, for lookups inside its own namespace's other
+members) and its fully-qualified name (`"YAML::Node"`, for lookups at every external
+use site) — so `collectClasses`/`collectCallables`/`collectClassNames`/
+`analyzeClassDeclaration` in `EscapeHatchChecker`, `DanglingChecker`, `AstEmitter`,
+and `SmartPointerAnalyzer` respectively each got one extra line inserting the
+qualified-name entry alongside the existing bare-name one. No downstream lookup
+site needed to change — same shape of win Step 20's flattening produced, just
+dual-keying instead of copying-down-the-hierarchy.
+
+A companion grammar fix fell out of testing this, not the original plan:
+`new_expression` only accepted a bare `identifier` for the type being constructed,
+so `new YAML::Node(...)` didn't parse at all. Extended to `choice($.identifier,
+$.scoped_identifier)`; `getNodeText` already captures the full qualified text
+verbatim, so no AST builder change was needed once the grammar accepted it.
+
+**The one genuinely subtle bug, found through direct debug instrumentation, not
+inspection:** a namespaced local correctly got `shared_ptr` instead of the
+correctly-inferred `unique_ptr`. The instinct was to blame `SmartPointerAnalyzer`
+for being "namespace-unaware" and strip the `YAML::` qualifier in `AstEmitter::
+smartPointerType` before querying it. That was backwards. Once
+`SmartPointerAnalyzer::analyzeClassDeclaration` was given the same dual-registration
+treatment (a prerequisite for move-tracking a namespaced local to work at all), it
+started registering a namespaced local's OWN pointer-kind decision under the
+QUALIFIED name — because `decl->type` for `YAML::Node a;` literally contains the
+string `"YAML::Node"`, and that's the key `SmartPointerAnalyzer` naturally uses.
+Stripping the qualifier on the query side therefore looked up a key that was never
+written, silently fell through `getPointerType`'s not-found fallback (which
+defaults to `SHARED` — the same fallback behavior Step 19's verification sweep had
+already found and worked around once for vectors), and produced the wrong pointer
+kind with no error, no warning, nothing. Confirmed via temporary `getenv`-gated
+debug printing of candidate `pointerDecisions` keys, comparing the registered key
+(`"main|YAML::Node.a"`) against the (wrong, post-stripping) queried key
+(`"...|Node.a"`). The fix was to delete the stripping entirely — pass `className`
+through to `getPointerType` exactly as spelled at the call site, matching however
+registration actually happened, never re-normalize on the query side.
+
+### `.as<T>()`: the risk was one grammar ambiguity; the mechanism was one string key
+
+Scope was deliberately narrow, confirmed with the project owner before starting:
+only the exact shape yaml-cpp needs — a primary generic `<T> T method() {...}`
+(one type parameter, return type must equal it) plus concrete specializations
+`ConcreteType method<ConcreteType>() {...}`, called as `n.as<int>()`. Not generic
+free functions, not parameter-type genericity, not multiple type parameters —
+those stay filed under "light generics" in TODO.md as a separate, larger,
+not-yet-scoped feature.
+
+**The only place this was genuinely risky was grammar, and only in expression
+position.** `x.as<int>()` and an ordinary comparison chain like `a < b` are both
+grammatically legal starting from the exact same prefix — `identifier '<'` or
+`member_access '<'` — at the same `$.expression` position. This is categorically
+different from `generic_type`'s `vector<T>` case (Step 13), which only ever
+appears in `$.type` position and so could be resolved with a numeric `prec()`;
+here BOTH interpretations are live at the SAME position, which is exactly the
+shape `container_declaration` vs `variable_declaration` needed a real `conflicts:`
+entry for, not a precedence tiebreak. `template_call`'s completion shape (a
+`type`, then `>`, then `(`) never coincides with an ordinary comparison's
+shape, so GLR always resolves the ambiguity correctly once told to explore both —
+but "told to explore both" took two iterations: the first `generate-grammar`
+attempt named `primary_expression` vs `template_call` as unresolved; adding that
+pair to `conflicts:` surfaced a second, related pair, `expression` vs
+`template_call` (from the `member_access` variant of the callee). Both added,
+zero conflicts remained. Tree-sitter's own conflict reporter named exactly what
+was needed each time — no guessing required, just iterating on its output.
+
+**Once the grammar risk was resolved, the checker/emitter mechanism turned out to
+be almost nothing new.** A specialization's BODY has zero genericity in it once
+you know which body belongs to which call — `int as<int>() { return rawValue; }`
+is an entirely ordinary method. So the only new mechanism needed was a shared
+naming convention for a lookup key, not a new data structure:
+`specializationKey(methodName, typeArg)` → `"as<int>"` (`class_hierarchy.h`,
+next to `classesInBaseFirstOrder`, the same "one shared helper instead of four
+reimplementations" instinct). A specialization registers under this synthetic key
+in the exact same `classMethods_`/`classMethodParams_`-shaped maps every module
+already had from inheritance/enum/namespace work; a call carrying a type argument
+(`FunctionCall::templateArg`) constructs the identical key at every existing
+lookup site — `EscapeHatchChecker::isKnownCallable`, `DanglingChecker::
+resolveCallReturnAlias`, `AstEmitter::calleeParam` — instead of the bare method
+name, only when `templateArg` is non-empty. Every one of those lookup sites
+already existed; this was a keying change at each, not new logic.
+
+**Emission needed one real new shape**, because C++ itself requires it: the
+primary emits `template<typename T> T as() {...}` INSIDE the class body (an
+ordinary method position), but each specialization must emit OUTSIDE the class
+body, after the closing `};`, as `template<> int Node::as<int>() {...}` — the C++
+rule for explicit member-template specializations. `emitClass` collects
+specializations during its normal member-emission loop instead of emitting them
+inline, then emits each in a second pass once the class body closes. The call
+site itself emits as literal `n->as<int>()` — CeeLing does no dispatch of its own
+at the call site; real C++ template resolution picks the right specialization at
+compile time, and CeeLing's `specializationKey` lookups are a separate,
+analysis-only mechanism that must agree in spirit but never needs to appear in
+the emitted text.
+
+One easy-to-miss detail cost a round of debugging output inspection before the
+fix was obvious: the `<int>`/`<string>` text has to go through the same
+`cppTypeFor` mapping every other type does (`string` → `std::string`) — both in
+the out-of-class qualified name and at the call site. Using the raw CeeLing
+token (`Node::as<string>` instead of `Node::as<std::string>`) doesn't error; it
+silently defines a second, unrelated template instantiation that the real
+`n->as<std::string>()` call site never binds to, so the specialization's body
+would never run and the primary's `throw` would fire instead — a bug that only
+`-fsyntax-only` cannot catch, and that the `.as<T>()` fixture's `//@ run:` tier
+was specifically added to guard against for exactly this reason.
+
+### Runtime proof, again
+
+`template_as_basic_accepted.clg` is **run**, not just compiled: it asserts
+`42 converted`, the concrete output of both specializations actually being
+selected and executed by real C++ template resolution. A compile-only check would
+have passed even with the `cppTypeFor` bug above (raw `string` token) still in
+place — the code compiles fine, it just quietly runs the wrong body — so this is
+the same "the claim is a runtime property" reasoning Step 18 and Step 20 already
+established, applied here because template specialization dispatch is exactly
+that kind of claim.
+
+A final regression check worth calling out explicitly, since it's what the whole
+grammar-conflicts investigation was protecting against:
+`template_comparison_unaffected_accepted.clg` asserts `1 0` for `a < b` and
+`x.length() < 5` — both still parse and evaluate as ordinary comparisons, not
+misparsed as an incomplete `template_call`. Full CTest (13/13) and safety-suite
+(58/58, compile-gated) sweeps after this step showed zero regressions elsewhere.

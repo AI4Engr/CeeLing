@@ -4,6 +4,7 @@
 //@ reason: syntax, so a user cannot write one (or forget to) -- AstEmitter emits
 //@ reason: `virtual ~Base() = default;` for every class used as a base, closing this
 //@ reason: hole BY CONSTRUCTION rather than by a rule users must remember.
+//@ run: 16
 //
 // Verify by eye that the generated C++ actually contains `virtual ~Shape() = default;`
 // -- the safety claim here is about the emitted output, not just about the program

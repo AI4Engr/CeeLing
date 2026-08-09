@@ -1,0 +1,28 @@
+//@ expect: accept
+//@ reason: the specific regression risk the template plan flagged as highest-
+//@ reason: uncertainty: `x.as<int>()` and an ordinary comparison chain are both
+//@ reason: grammatically legal at the same $.expression position after
+//@ reason: `identifier '<'`/`member_access '<'`, resolved via a GLR conflicts
+//@ reason: entry. This checks a plain `a < b` AND a method-call-then-compare
+//@ reason: shape (`x.length() < 5`) both still parse as ordinary
+//@ reason: binary_expression, not misparsed as an incomplete template_call.
+//@ run: 1 0
+
+class Box {
+public:
+    int length_;
+    Box(int l) { length_ = l; }
+    int length() {
+        return length_;
+    }
+};
+
+int main() {
+    int a = 3;
+    int b = 5;
+    bool cmp = a < b;
+    Box x = new Box(10);
+    bool cmp2 = x.length() < 5;
+    std::cout << cmp << " " << cmp2 << std::endl;
+    return 0;
+}

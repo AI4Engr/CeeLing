@@ -35,9 +35,30 @@ std::string AstEmitter::emit(const Program& program) {
     }
     out << "\n";
 
+    // Group top-level declarations by namespaceName and wrap each contiguous run in
+    // `namespace X { ... }`. Desugaring (ASTBuilder::buildNamespaceDeclaration)
+    // preserves each namespace's members as a contiguous block in program order and
+    // never interleaves two namespaces, so a simple "did the namespace change since
+    // the last statement" check is sufficient -- no separate grouping/sorting pass
+    // needed. A statement with an empty namespaceName (the common case, and every
+    // statement type that doesn't have the field at all) emits exactly as before,
+    // so a namespace-free program's output is byte-identical to pre-namespace output.
+    std::string openNamespace;
     for (const auto& stmt : program.statements) {
+        std::string stmtNamespace;
+        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            stmtNamespace = cls->namespaceName;
+        } else if (auto enm = dynamic_cast<const EnumDeclaration*>(stmt.get())) {
+            stmtNamespace = enm->namespaceName;
+        }
+        if (stmtNamespace != openNamespace) {
+            if (!openNamespace.empty()) out << "}\n\n";
+            if (!stmtNamespace.empty()) out << "namespace " << stmtNamespace << " {\n\n";
+            openNamespace = stmtNamespace;
+        }
         emitTopLevel(stmt.get(), out);
     }
+    if (!openNamespace.empty()) out << "}\n\n";
     return out.str();
 }
 
@@ -71,8 +92,30 @@ void AstEmitter::collectClassNames(const Program& program) {
             if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
                 fields[var->identifier] = var->type;
             } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                methodParams[method->name] = method->parameters;
+                // A specialization registers under its synthetic key ("as<int>"),
+                // matching EscapeHatchChecker/DanglingChecker's identical
+                // reasoning -- calleeParam below resolves a `.as<int>()` call to
+                // this same key via call.templateArg.
+                const std::string key = method->specializationArg.empty()
+                    ? method->name
+                    : specializationKey(method->name, method->specializationArg);
+                methodParams[key] = method->parameters;
             }
+        }
+
+        // Dual-register under the QUALIFIED name too (`YAML::Node` alongside
+        // `Node`), so `YAML::Node` used as a TYPE from outside the namespace (a
+        // field/parameter/variable declaration, or `new YAML::Node(...)`) resolves
+        // through the exact same classNames_/classFields_/classMethodParams_ lookups
+        // every other check already uses -- no new lookup call sites needed,
+        // matching how base-class member flattening above avoided touching call
+        // sites too. Done as a plain copy (not a shared reference) since the two
+        // keys never need to diverge after this point.
+        if (!cls->namespaceName.empty()) {
+            const std::string qualified = cls->namespaceName + "::" + cls->name;
+            classNames_.insert(qualified);
+            classFields_[qualified] = fields;
+            classMethodParams_[qualified] = methodParams;
         }
     }
 }
@@ -87,7 +130,10 @@ std::pair<std::string, std::string> AstEmitter::calleeParam(const FunctionCall& 
         if (objClass.empty()) return {};
         auto clsIt = classMethodParams_.find(objClass);
         if (clsIt == classMethodParams_.end()) return {};
-        auto paramIt = clsIt->second.find(member->member);
+        const std::string methodKey = call.templateArg.empty()
+            ? member->member
+            : specializationKey(member->member, call.templateArg);
+        auto paramIt = clsIt->second.find(methodKey);
         if (paramIt == clsIt->second.end()) return {};
         params = &paramIt->second;
     } else {
@@ -191,6 +237,15 @@ AstEmitter::VarKind AstEmitter::kindOf(const std::string& name) const {
 
 std::string AstEmitter::smartPointerType(const std::string& className,
                                          const std::string& varName) const {
+    // `className` is passed through VERBATIM to SmartPointerAnalyzer -- do not
+    // strip a namespace qualifier here. SmartPointerAnalyzer::analyzeClassDeclaration
+    // dual-registers a namespaced class's NAME (in `classNames`), but a specific
+    // local/parameter/field's OWN pointer-kind decision is registered under
+    // whichever spelling its declared-type STRING actually used (decl.type /
+    // ptype) -- "YAML::Node" for a `YAML::Node a;` local. Stripping here would look
+    // up a DIFFERENT (nonexistent) registration and silently fall through to
+    // getPointerType's raw SHARED default -- confirmed as a real bug this way (a
+    // never-shared namespaced local got shared_ptr instead of unique_ptr).
     switch (analyzer_.getPointerType(className, varName)) {
         case PointerType::UNIQUE: return "std::unique_ptr";
         case PointerType::WEAK:   return "std::weak_ptr";
@@ -225,6 +280,16 @@ std::string AstEmitter::factoryFor(const std::string& className, const std::stri
 void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
     if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt)) {
         emitClass(*cls, out);
+    } else if (auto enm = dynamic_cast<const EnumDeclaration*>(stmt)) {
+        // Unscoped enum -- see EnumDeclaration's comment for why (implicit
+        // enumerator->int conversion, matching how a CeeLing enum-typed value is
+        // stored/passed as a plain int).
+        out << "enum " << enm->name << " { ";
+        for (size_t i = 0; i < enm->enumerators.size(); ++i) {
+            if (i > 0) out << ", ";
+            out << enm->enumerators[i];
+        }
+        out << " };\n\n";
     } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt)) {
         emitFunction(fn->returnType, fn->name, fn->parameters, fn->body, out);
     } else if (auto mn = dynamic_cast<const MainFunction*>(stmt)) {
@@ -266,6 +331,11 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
         out << "public:\n";
     }
 
+    // Specializations (`int as<int>() {...}`) emit OUTSIDE the class body, as
+    // `template<> int Node::as<int>() {...}` -- the C++ rule for explicit member-
+    // template specializations. Collected here, emitted after the closing `};`.
+    std::vector<const MethodDeclaration*> specializations;
+
     for (const auto& member : cls.members) {
         if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
             // Member field. Object-typed fields become smart pointers.
@@ -279,11 +349,29 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
         } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
             emitFunction("", ctor->name, ctor->parameters, ctor->body, out, cls.name, 1);
         } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+            if (!method->specializationArg.empty()) {
+                specializations.push_back(method);
+                continue;
+            }
+            if (!method->typeParameter.empty()) {
+                out << indentStr(1) << "template<typename " << method->typeParameter << ">\n";
+            }
             emitFunction(method->returnType, method->name, method->parameters, method->body,
                          out, cls.name, 1, method->isConst, method->isVirtual, method->isOverride);
         }
     }
     out << "};\n\n";
+
+    for (const auto* method : specializations) {
+        out << "template<>\n";
+        // The `<int>`/`<std::string>` in the qualified name must match the emitted
+        // C++ type spelling (cppTypeFor's string->std::string mapping etc.), not the
+        // raw CeeLing source token, or the specialization silently fails to bind to
+        // its call sites (a second, distinct overload instead of a specialization).
+        emitFunction(method->returnType,
+                     cls.name + "::" + method->name + "<" + cppTypeFor(method->specializationArg, "") + ">",
+                     method->parameters, method->body, out, cls.name, 0, method->isConst);
+    }
 }
 
 void AstEmitter::emitFunction(const std::string& returnType, const std::string& name,
@@ -651,10 +739,18 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         std::string receiverName;
         std::string methodName;
         if (auto m = dynamic_cast<const MemberAccess*>(call->callee.get())) {
-            // Method call `recv.method(args)` -> `recv (-> or .) method(args)`.
+            // Method call `recv.method(args)` -> `recv (-> or .) method(args)`, or
+            // `recv (-> or .) method<T>(args)` when the call carries a type argument
+            // (`n.as<int>()`) -- real C++ template resolution picks the specialization
+            // at compile time; CeeLing's own specializationKey lookups (calleeParam,
+            // isKnownCallable, resolveCallReturnAlias) are a separate, analysis-only
+            // mechanism and must agree in spirit but not literally emit anything here.
             const std::string recv = emitExpression(m->object.get());
             const std::string op = exprObjectClass(m->object.get()).empty() ? "." : "->";
             prefix = recv + op + m->member;
+            if (!call->templateArg.empty()) {
+                prefix += "<" + cppTypeFor(call->templateArg, "") + ">";
+            }
             receiverContainerType = containerVarType(m->object.get());
             if (auto id = dynamic_cast<const Identifier*>(m->object.get())) {
                 receiverName = id->name;
@@ -662,6 +758,9 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             methodName = m->member;
         } else {
             prefix = call->function_name;
+            if (!call->templateArg.empty()) {
+                prefix += "<" + cppTypeFor(call->templateArg, "") + ">";
+            }
         }
         const bool receiverIsVector = isVectorType(receiverContainerType);
         const bool elementIsShared = receiverIsVector && analyzer_.containerElementIsShared(receiverName);

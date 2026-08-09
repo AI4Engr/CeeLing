@@ -6,6 +6,7 @@
 //@ reason: valid code -- a safe failure) and AstEmitter::fieldType would return "" for
 //@ reason: `age` (emitting `.` instead of `->` on a smart pointer -- a SILENTLY WRONG
 //@ reason: failure, which is why flattening matters most in the emitter).
+//@ run: 7
 
 class Animal {
 public:

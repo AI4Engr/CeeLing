@@ -59,6 +59,19 @@ void EscapeHatchChecker::collectClasses(const Program& program) {
                 }
             }
         }
+
+        // Dual-register under the qualified name (`YAML::Node`), mirroring
+        // AstEmitter::collectClassNames -- a variable declared `YAML::Node x;` needs
+        // classFields_["YAML::Node"] to resolve `x`'s field accesses, the same
+        // reason the emitter needs it for codegen.
+        if (!cls->namespaceName.empty()) {
+            const std::string qualified = cls->namespaceName + "::" + cls->name;
+            classNames_.insert(qualified);
+            classFields_[qualified] = fields;
+            if (classesWithOwnGet_.count(cls->name) > 0) {
+                classesWithOwnGet_.insert(qualified);
+            }
+        }
     }
 }
 
@@ -88,11 +101,27 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
         }
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                methods.insert(method->name);
+                // A specialization (`int as<int>() {...}`) registers under its
+                // SYNTHETIC key ("as<int>"), not the bare method name -- a call
+                // WITHOUT a type argument must never resolve to a specialization's
+                // body (isKnownCallable below only ever looks up the synthetic key
+                // when the call itself carries a matching templateArg). The bare
+                // name stays reserved for the primary generic (or an ordinary
+                // method, the common case where specializationArg is empty).
+                const std::string key = method->specializationArg.empty()
+                    ? method->name
+                    : specializationKey(method->name, method->specializationArg);
+                methods.insert(key);
                 if (method->isVirtual || method->isOverride) {
-                    virtuals.insert(method->name);
+                    virtuals.insert(key);
                 }
             }
+        }
+
+        if (!cls->namespaceName.empty()) {
+            const std::string qualified = cls->namespaceName + "::" + cls->name;
+            classMethods_[qualified] = methods;
+            classVirtualMethods_[qualified] = virtuals;
         }
     }
 }
@@ -135,15 +164,26 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         const std::string objClass = resolveObjectType(member->object.get());
         if (objClass.empty()) return false;
         auto it = classMethods_.find(objClass);
-        return it != classMethods_.end() && it->second.count(member->member) > 0;
+        if (it == classMethods_.end()) return false;
+        // A call carrying a type argument (`n.as<int>()`) resolves to the
+        // SPECIALIZATION's synthetic key, never the bare method name -- a
+        // specialization must exist for the exact requested type, matching real
+        // C++ (there is no implicit conversion between specializations).
+        const std::string key = call.templateArg.empty()
+            ? member->member
+            : specializationKey(member->member, call.templateArg);
+        return it->second.count(key) > 0;
     }
     // Plain call `f(args)`: either a free function, or -- inside a method body -- a
     // bare same-class method call with an implicit `this` receiver.
-    if (knownFreeFunctions_.count(call.function_name) > 0) return true;
+    if (call.templateArg.empty() && knownFreeFunctions_.count(call.function_name) > 0) return true;
     if (!currentClass_.empty()) {
         auto it = classMethods_.find(currentClass_);
-        if (it != classMethods_.end() && it->second.count(call.function_name) > 0) {
-            return true;
+        if (it != classMethods_.end()) {
+            const std::string key = call.templateArg.empty()
+                ? call.function_name
+                : specializationKey(call.function_name, call.templateArg);
+            if (it->second.count(key) > 0) return true;
         }
     }
     return false;

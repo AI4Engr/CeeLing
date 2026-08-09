@@ -126,6 +126,21 @@
     }
   },
   {
+    "type": "enum_declaration",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "expression",
     "named": true,
     "fields": {},
@@ -155,6 +170,10 @@
         },
         {
           "type": "subscript_expression",
+          "named": true
+        },
+        {
+          "type": "template_call",
           "named": true
         },
         {
@@ -385,6 +404,14 @@
           "named": true
         },
         {
+          "type": "method_specialization",
+          "named": true
+        },
+        {
+          "type": "method_type_parameter",
+          "named": true
+        },
+        {
           "type": "parameter_list",
           "named": true
         },
@@ -394,6 +421,55 @@
         },
         {
           "type": "type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "method_specialization",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "method_type_parameter",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "namespace_declaration",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "statement",
           "named": true
         }
       ]
@@ -413,6 +489,10 @@
         },
         {
           "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "scoped_identifier",
           "named": true
         }
       ]
@@ -539,6 +619,10 @@
           "named": true
         },
         {
+          "type": "enum_declaration",
+          "named": true
+        },
+        {
           "type": "expression_statement",
           "named": true
         },
@@ -560,6 +644,10 @@
         },
         {
           "type": "main_function",
+          "named": true
+        },
+        {
+          "type": "namespace_declaration",
           "named": true
         },
         {
@@ -607,6 +695,37 @@
         },
         {
           "type": "subscript_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "template_call",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "argument_list",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "member_access",
+          "named": true
+        },
+        {
+          "type": "subscript_expression",
+          "named": true
+        },
+        {
+          "type": "type",
           "named": true
         }
       ]
@@ -868,6 +987,10 @@
     "named": false
   },
   {
+    "type": "enum",
+    "named": false
+  },
+  {
     "type": "float",
     "named": false
   },
@@ -889,6 +1012,10 @@
   },
   {
     "type": "main",
+    "named": false
+  },
+  {
+    "type": "namespace",
     "named": false
   },
   {

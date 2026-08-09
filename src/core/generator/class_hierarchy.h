@@ -30,4 +30,18 @@ namespace cling {
 // dropped, so this can never silently lose a class.
 std::vector<const ClassDeclaration*> classesInBaseFirstOrder(const Program& program);
 
+// The internal lookup key a method SPECIALIZATION is registered/resolved under
+// (`specializationKey("as", "int")` -> `"as<int>"`), reused verbatim by every
+// analysis module's classMethods_/classMethodParams_-style maps -- no new data
+// structures needed, just a naming convention every existing per-method lookup
+// site already keys its maps by. A specialization (`int as<int>() {...}`) is
+// registered under this key, NOT under the bare method name; a call carrying a
+// type argument (`n.as<int>()`, FunctionCall::templateArg == "int") is resolved
+// by constructing this same key instead of using the bare method name. The
+// primary generic (`<T> T as() {...}`) is registered under the bare name as
+// usual, since it is a real (if never meaningfully callable) method.
+inline std::string specializationKey(const std::string& methodName, const std::string& typeArg) {
+    return methodName + "<" + typeArg + ">";
+}
+
 } // namespace cling

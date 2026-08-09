@@ -4,6 +4,7 @@
 //@ reason: and `-fsyntax-only` would happily accept code that compiles but calls the
 //@ reason: base version (the same class of "compiles but does the wrong thing" bug
 //@ reason: the throw/catch work hit at Step 18).
+//@ run: woof
 //
 // Also exercises the declared-vs-constructed type split in AstEmitter::factoryFor:
 // `a` is declared `Animal` but constructed as a `Dog`, so the smart-pointer KIND

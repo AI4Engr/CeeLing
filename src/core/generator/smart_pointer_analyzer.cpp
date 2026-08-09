@@ -667,6 +667,21 @@ void SmartPointerAnalyzer::analyzeAssignmentStatement(const AssignmentStatement&
 void SmartPointerAnalyzer::analyzeClassDeclaration(const ClassDeclaration& cls) {
     classNames.insert(cls.name);
     classRelationships[cls.name].className = cls.name;
+    // Also register the QUALIFIED name (`YAML::Node`): analyzeVariableDeclaration/
+    // registerParameters gate their own registration on `classNames.find(type) !=
+    // end()`, keyed by the literal declared-type STRING (which for a `YAML::Node a;`
+    // local is "YAML::Node", not "Node"). Without this, such a local is silently
+    // never registered as a VariableReference at all -- not "wrongly defaults to
+    // shared", the TRUE getPointerType fallback (confirmed by probe: a plain,
+    // never-shared class correctly gets UNIQUE via the ordinary two-pass decision,
+    // because it IS registered; a namespaced one wasn't, and got the raw fallback
+    // instead, which happens to also be SHARED -- easy to mistake for "no bug" until
+    // move-tracking is checked specifically). classRelationships stays keyed by the
+    // SIMPLE name only (cls.name) -- back-reference/bidirectional detection doesn't
+    // need a second entry, only the classNames gate does.
+    if (!cls.namespaceName.empty()) {
+        classNames.insert(cls.namespaceName + "::" + cls.name);
+    }
 
     // Inherited fields need their own entries under the DERIVED class's scope, not
     // just the base's: this analyzer keys everything by (scope, class, variable), so

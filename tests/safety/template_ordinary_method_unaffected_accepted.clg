@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ reason: regression proof for the template grammar/emitter changes: an
+//@ reason: ordinary method (no type parameter, no specialization) must parse
+//@ reason: and emit completely unaffected -- method_type_parameter and
+//@ reason: method_specialization are both optional, so a plain `int double_()`
+//@ reason: declaration must take neither path.
+//@ run: 10
+
+class Counter {
+public:
+    int value;
+    Counter(int v) { value = v; }
+    int double_() {
+        return value + value;
+    }
+};
+
+int main() {
+    Counter c = new Counter(5);
+    std::cout << c.double_() << std::endl;
+    return 0;
+}

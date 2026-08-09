@@ -1,0 +1,34 @@
+//@ expect: accept
+//@ reason: the real yaml_node.clg shape: a primary generic `<T> T as() {...}`
+//@ reason: (never meaningfully invoked -- CeeLing requires an explicit type
+//@ reason: argument at every call site) plus `int`/`string` specializations,
+//@ reason: called via `.as<int>()`/`.as<string>()`. The primary emits as a real
+//@ reason: C++ template member; each specialization emits out-of-class as
+//@ reason: `template<> int Node::as<int>() {...}`; the call site passes the type
+//@ reason: argument through so real C++ template resolution dispatches to the
+//@ reason: right body -- this run assertion is the definitive proof of that,
+//@ reason: not just that it compiles.
+//@ run: 42 converted
+
+class Node {
+public:
+    int rawValue;
+    Node(int v) { rawValue = v; }
+    <T> T as() {
+        throw "unsupported";
+    }
+    int as<int>() {
+        return rawValue;
+    }
+    string as<string>() {
+        return "converted";
+    }
+};
+
+int main() {
+    Node n = new Node(42);
+    int x = n.as<int>();
+    string s = n.as<string>();
+    std::cout << x << " " << s << std::endl;
+    return 0;
+}

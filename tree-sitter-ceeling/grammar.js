@@ -17,7 +17,19 @@ module.exports = grammar({
   // correctly at parse time using that lookahead; this just tells the generator the
   // ambiguity is expected and real (not a grammar bug to eliminate via precedence).
   conflicts: $ => [
-    [$.container_declaration, $.type]
+    [$.container_declaration, $.type],
+    // `identifier '<'` and `member_access '<'` are both ambiguous between an
+    // ordinary comparison (`x < y`, `x.as < y`) and the start of a call-site type
+    // argument (`f<int>(...)`, `x.as<int>(...)`) -- both are legal at the exact
+    // same $.expression position. GLR explores both and keeps whichever completes:
+    // template_call only succeeds when it sees the full `< type > (` shape; an
+    // ordinary comparison operand never does, so this resolves deterministically
+    // at parse time with no real ambiguity in practice. Two entries because a bare
+    // callee (`f<int>()`) and a method-call callee (`x.as<int>()`) hit the
+    // ambiguity through different left-hand productions (primary_expression's
+    // identifier vs. member_access itself).
+    [$.primary_expression, $.template_call],
+    [$.expression, $.template_call]
   ],
 
   rules: {
@@ -31,6 +43,8 @@ module.exports = grammar({
       $.return_statement,
       $.main_function,
       $.class_declaration,
+      $.enum_declaration,
+      $.namespace_declaration,
       $.include_statement,
       $.if_statement,
       $.while_statement,
@@ -38,6 +52,35 @@ module.exports = grammar({
       $.throw_statement,
       $.try_statement,
       $.expression_statement
+    ),
+
+    // An unscoped C++ enum: `enum Name { A, B, C };`. Deliberately unscoped (not
+    // `enum class`) -- yaml-cling-shaped code stores an enum value in a plain `int`
+    // field and passes an enumerator where an `int` is expected
+    // (`new Node(NodeType::Undefined)`), which needs the implicit enumerator->int
+    // conversion `enum class` forbids.
+    enum_declaration: $ => seq(
+      'enum',
+      $.identifier,
+      '{',
+      $.identifier,
+      repeat(seq(',', $.identifier)),
+      optional(','),
+      '}',
+      optional(';')
+    ),
+
+    // `namespace Name { ... }` -- single level only (no nested namespaces; see
+    // ast_builder.cpp's buildNamespaceDeclaration, which desugars this into
+    // top-level declarations rather than a real nested scope, mirroring how single
+    // inheritance stayed one base instead of a full base-chain to keep the analysis
+    // modules unchanged).
+    namespace_declaration: $ => seq(
+      'namespace',
+      $.identifier,
+      '{',
+      repeat($.statement),
+      '}'
     ),
 
     // A bare expression used as a statement, e.g. `sink(a);`.
@@ -229,10 +272,22 @@ module.exports = grammar({
     // alongside `const`) carry polymorphic dispatch through to the generated C++ --
     // CeeLing does not implement its own vtable, it reuses the C++ compiler's. Both
     // are placed exactly where ordinary C++ puts them, so the syntax reads the same.
+    //
+    // A leading `<T>` (`method_type_parameter`) declares a PRIMARY generic method,
+    // narrowly scoped to return-type genericity only (`<T> T as() {...}`) -- the
+    // shape yaml-cpp's `node.as<T>()` needs, nothing more general (no generic
+    // parameter types, no multiple type parameters). A trailing `<Type>` right after
+    // the method name (`method_specialization`) declares a SPECIALIZATION of a
+    // same-named primary (`int as<int>() {...}`). Both positions are inside a
+    // DECLARATION, never in expression position, so neither competes with
+    // binary_expression's comparison rule the way the call-site type argument
+    // (template_call, below) does -- no conflict risk here.
     method_declaration: $ => seq(
+      optional($.method_type_parameter),
       optional('virtual'),
       $.type,
       $.identifier,
+      optional($.method_specialization),
       '(',
       optional($.parameter_list),
       ')',
@@ -242,6 +297,16 @@ module.exports = grammar({
       repeat($.statement),
       '}'
     ),
+
+    // `<T>` before a method's return type: declares ONE type parameter, usable only
+    // as that method's own return type (`<T> T as()`). Enforced in ast_builder.cpp,
+    // not here -- the grammar doesn't know the return type must equal T.
+    method_type_parameter: $ => seq('<', $.identifier, '>'),
+
+    // `<int>` right after a method name: this declaration SPECIALIZES a same-named
+    // primary generic method for one concrete type. Single type argument only
+    // (matches the narrowed scope -- no `f<A,B>()`).
+    method_specialization: $ => seq('<', $.type, '>'),
 
     constructor_declaration: $ => seq(
       $.identifier,
@@ -304,6 +369,7 @@ module.exports = grammar({
     expression: $ => choice(
       $.binary_expression,
       $.unary_expression,
+      $.template_call,
       $.function_call,
       $.new_expression,
       $.member_access,
@@ -337,9 +403,10 @@ module.exports = grammar({
       $.expression
     )),
 
+    // `new Node(...)` or, when the class lives in a namespace, `new YAML::Node(...)`.
     new_expression: $ => seq(
       'new',
-      $.identifier,
+      choice($.identifier, $.scoped_identifier),
       '(',
       optional($.argument_list),
       ')'
@@ -393,6 +460,30 @@ module.exports = grammar({
       optional($.argument_list),
       ')'
     ),
+
+    // `n.as<int>()` -- a call carrying an explicit type argument, resolving a
+    // specialization of a same-named primary generic method (method_type_parameter/
+    // method_specialization, above). This is the ONE genuinely risky grammar
+    // addition in this slice: `<` after ANY expression is otherwise consumed only
+    // by binary_expression's comparison rule (prec.left(4, ... '<' ...)), and BOTH
+    // interpretations are legal at the exact same $.expression position -- unlike
+    // generic_type's `scoped_identifier '<'` (which only ever appears in $.type
+    // position and so could be resolved with a plain numeric prec()), this is a
+    // REAL ambiguity needing GLR to explore both and keep whichever completes. The
+    // `conflicts:` entry below tells the generator this is expected. In practice an
+    // ordinary comparison (`a.length() < 5`, `a < b`) never has a `type`-shaped
+    // right operand immediately followed by `>` then `(`, so it can only ever
+    // resolve as binary_expression; template_call only completes for the exact
+    // shape a real call-site type argument has.
+    template_call: $ => prec.left(seq(
+      choice($.identifier, $.member_access, $.subscript_expression),
+      '<',
+      $.type,
+      '>',
+      '(',
+      optional($.argument_list),
+      ')'
+    )),
 
     argument_list: $ => seq(
       $.expression,

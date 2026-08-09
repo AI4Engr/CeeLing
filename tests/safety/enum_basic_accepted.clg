@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ reason: an unscoped `enum` declares real enumerators usable wherever an `int` is
+//@ reason: expected (implicit enumerator->int conversion) -- CeeLing has no cast
+//@ reason: syntax, so `enum class` (which forbids that conversion) would leave no
+//@ reason: way to store a tag value in a plain `int` field, the shape yaml-cling's
+//@ reason: NodeType needs. DanglingChecker needs zero changes: an enum type name
+//@ reason: matches none of classNames_/isVectorType/isMapType, so an enum-typed
+//@ reason: value is automatically a plain value (like int/bool), never move-tracked.
+//@ run: 1
+
+enum Kind { Null, Scalar, Sequence };
+
+int main() {
+    int k = Scalar;
+    std::cout << k << std::endl;
+    return 0;
+}

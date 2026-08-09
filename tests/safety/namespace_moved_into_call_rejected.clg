@@ -1,0 +1,30 @@
+//@ expect: reject
+//@ reason: a namespaced class participates in move tracking exactly like a plain
+//@ reason: one. This is not automatic from desugaring alone: DanglingChecker,
+//@ reason: EscapeHatchChecker, and SmartPointerAnalyzer each independently key
+//@ reason: lookups by the DECLARED TYPE STRING, which is "YAML::Node" (not "Node")
+//@ reason: for a `YAML::Node a;` local -- so each module needed its own dual
+//@ reason: registration under the qualified spelling. Missing any ONE of them
+//@ reason: silently breaks a different guarantee: missing DanglingChecker's means
+//@ reason: `a` is never move-tracked at all (this fixture would wrongly PASS);
+//@ reason: missing SmartPointerAnalyzer's means `a` silently defaults to
+//@ reason: shared_ptr instead of its real (usage-derived) unique_ptr decision --
+//@ reason: found by direct empirical testing, not anticipated in the design.
+
+namespace YAML {
+    class Node {
+    public:
+        int kind;
+        Node(int k) { kind = k; }
+    };
+}
+
+void sink(YAML::Node n) {
+}
+
+int main() {
+    YAML::Node a = new YAML::Node(1);
+    sink(a);
+    std::cout << a.kind << std::endl;   // ERROR: a was moved into sink
+    return 0;
+}

@@ -2,6 +2,7 @@
 #include "ast.h"
 #include "../tree_sitter_cling.h"
 #include <memory>
+#include <vector>
 
 namespace cling {
 
@@ -31,6 +32,12 @@ private:
     StatementPtr buildIncludeStatement(TSNode node, const std::string& source);
     StatementPtr buildFunctionDeclaration(TSNode node, const std::string& source);
     StatementPtr buildClassDeclaration(TSNode node, const std::string& source);
+    StatementPtr buildEnumDeclaration(TSNode node, const std::string& source);
+    // Desugars a namespace body into a flat list of top-level statements (see the
+    // .cpp for why this can't be an ordinary one-in-one-out buildStatement case).
+    // Not reachable from buildStatement's own dispatch -- called directly from
+    // buildProgram, since only top-level namespace declarations are supported.
+    std::vector<StatementPtr> buildNamespaceDeclaration(TSNode node, const std::string& source);
     StatementPtr buildConstructorDeclaration(TSNode node, const std::string& source);
     StatementPtr buildMethodDeclaration(TSNode node, const std::string& source);
     StatementPtr buildMainFunction(TSNode node, const std::string& source);
@@ -46,6 +53,7 @@ private:
     ExpressionPtr buildStringLiteral(TSNode node, const std::string& source);
     ExpressionPtr buildNumber(TSNode node, const std::string& source);
     ExpressionPtr buildFunctionCall(TSNode node, const std::string& source);
+    ExpressionPtr buildTemplateCall(TSNode node, const std::string& source);
     ExpressionPtr buildNewExpression(TSNode node, const std::string& source);
     ExpressionPtr buildBinaryExpression(TSNode node, const std::string& source);
     ExpressionPtr buildUnaryExpression(TSNode node, const std::string& source);

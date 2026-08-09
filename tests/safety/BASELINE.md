@@ -359,3 +359,97 @@ Single inheritance + `virtual`/`override` (Ch. 18, Step 20) added 6 more fixture
 **Verified additive**: a non-inheriting program's emitted C++ contains zero
 occurrences of `virtual` or `: public` — existing single-class programs are
 completely unaffected by this step.
+
+## Compile gate (what PASS actually means now)
+
+Until recently, `PASS` on an accept fixture meant only **"`cling` exited 0"** — i.e.
+the *analysis* accepted the program. It said nothing about whether the C++ the
+emitter produced would even compile. Those are different claims, and the gap between
+them is where the `throw "literal"` bug lived (it compiled cleanly and then
+`std::terminate`'d at runtime).
+
+`run_safety_tests.sh` now enforces two tiers on every `//@ expect: accept` fixture:
+
+1. **Compile** — the generated C++ must build under a real compiler
+   (`g++ -std=c++17 -fsyntax-only`, overridable via `$CXX`).
+2. **Run** — a fixture may declare `//@ run: <expected stdout>`, in which case it is
+   compiled, executed, and its output compared. Use this tier whenever the claim is a
+   RUNTIME property, because `-fsyntax-only` cannot distinguish "dispatches to the
+   derived override" from "silently calls the base version". Currently tagged:
+
+   | Fixture | Asserted output | Runtime claim being pinned |
+   |---|---|---|
+   | `inherit_virtual_dispatch_accepted` | `woof` | virtual dispatch reaches the override |
+   | `inherit_virtual_destructor_accepted` | `16` | destruction through a base-typed owner is well-defined |
+   | `inherit_base_field_and_method_accepted` | `7` | inherited field/method actually resolve |
+   | `throw_catch_basic_accepted` | `bad thing` | thrown type matches the catch clause |
+   | `param_stored_in_field_accepted` | `2` | a shared argument survives the call |
+
+The runner prints `Compile gate: ON/OFF`, so a missing compiler downgrades **loudly**
+rather than silently weakening every PASS in the table.
+
+**The gate was validated by breaking it on purpose**: deleting the `virtual` keyword
+from `AstEmitter` turned the suite red (`FAIL=2`, `RESULT: FAIL`). Under the previous
+runner those same two fixtures still reported `PASS`, because `cling` itself still
+exited 0 — which is precisely the blind spot this closes. A gate that never fails
+proves nothing, so this check should be repeated if the runner is ever reworked.
+
+`enum` support added 1 more fixture: **PASS=51, XFAIL=0, FAIL=0.**
+
+- `enum_basic_accepted.clg` — unscoped `enum Kind { Null, Scalar, Sequence };`,
+  used both to construct a value and read back via implicit int conversion. Run,
+  not just compiled — this fixture's first draft asserted the wrong expected value
+  (`2` instead of the correct `1` for `Scalar`), caught immediately by the run tier
+  rather than shipping a silently-wrong test.
+
+`namespace` support (desugared to name-qualification at parse time) added 4 more
+fixtures: **PASS=55, XFAIL=0, FAIL=0.**
+
+- `namespace_class_accepted.clg` — a class declared inside `namespace X { ... }`,
+  constructed and used via `X::Class`. Run.
+- `namespace_enum_qualified_accepted.clg` — the real yaml-cling shape:
+  `namespace NodeType { enum value {...} }` alongside `namespace YAML { class Node
+  {...} }`, with `NodeType::Scalar` used both to construct a `YAML::Node` and
+  inside a method-body comparison. Run, prints `2 1`.
+- `namespace_nested_rejected.clg` — a `namespace` declared inside another
+  `namespace` is rejected with a targeted diagnostic; nesting was never supported,
+  only top-level namespaces desugar.
+- `namespace_moved_into_call_rejected.clg` — a namespaced-type local participates
+  in ordinary move-tracking exactly like a non-namespaced one. This is also the
+  fixture that caught a real bug: `SmartPointerAnalyzer::getPointerType`'s
+  suffix-match fallback silently defaults to `shared_ptr` when no decision is
+  found, and an emitter that stripped the `X::` qualifier before querying (instead
+  of passing the class name through verbatim, matching how registration actually
+  spells it) looked up the wrong key and hit that fallback — a namespaced local
+  was silently getting `shared_ptr` instead of the correctly-inferred `unique_ptr`.
+
+Return-type-generic methods with specializations (`.as<T>()`) added 3 more
+fixtures: **PASS=58, XFAIL=0, FAIL=0.**
+
+- `template_as_basic_accepted.clg` — the real `yaml_node.clg` shape: a primary
+  generic `<T> T as() {...}` (never actually invoked — every call site must carry
+  an explicit type argument) plus `int`/`string` specializations. Run, prints
+  `42 converted` — the definitive proof real C++ template resolution dispatches to
+  the right specialization body at each call site, not just that the emitted code
+  compiles.
+- `template_ordinary_method_unaffected_accepted.clg` — a plain, non-generic,
+  non-specialized method is completely unaffected by the new optional grammar
+  productions. Run.
+- `template_comparison_unaffected_accepted.clg` — the specific regression risk the
+  feature's plan flagged as highest-uncertainty: `x.as<int>()` and an ordinary
+  comparison (`a < b`, `x.length() < 5`) are both grammatically legal at the same
+  `$.expression` position after `identifier '<'` / `member_access '<'`. Resolved
+  with a `conflicts:` entry (GLR explores both, keeps whichever completes) rather
+  than a numeric `prec()`, the same shape of fix `container_declaration` vs
+  `variable_declaration` used. Run, prints `1 0` — both comparisons still evaluate
+  correctly, not just parse.
+
+**Mechanism note**: all three of `enum`/`namespace`/templates reused patterns
+already established for inheritance rather than inventing new ones — `enum`
+needed zero analysis changes (an enum type name matches none of `classNames_`/
+`isVectorType`/`isMapType`, so it's already treated like `int`); `namespace`
+reused the "flatten at collection time via dual-registration, leave ~40
+downstream lookups unchanged" pattern across all four analysis modules; templates
+reused the identical per-method map structure via a synthetic lookup key
+(`specializationKey`, `class_hierarchy.h`) instead of adding new data structures
+anywhere.

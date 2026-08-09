@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ reason: CeeLing supports only a SINGLE level of namespace nesting -- desugaring a
+//@ reason: nested namespace has no single unambiguous namespaceName to tag its
+//@ reason: members with. Rejected at parse time by
+//@ reason: ASTBuilder::buildNamespaceDeclaration with a targeted diagnostic, not a
+//@ reason: generic parse error or a silent mis-flattening.
+
+namespace Outer {
+    namespace Inner {
+        class Node {
+        public:
+            int v;
+            Node(int x) { v = x; }
+        };
+    }
+}
+
+int main() {
+    return 0;
+}

@@ -1,0 +1,34 @@
+//@ expect: accept
+//@ reason: the actual yaml-cling shape: `namespace NodeType { enum value {...} }`,
+//@ reason: then `NodeType::Scalar` used both to construct an object AND inside a
+//@ reason: method body comparison. Enumerators "leak into" the enclosing namespace
+//@ reason: (real C++ unscoped-enum scoping), which falls out of desugaring for free:
+//@ reason: the enum is a top-level EnumDeclaration tagged namespaceName="NodeType",
+//@ reason: and AstEmitter re-wraps it in `namespace NodeType { enum value {...} }`,
+//@ reason: so `NodeType::Scalar` is real, valid, checkable C++ -- not just opaque
+//@ reason: passthrough text the way an undeclared ScopedIdentifier would be.
+//@ run: 2 1
+
+namespace NodeType {
+    enum value { Undefined, Null, Scalar, Sequence, Map };
+}
+
+namespace YAML {
+    class Node {
+    public:
+        int kind;
+        Node(int k) { kind = k; }
+        int Type() {
+            return kind;
+        }
+        bool IsScalar() {
+            return kind == NodeType::Scalar;
+        }
+    };
+}
+
+int main() {
+    YAML::Node n = new YAML::Node(NodeType::Scalar);
+    std::cout << n.Type() << " " << n.IsScalar() << std::endl;
+    return 0;
+}

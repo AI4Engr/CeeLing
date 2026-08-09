@@ -124,6 +124,36 @@ ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
             continue;
         }
 
+        // `namespace X { ... }` is handled specially, not via buildStatement: it
+        // desugars into MULTIPLE top-level statements (each member's own
+        // ClassDeclaration/EnumDeclaration, tagged with namespaceName), which does
+        // not fit buildStatement's one-node-in/one-statement-out contract. It is
+        // deliberately absent from buildStatement's own dispatch table for this
+        // reason -- only top-level namespace declarations are supported (the
+        // grammar's namespace_declaration is reachable from $.statement generally,
+        // but a NESTED occurrence reaching here would mean it appeared inside a
+        // class/function body, which buildStatement would silently skip; that's
+        // caught by hasUnresolvedTopLevel/hasStructuralAnchor same as any other
+        // unhandled node).
+        // Top-level children are wrapped in a generic "statement" node (per the
+        // grammar's `source_file: repeat($.statement)`), so unwrap one level before
+        // checking for namespace_declaration specifically -- buildStatement does the
+        // same unwrap internally for every OTHER node type via its own "statement"
+        // passthrough case, but namespace needs the raw inner node before dispatch.
+        TSNode inner = child;
+        if (strcmp(ts_node_type(inner), "statement") == 0 && ts_node_child_count(inner) > 0) {
+            inner = ts_node_child(inner, 0);
+        }
+        if (strcmp(ts_node_type(inner), "namespace_declaration") == 0) {
+            for (auto& desugared : buildNamespaceDeclaration(inner, source)) {
+                if (dynamic_cast<ClassDeclaration*>(desugared.get())) {
+                    hasStructuralAnchor = true;
+                }
+                program->addStatement(std::move(desugared));
+            }
+            continue;
+        }
+
         auto stmt = buildStatement(child, source);
         if (stmt) {
             if (dynamic_cast<ClassDeclaration*>(stmt.get()) || dynamic_cast<MainFunction*>(stmt.get())) {
@@ -250,6 +280,8 @@ StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) 
         result = buildFunctionDeclaration(node, source);
     } else if (strcmp(node_type, "class_declaration") == 0) {
         result = buildClassDeclaration(node, source);
+    } else if (strcmp(node_type, "enum_declaration") == 0) {
+        result = buildEnumDeclaration(node, source);
     } else if (strcmp(node_type, "constructor_declaration") == 0) {
         result = buildConstructorDeclaration(node, source);
     } else if (strcmp(node_type, "method_declaration") == 0) {
@@ -445,6 +477,8 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
         result = buildNumber(node, source);
     } else if (strcmp(node_type, "function_call") == 0) {
         result = buildFunctionCall(node, source);
+    } else if (strcmp(node_type, "template_call") == 0) {
+        result = buildTemplateCall(node, source);
     } else if (strcmp(node_type, "new_expression") == 0) {
         result = buildNewExpression(node, source);
     } else if (strcmp(node_type, "binary_expression") == 0) {
@@ -599,6 +633,57 @@ ExpressionPtr ASTBuilder::buildFunctionCall(TSNode node, const std::string& sour
     return std::make_unique<FunctionCall>(funcName, std::move(arguments));
 }
 
+ExpressionPtr ASTBuilder::buildTemplateCall(TSNode node, const std::string& source) {
+    // template_call: (identifier | member_access | subscript_expression) "<" type ">"
+    //                "(" optional(argument_list) ")"
+    // Reuses FunctionCall (templateArg set) rather than a separate AST node --
+    // every analysis module's existing FunctionCall handling (move-tracking,
+    // isKnownCallable, summaries, emission) applies unchanged once templateArg is
+    // consulted to pick the right lookup key (specializationKey), so a distinct
+    // node type would only duplicate that dispatch surface for no benefit.
+    TSNode calleeNode = ts_node_child(node, 0);
+    const bool isMethodCall = strcmp(ts_node_type(calleeNode), "member_access") == 0;
+
+    std::string templateArg;
+    std::vector<ExpressionPtr> arguments;
+    uint32_t childCount = ts_node_child_count(node);
+    for (uint32_t i = 0; i < childCount; i++) {
+        TSNode child = ts_node_child(node, i);
+        const char* childType = ts_node_type(child);
+        if (strcmp(childType, "type") == 0) {
+            templateArg = getNodeText(child, source);
+        } else if (strcmp(childType, "argument_list") == 0) {
+            uint32_t argCount = ts_node_child_count(child);
+            for (uint32_t j = 0; j < argCount; j++) {
+                TSNode argNode = ts_node_child(child, j);
+                if (strcmp(ts_node_type(argNode), "expression") == 0) {
+                    if (auto expr = buildExpression(argNode, source)) {
+                        arguments.push_back(std::move(expr));
+                    }
+                }
+            }
+        }
+    }
+
+    ExpressionPtr result;
+    if (isMethodCall) {
+        auto callee = buildMemberAccess(calleeNode, source);
+        std::string method = getNodeText(ts_node_child(calleeNode, 2), source);
+        auto fc = std::make_unique<FunctionCall>(method, std::move(arguments));
+        fc->callee = std::move(callee);
+        fc->templateArg = templateArg;
+        result = std::move(fc);
+    } else {
+        // Bare `f<int>(...)`, or `v[i]<int>(...)` (subscript callee) -- the same
+        // free-call shape function_call already supports for a non-method callee.
+        std::string funcName = getNodeText(calleeNode, source);
+        auto fc = std::make_unique<FunctionCall>(funcName, std::move(arguments));
+        fc->templateArg = templateArg;
+        result = std::move(fc);
+    }
+    return result;
+}
+
 ExpressionPtr ASTBuilder::buildBinaryExpression(TSNode node, const std::string& source) {
     // binary_expression: primary_expression operator primary_expression
     uint32_t childCount = ts_node_child_count(node);
@@ -732,7 +817,11 @@ StatementPtr ASTBuilder::buildMainFunction(TSNode node, const std::string& sourc
 }
 
 ExpressionPtr ASTBuilder::buildNewExpression(TSNode node, const std::string& source) {
-    // new_expression: "new" identifier "(" optional(argument_list) ")"
+    // new_expression: "new" (identifier | scoped_identifier) "(" optional(argument_list) ")"
+    // getNodeText captures either shape verbatim, so `new YAML::Node(...)` naturally
+    // yields className="YAML::Node" with no extra handling here -- callers that need
+    // just the simple name (e.g. AstEmitter::smartPointerType, which asks
+    // SmartPointerAnalyzer -- namespace-unaware) strip the qualifier themselves.
     TSNode class_node = ts_node_child(node, 1); // Skip "new"
     std::string className = getNodeText(class_node, source);
 
@@ -812,6 +901,80 @@ StatementPtr ASTBuilder::buildClassDeclaration(TSNode node, const std::string& s
     auto result = std::make_unique<ClassDeclaration>(className, std::move(members));
     result->baseClass = baseClass;
     return result;
+}
+
+std::vector<StatementPtr> ASTBuilder::buildNamespaceDeclaration(TSNode node, const std::string& source) {
+    // namespace_declaration: "namespace" identifier "{" repeat(statement) "}"
+    // Desugars to a flat list of top-level statements, each tagged with
+    // namespaceName -- see the ClassDeclaration/EnumDeclaration comments on that
+    // field for why (every analysis module keeps seeing ordinary top-level
+    // declarations; only AstEmitter reads namespaceName, to re-wrap on output).
+    TSNode name_node = ts_node_child(node, 1); // Skip "namespace"
+    std::string namespaceName = getNodeText(name_node, source);
+
+    std::vector<StatementPtr> result;
+    uint32_t childCount = ts_node_child_count(node);
+    for (uint32_t i = 0; i < childCount; i++) {
+        TSNode child = ts_node_child(node, i);
+        const char* childType = ts_node_type(child);
+
+        if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        } else if (strcmp(childType, "statement") == 0) {
+            // A nested namespace_declaration would show up here as `statement`'s
+            // sole child -- reject it with a targeted diagnostic instead of
+            // silently mis-flattening (a namespace inside a namespace has no
+            // single unambiguous namespaceName to tag its members with).
+            if (ts_node_child_count(child) > 0 &&
+                strcmp(ts_node_type(ts_node_child(child, 0)), "namespace_declaration") == 0) {
+                std::ostringstream oss;
+                const TSPoint p = ts_node_start_point(child);
+                oss << "error[semantic/nested-namespace]: namespace `" << namespaceName
+                    << "` contains a nested namespace declaration (line " << (p.row + 1)
+                    << ", column " << (p.column + 1) << "). CeeLing supports only a "
+                       "single level of namespace nesting -- flatten the inner "
+                       "namespace's members into `" << namespaceName << "` directly, "
+                       "or give it its own top-level namespace.";
+                throw std::runtime_error(oss.str());
+            }
+
+            auto stmt = buildStatement(child, source);
+            if (!stmt) rejectUnbuildableChild(child, source);
+            if (auto cls = dynamic_cast<ClassDeclaration*>(stmt.get())) {
+                cls->namespaceName = namespaceName;
+            } else if (auto enm = dynamic_cast<EnumDeclaration*>(stmt.get())) {
+                enm->namespaceName = namespaceName;
+            }
+            result.push_back(std::move(stmt));
+        }
+    }
+
+    return result;
+}
+
+StatementPtr ASTBuilder::buildEnumDeclaration(TSNode node, const std::string& source) {
+    // enum_declaration: "enum" identifier "{" identifier (',' identifier)* ","? "}" ";"?
+    TSNode name_node = ts_node_child(node, 1); // Skip "enum"
+    std::string enumName = getNodeText(name_node, source);
+
+    std::vector<std::string> enumerators;
+    uint32_t childCount = ts_node_child_count(node);
+    bool sawEnumName = false;
+    for (uint32_t i = 0; i < childCount; i++) {
+        TSNode child = ts_node_child(node, i);
+        const char* childType = ts_node_type(child);
+        if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        } else if (strcmp(childType, "identifier") == 0) {
+            if (!sawEnumName) {
+                sawEnumName = true;   // the enum's own name, already captured above
+            } else {
+                enumerators.push_back(getNodeText(child, source));
+            }
+        }
+    }
+
+    return std::make_unique<EnumDeclaration>(enumName, std::move(enumerators));
 }
 
 StatementPtr ASTBuilder::buildConstructorDeclaration(TSNode node, const std::string& source) {
@@ -1015,13 +1178,30 @@ ExpressionPtr ASTBuilder::buildSubscriptExpression(TSNode node, const std::strin
 }
 
 StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& source) {
-    // method_declaration: optional("virtual") type identifier "(" optional(parameter_list)
-    //                     ")" optional("const") optional("override") "{" repeat(statement) "}"
-    // A leading `virtual` shifts the type/name child indices by one, so detect it
-    // first rather than reading indices 0/1 unconditionally.
-    bool isVirtual = ts_node_child_count(node) > 0 &&
-                     strcmp(ts_node_type(ts_node_child(node, 0)), "virtual") == 0;
-    const uint32_t base = isVirtual ? 1 : 0;
+    // method_declaration: optional(method_type_parameter) optional("virtual") type
+    //                     identifier optional(method_specialization) "("
+    //                     optional(parameter_list) ")" optional("const")
+    //                     optional("override") "{" repeat(statement) "}"
+    //
+    // Both a leading `<T>` and a leading `virtual` shift the type/name child
+    // indices, so scan for named markers rather than assuming fixed positions --
+    // more robust than the previous single-flag/fixed-offset approach now that TWO
+    // independent optional prefixes can each shift the type/identifier pair.
+    uint32_t base = 0;
+    std::string typeParameter;
+    if (ts_node_child_count(node) > base &&
+        strcmp(ts_node_type(ts_node_child(node, base)), "method_type_parameter") == 0) {
+        TSNode tp = ts_node_child(node, base);
+        // method_type_parameter: "<" identifier ">" -- the identifier is its only
+        // named child.
+        if (ts_node_named_child_count(tp) > 0) {
+            typeParameter = getNodeText(ts_node_named_child(tp, 0), source);
+        }
+        base += 1;
+    }
+    bool isVirtual = ts_node_child_count(node) > base &&
+                     strcmp(ts_node_type(ts_node_child(node, base)), "virtual") == 0;
+    if (isVirtual) base += 1;
 
     TSNode return_type_node = ts_node_child(node, base + 0);
     TSNode name_node = ts_node_child(node, base + 1);
@@ -1032,6 +1212,7 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
     std::vector<StatementPtr> body;
     bool isConst = false;
     bool isOverride = false;
+    std::string specializationArg;
 
     // Parse all children to find parameters and body
     uint32_t childCount = ts_node_child_count(node);
@@ -1039,7 +1220,12 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
         TSNode child = ts_node_child(node, i);
         const char* childType = ts_node_type(child);
 
-        if (strcmp(childType, "parameter_list") == 0) {
+        if (strcmp(childType, "method_specialization") == 0) {
+            // method_specialization: "<" type ">" -- the type is its only named child.
+            if (ts_node_named_child_count(child) > 0) {
+                specializationArg = getNodeText(ts_node_named_child(child, 0), source);
+            }
+        } else if (strcmp(childType, "parameter_list") == 0) {
             rejectObserverParams(child);
             // Parse parameters: seq(type, identifier), repeat(seq(',', type, identifier))
             uint32_t paramCount = ts_node_child_count(child);
@@ -1073,10 +1259,32 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
         }
     }
 
+    // A primary generic method's return type must be EXACTLY its own type
+    // parameter (`<T> T as()`), matching CeeLing's narrowly-scoped support for
+    // return-type genericity only. A primary that returns something else (`<T> int
+    // as()`, or a `T`-typed PARAMETER, which this slice does not support at all)
+    // has no way to be checked as a real generic body -- rejected per CLAUDE.md's
+    // "ambiguous -> conservative reject" rule rather than silently accepted and
+    // mishandled.
+    if (!typeParameter.empty() && returnType != typeParameter) {
+        std::ostringstream oss;
+        const TSPoint p = ts_node_start_point(node);
+        oss << "error[semantic/unsupported-generic]: generic method `" << methodName
+            << "` declares type parameter `" << typeParameter << "` but returns `"
+            << returnType << "`, not `" << typeParameter << "` (line " << (p.row + 1)
+            << ", column " << (p.column + 1) << "). CeeLing supports only "
+               "return-type genericity (`<T> T " << methodName << "() {...}`) -- "
+               "a generic parameter type, or a return type other than the type "
+               "parameter itself, is not supported.";
+        throw std::runtime_error(oss.str());
+    }
+
     auto result = std::make_unique<MethodDeclaration>(returnType, methodName, std::move(parameters), std::move(body));
     result->isConst = isConst;
     result->isVirtual = isVirtual;
     result->isOverride = isOverride;
+    result->typeParameter = typeParameter;
+    result->specializationArg = specializationArg;
     return result;
 }
 

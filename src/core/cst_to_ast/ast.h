@@ -113,12 +113,20 @@ public:
     // MemberAccess so the receiver's access operator can be lowered correctly.
     // Null for a plain call `f(args)` (use function_name).
     ExpressionPtr callee;
+    // Call-site type argument (`n.as<int>()` -> "int"), empty for an ordinary call.
+    // A call carrying this resolves to a METHOD SPECIALIZATION, not the bare method
+    // name -- every analysis module looks it up under the synthetic key
+    // specializationKey(methodName, templateArg) instead of the bare name whenever
+    // this is non-empty (see class_hierarchy.h).
+    std::string templateArg;
 
     FunctionCall(const std::string& name, std::vector<ExpressionPtr> args)
         : function_name(name), arguments(std::move(args)) {}
 
     std::string toString() const override {
-        std::string result = function_name + "(";
+        std::string result = function_name;
+        if (!templateArg.empty()) result += "<" + templateArg + ">";
+        result += "(";
         for (size_t i = 0; i < arguments.size(); ++i) {
             if (i > 0) result += ", ";
             result += arguments[i]->toString();
@@ -461,6 +469,12 @@ public:
     // admits exactly one base, so "which base?" is never ambiguous for the
     // member-flattening pass every analysis module runs at collection time.
     std::string baseClass;
+    // Enclosing namespace name, or empty if this class was declared at the top
+    // level. `namespace X { class C {...} }` is DESUGARED by the AST builder into
+    // a top-level ClassDeclaration with namespaceName="X" -- every analysis module
+    // keeps seeing an ordinary top-level ClassDeclaration; only AstEmitter reads
+    // this field, to re-wrap the class in `namespace X { ... }` on output.
+    std::string namespaceName;
     std::vector<StatementPtr> members;
 
     ClassDeclaration(const std::string& className, std::vector<StatementPtr> classMembers)
@@ -474,6 +488,37 @@ public:
             result += "    " + member->toString() + "\n";
         }
         result += "};";
+        return result;
+    }
+};
+
+// An unscoped enum: `enum Name { A, B, C };`. Deliberately unscoped -- enumerators
+// implicitly convert to `int`, matching how CeeLing users store an enum tag in a
+// plain `int` field (Java-like: no `static_cast` escape hatch exists to convert
+// an `enum class` value, and CeeLing forbids casts entirely -- see CLAUDE.md hatch
+// #13). Not registered as a class type: DanglingChecker::isObjectType only matches
+// classNames_/vector/map, so an enum-typed value is automatically a plain value
+// (like int/bool/string), participating in zero move/observer tracking.
+class EnumDeclaration : public Statement {
+public:
+    std::string name;
+    std::vector<std::string> enumerators;
+    // Enclosing namespace name, or empty -- same desugaring as ClassDeclaration's
+    // namespaceName, and for the same reason (enumerators must "leak into" the
+    // namespace so `NodeType::Scalar` resolves, matching real C++ unscoped-enum
+    // scoping rules).
+    std::string namespaceName;
+
+    EnumDeclaration(const std::string& enumName, std::vector<std::string> values)
+        : name(enumName), enumerators(std::move(values)) {}
+
+    std::string toString() const override {
+        std::string result = "enum " + name + " { ";
+        for (size_t i = 0; i < enumerators.size(); ++i) {
+            if (i > 0) result += ", ";
+            result += enumerators[i];
+        }
+        result += " };";
         return result;
     }
 };
@@ -515,6 +560,13 @@ public:
     // C++ (CeeLing reuses the C++ compiler's vtable rather than building its own).
     bool isVirtual = false;    // `virtual` before the return type
     bool isOverride = false;   // `override` after the parameter list
+    // Return-type-generic method support (narrowly scoped -- see CLAUDE.md/TODO.md
+    // and Chapter 18's implementation notes for exactly what this does and does not
+    // cover). A method is at most ONE of: ordinary (both empty), a PRIMARY generic
+    // (`typeParameter` set, e.g. "T" for `<T> T as()`), or a SPECIALIZATION
+    // (`specializationArg` set, e.g. "int" for `int as<int>()`). Never both set.
+    std::string typeParameter;
+    std::string specializationArg;
 
     MethodDeclaration(const std::string& retType,
                      const std::string& methodName,

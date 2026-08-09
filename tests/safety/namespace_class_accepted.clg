@@ -1,0 +1,26 @@
+//@ expect: accept
+//@ reason: `namespace YAML { class Node {...} }` is DESUGARED at parse time into a
+//@ reason: top-level ClassDeclaration tagged with namespaceName -- every analysis
+//@ reason: module keeps seeing an ordinary top-level class, so member/method
+//@ reason: resolution needs no per-module namespace awareness (only AstEmitter reads
+//@ reason: namespaceName, to re-wrap the class in `namespace YAML { ... }` on output
+//@ reason: and to dual-register the qualified spelling `YAML::Node` for lookups from
+//@ reason: outside the namespace).
+//@ run: 5
+
+namespace YAML {
+    class Node {
+    public:
+        int kind;
+        Node(int k) { kind = k; }
+        int Type() {
+            return kind;
+        }
+    };
+}
+
+int main() {
+    YAML::Node n = new YAML::Node(5);
+    std::cout << n.Type() << std::endl;
+    return 0;
+}

@@ -53,6 +53,18 @@ void DanglingChecker::collectClassNames(const Program& program) {
                 fields.insert(field->identifier);
             }
         }
+
+        // Dual-register under the qualified name, mirroring AstEmitter/
+        // EscapeHatchChecker's collection passes: without this, a `YAML::Node`-typed
+        // local/parameter fails isObjectType's classNames_ lookup and is silently
+        // NEVER move-tracked at all -- not a safe over-rejection, a missed catch
+        // (confirmed by a probe: `sink(a); use(a);` on a namespaced type was wrongly
+        // accepted before this fix).
+        if (!cls->namespaceName.empty()) {
+            const std::string qualified = cls->namespaceName + "::" + cls->name;
+            classNames_.insert(qualified);
+            classFields_[qualified] = fields;
+        }
     }
 }
 
@@ -141,9 +153,32 @@ void DanglingChecker::deriveSummaries(const Program& program) {
         }
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                params[method->name] = method->parameters;
-                summaries_[summaryKey(cls->name, method->name)] =
+                // A specialization registers under its synthetic key ("as<int>"),
+                // not the bare method name -- see EscapeHatchChecker's identical
+                // reasoning. A call resolves to the right specialization's
+                // params/summary only when its own templateArg constructs the
+                // matching key (see resolveCallReturnAlias/applyCallArgMoves below).
+                const std::string key = method->specializationArg.empty()
+                    ? method->name
+                    : specializationKey(method->name, method->specializationArg);
+                params[key] = method->parameters;
+                summaries_[summaryKey(cls->name, key)] =
                     deriveSummaryForBody(method->body, method->parameters);
+            }
+        }
+
+        // Dual-register under the qualified name: resolveCallReturnAlias looks up
+        // classMethodParams_/summaries_ keyed by the RECEIVER's declared type string
+        // (localType_'s value), which is "YAML::Node" for a `YAML::Node n;` local --
+        // without this, a summary-derived alias on a namespaced type's method call
+        // would silently resolve to nothing instead of the real summary.
+        if (!cls->namespaceName.empty()) {
+            const std::string qualified = cls->namespaceName + "::" + cls->name;
+            classMethodParams_[qualified] = params;
+            for (const auto& [methodName, _] : params) {
+                if (auto it = summaries_.find(summaryKey(cls->name, methodName)); it != summaries_.end()) {
+                    summaries_[summaryKey(qualified, methodName)] = it->second;
+                }
             }
         }
     }
@@ -196,10 +231,15 @@ std::string DanglingChecker::resolveCallReturnAlias(const Expression* expr) cons
         if (typeIt == localType_.end()) return {};
         auto clsIt = classMethodParams_.find(typeIt->second);
         if (clsIt == classMethodParams_.end()) return {};
-        auto paramIt = clsIt->second.find(member->member);
+        // A call carrying a type argument resolves to the specialization's own
+        // key -- see EscapeHatchChecker::isKnownCallable's identical reasoning.
+        const std::string methodKey = call->templateArg.empty()
+            ? member->member
+            : specializationKey(member->member, call->templateArg);
+        auto paramIt = clsIt->second.find(methodKey);
         if (paramIt == clsIt->second.end()) return {};
         params = &paramIt->second;
-        auto sumIt = summaries_.find(summaryKey(typeIt->second, member->member));
+        auto sumIt = summaries_.find(summaryKey(typeIt->second, methodKey));
         if (sumIt == summaries_.end()) return {};
         summary = &sumIt->second;
     } else {
