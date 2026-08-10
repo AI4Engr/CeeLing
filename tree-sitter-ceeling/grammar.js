@@ -133,6 +133,11 @@ module.exports = grammar({
       'double',
       'string',
       'bool',
+      'char',  // a pure VALUE type, like int/bool -- no char*/char[] production
+               // exists anywhere in this grammar, so a raw C-string/char-array
+               // shape is inexpressible by construction (the same escape-by-
+               // construction philosophy CLAUDE.md uses for raw pointers
+               // generally), not something a checker rejects after the fact.
       $.generic_type,        // std::vector<T> (Phase 2.6 containers)
       $.scoped_identifier,  // qualified names like std::vector (Phase 2.6 containers)
       $.identifier  // Add support for custom types (class names)
@@ -430,6 +435,7 @@ module.exports = grammar({
       $.identifier,
       $.number,
       $.string_literal,
+      $.char_literal,
       seq('(', $.expression, ')')
     ),
 
@@ -443,13 +449,33 @@ module.exports = grammar({
     // A double-quoted string literal, e.g. `std::cout << " ";`.
     string_literal: $ => token(seq('"', /[^"]*/, '"')),
 
+    // A single-quoted char literal, e.g. `':'`, `' '`, `'\n'`. Either one plain
+    // character, or a backslash escape (\n \r \t \\ \' \0) -- confirmed needed
+    // by a real consumer (a hand-rolled scanner testing `peek() == '\n'`/
+    // `'\r'` for line-ending detection) rather than built speculatively.
+    char_literal: $ => token(choice(
+      seq("'", /[^'\\]/, "'"),
+      seq("'", '\\', /[nrt\\'0]/, "'")
+    )),
+
     // Member access is written with `.` in CeeLing source (Java-like). `->` is also
     // accepted for compatibility. The generator lowers `.` on smart-pointer objects
     // to `->` in the emitted C++. Left-associative and left-recursive so chains of
     // arbitrary depth (`a.b.c.d`) parse, not just a single `.` off a primary. Also
-    // accepts a subscript as its left operand, so `v[i].field` parses.
+    // accepts a subscript as its left operand, so `v[i].field` parses, and a
+    // function_call as its left operand, so `f().field` / `a.method().field`
+    // parse -- confirmed as a REAL, previously-silent gap (not just "worth
+    // adding"): without this, `h.get().val` parsed the `.val` half as a bare
+    // ERROR node sibling (verified via `tree-sitter parse` directly), and the
+    // AST builder's error-recovery silently dropped it with no diagnostic --
+    // `int x = h.get().val;` transpiled clean and only failed at the final
+    // g++ step, with a confusing type-mismatch error pointing nowhere near
+    // the real cause. This is exactly the class of bug Phase 1's
+    // rejectUnbuildableChild discipline exists to catch, but the ERROR node
+    // here was a top-level sibling, not nested inside a builder call that
+    // would have surfaced it.
     member_access: $ => prec.left(seq(
-      choice($.member_access, $.subscript_expression, $.primary_expression),
+      choice($.member_access, $.subscript_expression, $.function_call, $.primary_expression),
       choice('.', '->'),
       $.identifier
     )),

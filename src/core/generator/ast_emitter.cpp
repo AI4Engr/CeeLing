@@ -27,6 +27,9 @@ std::string AstEmitter::emit(const Program& program) {
         if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
     }
     for (const auto& stmt : program.statements) {
+        // Only THIS file's own #include lines -- an external declaration's includes
+        // are that included file's own concern (its .cpp/.clh already carries them).
+        if (stmt->isExternalDeclaration) continue;
         if (auto inc = dynamic_cast<const IncludeStatement*>(stmt.get())) {
             if (emittedIncludes.insert(inc->includeFile).second) {
                 out << inc->includeFile << "\n";
@@ -45,11 +48,14 @@ std::string AstEmitter::emit(const Program& program) {
     // so a namespace-free program's output is byte-identical to pre-namespace output.
     std::string openNamespace;
     for (const auto& stmt : program.statements) {
+        if (stmt->isExternalDeclaration) continue;
         std::string stmtNamespace;
         if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
             stmtNamespace = cls->namespaceName;
         } else if (auto enm = dynamic_cast<const EnumDeclaration*>(stmt.get())) {
             stmtNamespace = enm->namespaceName;
+        } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            stmtNamespace = fn->namespaceName;
         }
         if (stmtNamespace != openNamespace) {
             if (!openNamespace.empty()) out << "}\n\n";
@@ -62,10 +68,71 @@ std::string AstEmitter::emit(const Program& program) {
     return out.str();
 }
 
+std::string AstEmitter::emitHeader(const Program& program, const std::string& guardName) {
+    classNames_.clear();
+    varKinds_.clear();
+    collectClassNames(program);
+
+    std::ostringstream out;
+    out << "#ifndef " << guardName << "\n#define " << guardName << "\n\n";
+
+    std::set<std::string> emittedIncludes;
+    for (const char* hdr : {"#include <memory>", "#include <utility>",
+                            "#include <iostream>", "#include <vector>",
+                            "#include <string>", "#include <map>"}) {
+        if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
+    }
+    for (const auto& stmt : program.statements) {
+        if (stmt->isExternalDeclaration) continue;
+        if (auto inc = dynamic_cast<const IncludeStatement*>(stmt.get())) {
+            if (emittedIncludes.insert(inc->includeFile).second) {
+                out << inc->includeFile << "\n";
+            }
+        }
+    }
+    out << "\n";
+
+    // Same namespace-grouping traversal as emit() (see its comment) -- a header's
+    // declarations must nest in the same namespaces the definitions in the paired
+    // .cpp do, or the two translation units declare/define different entities.
+    std::string openNamespace;
+    for (const auto& stmt : program.statements) {
+        if (stmt->isExternalDeclaration) continue;
+        std::string stmtNamespace;
+        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            stmtNamespace = cls->namespaceName;
+        } else if (auto enm = dynamic_cast<const EnumDeclaration*>(stmt.get())) {
+            stmtNamespace = enm->namespaceName;
+        } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            stmtNamespace = fn->namespaceName;
+        }
+        if (stmtNamespace != openNamespace) {
+            if (!openNamespace.empty()) out << "}\n\n";
+            if (!stmtNamespace.empty()) out << "namespace " << stmtNamespace << " {\n\n";
+            openNamespace = stmtNamespace;
+        }
+        emitTopLevelHeader(stmt.get(), out);
+    }
+    if (!openNamespace.empty()) out << "}\n\n";
+
+    out << "#endif // " << guardName << "\n";
+    return out.str();
+}
+
 void AstEmitter::collectClassNames(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             functionParams_[fn->name] = fn->parameters;
+            functionReturnType_[fn->name] = fn->returnType;
+            // Dual-register under the qualified name (`YAML::Load`) -- a call
+            // site outside the namespace spells it qualified, and both
+            // calleeParam and exprObjectClass's plain-call branch look these
+            // maps up keyed by exactly that spelling.
+            if (!fn->namespaceName.empty()) {
+                const std::string qualified = fn->namespaceName + "::" + fn->name;
+                functionParams_[qualified] = fn->parameters;
+                functionReturnType_[qualified] = fn->returnType;
+            }
         }
     }
     // Base-before-derived flattening. This is the highest-stakes of the four: unlike
@@ -78,6 +145,7 @@ void AstEmitter::collectClassNames(const Program& program) {
         classNames_.insert(cls->name);
         auto& fields = classFields_[cls->name];
         auto& methodParams = classMethodParams_[cls->name];
+        auto& methodReturnTypes = classMethodReturnType_[cls->name];
         if (!cls->baseClass.empty()) {
             baseClasses_.insert(cls->baseClass);
             if (auto baseIt = classFields_.find(cls->baseClass); baseIt != classFields_.end()) {
@@ -86,6 +154,10 @@ void AstEmitter::collectClassNames(const Program& program) {
             if (auto baseIt = classMethodParams_.find(cls->baseClass);
                 baseIt != classMethodParams_.end()) {
                 methodParams = baseIt->second;
+            }
+            if (auto baseIt = classMethodReturnType_.find(cls->baseClass);
+                baseIt != classMethodReturnType_.end()) {
+                methodReturnTypes = baseIt->second;
             }
         }
         // Count bare-name occurrences first: only a class that genuinely OVERLOADS
@@ -121,6 +193,7 @@ void AstEmitter::collectClassNames(const Program& program) {
                     key = method->name;
                 }
                 methodParams[key] = method->parameters;
+                methodReturnTypes[key] = method->returnType;
             }
         }
 
@@ -137,6 +210,7 @@ void AstEmitter::collectClassNames(const Program& program) {
             classNames_.insert(qualified);
             classFields_[qualified] = fields;
             classMethodParams_[qualified] = methodParams;
+            classMethodReturnType_[qualified] = methodReturnTypes;
         }
     }
 }
@@ -225,6 +299,56 @@ std::string AstEmitter::exprObjectClass(const Expression* expr) const {
         const std::string elem = vectorElementType(containerType);
         return isClassType(elem) ? elem : "";
     }
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        // `someCall().field` -- the object being accessed is a CALL RESULT, not
+        // a variable, so `.`/`->` must be decided from the call's own declared
+        // RETURN type, not a varClass_/classFields_ lookup (there is none).
+        // Found as a real gap while writing the yaml-cling Parser: member_access
+        // gained function_call as a valid left operand (real yaml-cpp-shaped
+        // code chains `current().kind`-style access constantly), but nothing
+        // told exprObjectClass how to resolve the resulting object's class.
+        if (call->callee) {
+            auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+            if (member == nullptr) return "";
+            const std::string objClass = exprObjectClass(member->object.get());
+            if (objClass.empty()) return "";
+            auto clsIt = classMethodReturnType_.find(objClass);
+            if (clsIt == classMethodReturnType_.end()) return "";
+            std::string methodKey = call->templateArg.empty()
+                ? member->member
+                : specializationKey(member->member, call->templateArg);
+            auto retIt = clsIt->second.find(methodKey);
+            if (retIt == clsIt->second.end() && call->templateArg.empty()) {
+                methodKey = overloadKey(member->member, call->arguments.size());
+                retIt = clsIt->second.find(methodKey);
+            }
+            if (retIt == clsIt->second.end()) return "";
+            return isClassType(retIt->second) ? retIt->second : "";
+        }
+        // Bare call, no explicit receiver -- either a free function, or (inside
+        // a method body) an implicit-`this` call to a same-class method. Check
+        // both the same way isKnownCallable/resolveCallReturnAlias's identical
+        // plain-call branches already do elsewhere in this codebase.
+        if (!currentClass_.empty()) {
+            auto clsIt = classMethodReturnType_.find(currentClass_);
+            if (clsIt != classMethodReturnType_.end()) {
+                std::string methodKey = call->templateArg.empty()
+                    ? call->function_name
+                    : specializationKey(call->function_name, call->templateArg);
+                auto retIt = clsIt->second.find(methodKey);
+                if (retIt == clsIt->second.end() && call->templateArg.empty()) {
+                    methodKey = overloadKey(call->function_name, call->arguments.size());
+                    retIt = clsIt->second.find(methodKey);
+                }
+                if (retIt != clsIt->second.end()) {
+                    return isClassType(retIt->second) ? retIt->second : "";
+                }
+            }
+        }
+        auto it = functionReturnType_.find(call->function_name);
+        if (it == functionReturnType_.end()) return "";
+        return isClassType(it->second) ? it->second : "";
+    }
     return "";
 }
 
@@ -233,20 +357,71 @@ bool AstEmitter::isClassType(const std::string& type) const {
 }
 
 std::string AstEmitter::containerVarType(const Expression* expr) const {
-    auto id = dynamic_cast<const Identifier*>(expr);
-    if (id == nullptr) return "";
-    auto it = containerVarType_.find(id->name);
-    return it == containerVarType_.end() ? "" : it->second;
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        auto it = containerVarType_.find(id->name);
+        if (it != containerVarType_.end()) return it->second;
+        // containerVarType_ only ever registers LOCALS/PARAMS (see
+        // collectClassNames/emitStatement's VariableDeclaration/ContainerDeclaration
+        // branches) -- a container-typed class FIELD (`std::vector<Token> out;`,
+        // accessed bare via implicit `this` inside a method) was never checked here
+        // at all. That silently broke `out.push_back(new Token(...))`: with no
+        // container type resolved, receiverIsVector was false, so the
+        // element-kind-aware factory path never ran and the generic NewExpression
+        // fallback (emitExpression's unconditional make_shared default) fired
+        // instead -- producing `std::vector<std::unique_ptr<Token>> out;` declared
+        // as unique_ptr but every push_back site emitting make_shared, a real
+        // compile error. Fixed by also checking the current class's own fields,
+        // the same way isCurrentField/fieldType already do for exprObjectClass.
+        if (isCurrentField(id->name)) {
+            const std::string ft = fieldType(currentClass_, id->name);
+            if (isVectorType(ft)) return ft;
+        }
+        return "";
+    }
+    if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+        // `scanner.out[pos]` -- a container FIELD accessed through an
+        // EXPLICIT class-typed receiver (`scanner`), not implicit `this`.
+        // Found as a real gap while writing yaml-cling's Parser (owns its own
+        // Scanner as a field, reads `scanner.out[pos]` throughout): without
+        // this, `scanner->out[pos].kind` emitted `.kind` instead of `->kind`,
+        // since a std::vector<unique_ptr<Token>>'s operator[] returns a
+        // reference to the smart pointer itself, not the pointee -- the same
+        // reasoning the bare-field case above already established, extended
+        // to an explicit receiver.
+        const std::string objClass = exprObjectClass(member->object.get());
+        if (objClass.empty()) return "";
+        const std::string ft = fieldType(objClass, member->member);
+        if (isVectorType(ft)) return ft;
+        return "";
+    }
+    return "";
 }
 
 bool AstEmitter::isSharedReturningCall(const Expression* expr) const {
     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
-        if (!call->callee || !call->templateArg.empty()) return false;
-        auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
-        if (member == nullptr) return false;
-        const std::string objClass = exprObjectClass(member->object.get());
-        if (objClass.empty()) return false;
-        return analyzer_.getMethodReturnPointerType(objClass, member->member) == PointerType::SHARED;
+        if (!call->templateArg.empty()) return false;
+        if (call->callee) {
+            auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+            if (member == nullptr) return false;
+            const std::string objClass = exprObjectClass(member->object.get());
+            if (objClass.empty()) return false;
+            return analyzer_.getMethodReturnPointerType(objClass, member->member) == PointerType::SHARED;
+        }
+        // Plain call, no receiver -- a free function (queried under the ""
+        // class, matching emitFunction's own free-function query) or an
+        // implicit-`this` call to a same-class method. Found as a real gap
+        // while writing yaml-cling's Parser: `Node root = YAML::Load(yaml);`
+        // kept declaring `root` as unique_ptr even after Load itself was
+        // correctly inferred/emitted as shared_ptr-returning, since this
+        // function unconditionally bailed out for any callee-less call.
+        if (analyzer_.getMethodReturnPointerType("", call->function_name) == PointerType::SHARED) {
+            return true;
+        }
+        if (!currentClass_.empty() &&
+            analyzer_.getMethodReturnPointerType(currentClass_, call->function_name) == PointerType::SHARED) {
+            return true;
+        }
+        return false;
     }
     if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
         // `n[key]` on a class-typed receiver desugars to `n.operator[](key)` for
@@ -330,6 +505,10 @@ std::string AstEmitter::factoryFor(const std::string& className, const std::stri
 // ---- top level -----------------------------------------------------------
 
 void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
+    // Declarations pulled in from an #include'd sibling .clg (for semantic analysis
+    // only) are never re-emitted here -- their real definition already lives in that
+    // sibling's own .cpp/.clh. See Statement::isExternalDeclaration.
+    if (stmt->isExternalDeclaration) return;
     if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt)) {
         emitClass(*cls, out);
     } else if (auto enm = dynamic_cast<const EnumDeclaration*>(stmt)) {
@@ -343,7 +522,18 @@ void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
         }
         out << " };\n\n";
     } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt)) {
-        emitFunction(fn->returnType, fn->name, fn->parameters, fn->body, out);
+        // methodName must be passed explicitly (defaults to "" otherwise) --
+        // it's what currentMethodReturnsShared_ actually queries
+        // getMethodReturnPointerType with (ownerClass="", methodName=fn->name
+        // for a free function). Without this, a genuinely alias-returning
+        // free function like yaml-cling's `Node Load(string) { ... return
+        // p->parseDocument(); }` silently stayed unique_ptr -- confirmed via
+        // debug instrumentation that inferAliasReturningFreeFunctions
+        // correctly classified it SHARED, but emitFunction's own shared-check
+        // never saw that classification because methodName was never wired
+        // through from this, the ONLY free-function call site.
+        emitFunction(fn->returnType, fn->name, fn->parameters, fn->body, out,
+                     "", 0, false, false, false, fn->name);
     } else if (auto mn = dynamic_cast<const MainFunction*>(stmt)) {
         emitFunction(mn->returnType, "main", {}, mn->body, out);
     } else if (dynamic_cast<const IncludeStatement*>(stmt)) {
@@ -399,9 +589,23 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
         out << "public:\n";
     }
 
-    // Specializations (`int as<int>() {...}`) emit OUTSIDE the class body, as
-    // `template<> int Node::as<int>() {...}` -- the C++ rule for explicit member-
-    // template specializations. Collected here, emitted after the closing `};`.
+    // Every constructor/method/specialization is DECLARED here (signature only) and
+    // DEFINED out-of-line (`ReturnType ClassName::method(...) {...}`) after the
+    // closing `};` -- the same shape the paired header (emitClassHeader) already
+    // declares, so the two stay structurally in sync. This matters beyond style: an
+    // in-class-body definition is implicitly `inline`, and the compiler is free to
+    // drop an unused inline function's code from this TU's object file entirely --
+    // which silently breaks a SEPARATE translation unit (one that only sees the
+    // header's signature-only declaration) at link time with "undefined reference",
+    // since it expected an out-of-line definition to exist somewhere. Out-of-line
+    // definitions here are ordinary (non-inline) external-linkage functions, always
+    // emitted, exactly what a translation-unit-per-.clg-file model needs. The primary
+    // generic template (`typeParameter` non-empty) is the one exception, kept
+    // in-class: an ordinary function template's definition must be visible at every
+    // instantiation point, the same requirement that makes emitClassHeader keep it
+    // in the header instead of declaration-only.
+    std::vector<const ConstructorDeclaration*> outOfLineCtors;
+    std::vector<const MethodDeclaration*> outOfLineMethods;
     std::vector<const MethodDeclaration*> specializations;
 
     for (const auto& member : cls.members) {
@@ -415,22 +619,55 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
                     << var->identifier << ";\n";
             }
         } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
-            emitFunction("", ctor->name, ctor->parameters, ctor->body, out, cls.name, 1);
+            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+            std::string sig = buildFunctionSignature("", ctor->name, ctor->parameters, cls.name,
+                                                      false, false, false, "");
+            out << indentStr(1) << sig << ";\n";
+            outOfLineCtors.push_back(ctor);
         } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
             if (!method->specializationArg.empty()) {
                 specializations.push_back(method);
                 continue;
             }
             if (!method->typeParameter.empty()) {
+                // Must stay visible at every instantiation point -- see comment above.
                 out << indentStr(1) << "template<typename " << method->typeParameter << ">\n";
+                emitFunction(method->returnType, method->name, method->parameters, method->body,
+                             out, cls.name, 1, method->isConst, method->isVirtual, method->isOverride,
+                             method->name);
+                continue;
             }
-            emitFunction(method->returnType, method->name, method->parameters, method->body,
-                         out, cls.name, 1, method->isConst, method->isVirtual, method->isOverride,
-                         method->name);
+            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+            std::string sig = buildFunctionSignature(method->returnType, method->name, method->parameters,
+                                                      cls.name, method->isConst, method->isVirtual,
+                                                      method->isOverride, method->name);
+            out << indentStr(1) << sig << ";\n";
+            outOfLineMethods.push_back(method);
         }
     }
     out << "};\n\n";
 
+    for (const auto* ctor : outOfLineCtors) {
+        emitFunction("", cls.name + "::" + ctor->name, ctor->parameters, ctor->body, out, cls.name, 0);
+    }
+    for (const auto* method : outOfLineMethods) {
+        // `isVirtual`/`isOverride` are NOT repeated out-of-line -- both are class-body-
+        // only specifiers in real C++ (a redefinition would be a compile error), so
+        // buildFunctionSignature's virtual/override text must not appear here; only
+        // the in-class declaration above carries them.
+        emitFunction(method->returnType, cls.name + "::" + method->name, method->parameters,
+                     method->body, out, cls.name, 0, method->isConst, false, false, method->name);
+    }
+    // Specializations (`int as<int>() {...}`) DEFINE here, same as any other
+    // out-of-line method -- exactly ONE .cpp may define a given explicit
+    // specialization (ODR), so this is their one true home. The paired header
+    // (emitClassHeader) only DECLARES each specialization (`template<> T
+    // Node::as<T>();`, no body) -- a specialization declaration (unlike an ordinary
+    // template) does not need to be visible at every instantiation point, only
+    // resolvable at link time, so declaration-only in the header + one definition
+    // here is both sufficient and ODR-safe. A single-file build with no paired
+    // header (plain `emit()`, no `.h` ever generated) still works unchanged: the
+    // specialization is simply defined and used within the same translation unit.
     for (const auto* method : specializations) {
         out << "template<>\n";
         // The `<int>`/`<std::string>` in the qualified name must match the emitted
@@ -443,32 +680,141 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
     }
 }
 
-void AstEmitter::emitFunction(const std::string& returnType, const std::string& name,
-                              const std::vector<std::pair<std::string, std::string>>& params,
-                              const std::vector<StatementPtr>& body, std::ostringstream& out,
-                              const std::string& ownerClass, int baseIndent, bool isConst,
-                              bool isVirtual, bool isOverride, const std::string& methodName) {
-    // Each function has its own local variable scope; `currentClass_` enables `this->`
-    // for field access inside a method/constructor.
-    varKinds_.clear();
-    varClass_.clear();
-    observerClass_.clear();
-    containerVarType_.clear();
-    const std::string savedClass = currentClass_;
-    currentClass_ = ownerClass;
-    const bool savedReturnsShared = currentMethodReturnsShared_;
-    // Only an explicit `@ptr shared Class.method` hint can make a return
-    // shared_ptr -- getMethodReturnPointerType defaults to UNIQUE with no hint,
-    // so an ordinary object-returning method's behavior is completely unchanged.
-    currentMethodReturnsShared_ = !methodName.empty() && !ownerClass.empty() &&
+void AstEmitter::emitClassHeader(const ClassDeclaration& cls, std::ostringstream& out) {
+    out << "class " << cls.name;
+    std::vector<std::string> bases;
+    if (!cls.baseClass.empty()) bases.push_back("public " + cls.baseClass);
+    if (analyzer_.classNeedsSharedFromThis(cls.name)) {
+        bases.push_back("public std::enable_shared_from_this<" + cls.name + ">");
+    }
+    if (!bases.empty()) {
+        out << " : ";
+        for (size_t i = 0; i < bases.size(); ++i) {
+            if (i > 0) out << ", ";
+            out << bases[i];
+        }
+    }
+    out << " {\npublic:\n";
+
+    if (baseClasses_.count(cls.name) > 0) {
+        out << indentStr(1) << "virtual ~" << cls.name << "() = default;\n";
+        out << "protected:\n";
+        out << indentStr(1) << cls.name << "() = default;\n";
+        out << "public:\n";
+    }
+
+    // Specializations (`int as<int>() {...}`), like in emitClass, are listed OUTSIDE
+    // the class body -- but here as DECLARATIONS only (`template<> T Node::as<T>();`,
+    // no body). Unlike an ordinary template, whose definition must be visible at
+    // every instantiation point, an explicit specialization only needs to be
+    // DECLARED before use; its one definition lives in the paired .cpp (emitClass),
+    // resolved at link time like any other out-of-line method. This is what lets a
+    // consumer that only sees this header (never yaml_node.cpp) still call
+    // `node.as<int>()` and link successfully against the separately compiled
+    // yaml_node.o.
+    std::vector<const MethodDeclaration*> specializations;
+
+    for (const auto& member : cls.members) {
+        if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
+            if (isClassType(var->type)) {
+                out << indentStr(1) << smartPointerType(var->type, var->identifier)
+                    << "<" << var->type << "> " << var->identifier << ";\n";
+            } else {
+                out << indentStr(1) << cppTypeFor(var->type, var->identifier) << " "
+                    << var->identifier << ";\n";
+            }
+        } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+            std::string sig = buildFunctionSignature("", ctor->name, ctor->parameters, cls.name,
+                                                      false, false, false, "");
+            out << indentStr(1) << sig << ";\n";
+        } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+            if (!method->specializationArg.empty()) {
+                specializations.push_back(method);
+                continue;
+            }
+            if (!method->typeParameter.empty()) {
+                // The primary generic template's body must stay visible at every
+                // instantiation point -- same requirement as any C++ function
+                // template -- so it is emitted in full here, not declaration-only.
+                out << indentStr(1) << "template<typename " << method->typeParameter << ">\n";
+                emitFunction(method->returnType, method->name, method->parameters, method->body,
+                             out, cls.name, 1, method->isConst, method->isVirtual, method->isOverride,
+                             method->name);
+                continue;
+            }
+            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+            std::string sig = buildFunctionSignature(method->returnType, method->name, method->parameters,
+                                                      cls.name, method->isConst, method->isVirtual,
+                                                      method->isOverride, method->name);
+            out << indentStr(1) << sig << ";\n";
+        }
+    }
+    out << "};\n\n";
+
+    for (const auto* method : specializations) {
+        // Declaration only: `template<> ReturnType Node::as<int>(params);` -- build
+        // the signature the same way the in-class declarations above do, but at
+        // namespace scope with the qualified/specialized name, and no body.
+        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+        std::string sig = buildFunctionSignature(
+            method->returnType,
+            cls.name + "::" + method->name + "<" + cppTypeFor(method->specializationArg, "") + ">",
+            method->parameters, cls.name, method->isConst, false, false, "");
+        out << "template<>\n" << sig << ";\n\n";
+    }
+}
+
+void AstEmitter::emitTopLevelHeader(const Statement* stmt, std::ostringstream& out) {
+    if (stmt->isExternalDeclaration) return;
+    if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt)) {
+        emitClassHeader(*cls, out);
+    } else if (auto enm = dynamic_cast<const EnumDeclaration*>(stmt)) {
+        // Already a pure declaration -- emitted identically to emitTopLevel.
+        out << "enum " << enm->name << " { ";
+        for (size_t i = 0; i < enm->enumerators.size(); ++i) {
+            if (i > 0) out << ", ";
+            out << enm->enumerators[i];
+        }
+        out << " };\n\n";
+    } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt)) {
+        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+        std::string sig = buildFunctionSignature(fn->returnType, fn->name, fn->parameters,
+                                                  "", false, false, false, fn->name);
+        out << sig << ";\n\n";
+    } else if (dynamic_cast<const MainFunction*>(stmt)) {
+        // A header never declares main -- the definition lives only in the one .cpp
+        // that has one (a program may have at most one main across all linked TUs).
+    } else if (dynamic_cast<const IncludeStatement*>(stmt)) {
+        // Collected once at the top of emitHeader().
+    } else if (dynamic_cast<const CommentStatement*>(stmt)) {
+        // Comments are dropped in the AST-driven output for now.
+    }
+}
+
+std::string AstEmitter::buildFunctionSignature(const std::string& returnType, const std::string& name,
+                                               const std::vector<std::pair<std::string, std::string>>& params,
+                                               const std::string& ownerClass, bool isConst,
+                                               bool isVirtual, bool isOverride, const std::string& methodName) {
+    // getMethodReturnPointerType defaults to UNIQUE unless the alias-return
+    // inference actually classified this (class, method) pair SHARED, so an
+    // ordinary object-returning method/function's behavior is unaffected
+    // unless its body genuinely matches the inference rule. A free function
+    // (ownerClass empty) queries under the SAME "" class key
+    // inferAliasReturningMethods/promoteReturnsOfSharedLocals register free
+    // functions under -- needed for `Node Load(string) { ... return
+    // p->parseDocument(); }`-shaped code (yaml-cling's YAML::Load), which is
+    // exactly as alias-returning as any class method but has no owner class
+    // to key by.
+    currentMethodReturnsShared_ = !methodName.empty() &&
         analyzer_.getMethodReturnPointerType(ownerClass, methodName) == PointerType::SHARED;
 
-    // Signature. An object return type is lowered to a smart pointer so the body's
-    // owning local (a smart pointer) can be returned directly (unique_ptr by
-    // default: the callee constructs the object and hands sole ownership back to
-    // the caller; shared_ptr only when an explicit @ptr hint says this method's
-    // return aliases rather than transfers -- see the ReturnStatement branch
-    // below for the matching copy-vs-move choice).
+    // An object return type is lowered to a smart pointer so the body's owning local
+    // (a smart pointer) can be returned directly (unique_ptr by default: the callee
+    // constructs the object and hands sole ownership back to the caller; shared_ptr
+    // only when an explicit @ptr hint says this method's return aliases rather than
+    // transfers -- see the ReturnStatement branch in emitStatement for the matching
+    // copy-vs-move choice).
     std::string sig;
     if (isVirtual) sig += "virtual ";
     if (!returnType.empty()) {
@@ -503,6 +849,27 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     sig += ")";
     if (isConst) sig += " const";
     if (isOverride) sig += " override";
+    return sig;
+}
+
+void AstEmitter::emitFunction(const std::string& returnType, const std::string& name,
+                              const std::vector<std::pair<std::string, std::string>>& params,
+                              const std::vector<StatementPtr>& body, std::ostringstream& out,
+                              const std::string& ownerClass, int baseIndent, bool isConst,
+                              bool isVirtual, bool isOverride, const std::string& methodName) {
+    // Each function has its own local variable scope; `currentClass_` enables `this->`
+    // for field access inside a method/constructor.
+    varKinds_.clear();
+    varClass_.clear();
+    observerClass_.clear();
+    containerVarType_.clear();
+    const std::string savedClass = currentClass_;
+    currentClass_ = ownerClass;
+    const bool savedReturnsShared = currentMethodReturnsShared_;
+
+    std::string sig = buildFunctionSignature(returnType, name, params, ownerClass, isConst,
+                                             isVirtual, isOverride, methodName);
+
     // Class members are indented one level; free functions sit at column 0.
     const std::string pad = indentStr(baseIndent);
     out << pad << sig << " {\n";

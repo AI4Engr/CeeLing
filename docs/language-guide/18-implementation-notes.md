@@ -1891,3 +1891,340 @@ GAPS.md`'s `rust_backend` section (RB5) rather than silently worked around.
 
 Full CTest (13/13) and safety-suite (70/70, compile-gated) sweeps after this
 step showed zero regressions elsewhere.
+
+## Step 24 — `char`, a real YAML parser, and the value of a ground-truth cross-check
+
+Step 23 closed the `Node` port; this step closes the last explicit exclusion
+from that plan: "no parser this round." The user asked, directly, for
+`YAML::Load` to actually parse real `.yaml` text — not just hand-built trees.
+
+### `char`: a small, deliberately narrow addition, with one explicit constraint from the user
+
+A hand-rolled tokenizer needs to scan text character by character. CeeLing had
+no `char` type and no `string[i]` at all. The user's instruction going in was
+explicit: add `char`, but do NOT let it become a route back to raw
+pointers — `char*` is THE classic C raw-pointer/string type, and reopening it
+would undermine the whole "no raw pointers" contract for one convenience
+feature. The fix matches CLAUDE.md's existing philosophy exactly: `char` is a
+pure VALUE type (`char_literal` token, `string[i]` returns `char`), and
+`char*`/`char[]` are grammatically INEXPRESSIBLE — no pointer/array
+declarator production exists anywhere in this grammar, the same "forbidden by
+missing syntax, not by a checker rule" approach every other raw-pointer
+closure in this codebase already uses. `string[i]` needed zero new emission
+code: the existing generic `SubscriptExpression` read path already emitted
+`receiver[index]` literally (the container fallback from Step 22's work),
+which happens to be exactly correct real C++ for `std::string::operator[]`
+too. Escape sequences (`\n`/`\r`/`\t`/`\\`/`\'`/`\0`) were added only once a
+real consumer (the scanner's own newline detection) needed one, not
+speculatively.
+
+### The Parser surfaced four real AST-builder/emitter bugs that have nothing to do with `char`
+
+Writing an actual ~350-line, 4-class recursive-descent parser (`Scanner` +
+`Token` already existed from an earlier session; `Parser` + `YAML::Load` are
+new) is a much larger, more structurally varied piece of code than anything
+previously written in CeeLing — and it immediately surfaced bugs that had
+been sitting latent in the language for a while, simply because nothing had
+exercised these particular shapes before:
+
+1. **Multi-parameter constructors and methods silently dropped every
+   parameter after the first.** `parameter_list`'s own grammar is `seq(type,
+   identifier), repeat(seq(',', type, identifier))` — the FIRST parameter is
+   2 children wide (`type`, `identifier`), but every parameter after it has a
+   leading `,` SIBLING too, making it 3 children wide. Both
+   `buildConstructorDeclaration` and `buildMethodDeclaration` walked
+   `parameter_list`'s children with a fixed `j += 2` stride — correct only
+   for the first parameter, silently desyncing and dropping everything after
+   it. `Token(int k, string v)` compiled a constructor taking only `k`; `v`
+   vanished with no error (the constructor body's own `this->value = v;`
+   happened to reference the dropped name, turning into a real but confusing
+   "undeclared `v`" g++ error — a body that didn't reference the dropped
+   parameter by name would have compiled into something silently wrong
+   instead). This was NOT a new bug — the fixed-stride code had presumably
+   been wrong since whenever multi-parameter constructors were first
+   written — but nothing before this session's work had a multi-field class
+   with a multi-parameter constructor densely enough to trip over it twice.
+   Fixed by pairing type/identifier by TYPE (walking every child, matching
+   `buildFunctionDeclaration`'s own already-correct pattern) instead of a
+   fixed stride.
+2. **Parenthesized sub-expressions did not parse at all.**
+   `primary_expression`'s grouped alternative (`'(' expression ')'`) has
+   THREE children, but `buildExpression`'s `primary_expression` case
+   unconditionally used `ts_node_child(node, 0)` — correct for every OTHER
+   alternative (`identifier`/`number`/`string_literal`/`char_literal`, all
+   exactly one child), but child 0 of the grouped form is the LITERAL `(`
+   TOKEN. `bool b = (a);` and `a && (b || c)` both failed to parse entirely.
+   Confirmed via `tree-sitter parse` directly that the GRAMMAR already
+   handled the shape correctly — this was purely an AST-builder bug, not a
+   grammar gap. Fixed with `ts_node_named_child(node, 0)` instead, which
+   skips literal tokens automatically and is correct for every alternative.
+3. **`someCall().field` had no valid parse at all.** `member_access`'s
+   left-operand choices (`member_access | subscript_expression |
+   primary_expression`) never included `function_call`. Confirmed via
+   `tree-sitter parse` that `.field` after a call became a bare `ERROR` node
+   SIBLING at the top level (not nested inside a builder call, so none of
+   this codebase's existing `rejectUnbuildableChild` discipline caught it) —
+   the AST builder's error recovery silently dropped it. `int x =
+   h.get().val;` transpiled clean with `.val` entirely gone (`int x =
+   h->get();`), only failing at the FINAL g++ step with a confusing
+   type-mismatch pointing nowhere near the real cause. Fixed by adding
+   `function_call` to `member_access`'s choices (confirmed zero new GLR
+   conflicts via `generate-grammar`), plus a companion fix `exprObjectClass`
+   needed regardless: deciding `.` vs `->` for a call RESULT has no
+   variable to look up a class through, so two new maps
+   (`functionReturnType_`/`classMethodReturnType_`, mirroring
+   `functionParams_`/`classMethodParams_`'s existing shape exactly) let it
+   resolve both an explicit-receiver call (`h.get().val`) and an
+   implicit-`this` call inside a method body (`current().val`).
+4. **A container FIELD accessed through an intermediate class-typed
+   receiver emitted `.` instead of `->`.** The Parser holds its own
+   `Scanner` as a field and reads `scanner.out[pos].kind` throughout.
+   `containerVarType` (deciding a subscript's element `.`-vs-`->`) only ever
+   checked a bare-identifier receiver — a local/parameter, or (from an
+   earlier, already-shipped fix) the CURRENT class's own implicit-`this`
+   field. An EXPLICIT `member.field` receiver (`scanner.out`, not bare
+   `out`) had no case at all. Fixed by adding a `MemberAccess` branch that
+   resolves the receiver's class via `exprObjectClass` first, then looks up
+   the field the same way the bare-identifier case already does.
+
+None of these four are `char`-specific — they were general AST-builder/
+emitter gaps that a sufficiently varied piece of real code was always going
+to surface eventually. This is the same lesson every prior "re-test against
+the real file" step in this project has taught, restated once more because
+it keeps being true: **a fixture only proves the scenario someone already
+thought to write; a genuinely new piece of real code is what finds the one
+nobody did.**
+
+### Namespaced free functions were never part of the original namespace design
+
+`YAML::Load(...)` needed to resolve as a known, callable free function — but
+namespace support (Step 21) only ever gave `ClassDeclaration`/
+`EnumDeclaration` a `namespaceName` field and the matching dual-registration;
+`FunctionDeclaration` had neither. This was not a bug in the earlier work — free
+functions inside namespaces genuinely were out of scope at the time — but it
+needed closing now. Added `FunctionDeclaration::namespaceName`, wired through
+the AST builder's namespace-desugaring (`buildNamespaceDeclaration`), the
+emitter's namespace re-wrapping (`emitTopLevel`'s grouping logic), and all
+three checker modules' qualified-name dual-registration
+(`EscapeHatchChecker::collectCallables`, `DanglingChecker::deriveSummaries`,
+`AstEmitter::collectClassNames`) — the exact same pattern classes/enums
+already had, mechanically extended to a fourth `Statement` subtype.
+
+### Two more alias-return inference passes, and why ORDER matters between them
+
+`Node Load(string text) { Parser p = new Parser(text); return
+p->parseDocument(); }` needed to be classified alias-returning too (`Load`
+returns a call to `parseDocument`, itself alias-returning because it returns
+a LOCAL that gets promoted to `shared_ptr`) — and Step 23's original
+inference (`inferAliasReturningMethods`) covered neither shape:
+
+- **`promoteReturnsOfSharedLocals`** — a method returning a bare LOCAL whose
+  pointer-kind was independently promoted to `shared_ptr` by a LATER pass
+  (`promoteSharedCallArguments`, because the local was passed into a
+  parameter that itself needed sharing) was never recognized by the
+  original structural rule (`this`/field/alias-call only — never a plain
+  local). Confirmed via probe on `Box makeAdopted() { Box parent = new
+  Box(1); Box kid = new Box(2); parent.adopt(kid); return kid; }` — `kid`
+  correctly becomes `shared_ptr` (passed into `adopt`'s parameter, itself
+  needing sharing), but `makeAdopted` stayed `unique_ptr`, a genuine
+  return-type mismatch. This new pass MUST run genuinely LAST in
+  `analyzeProgram` — after every local's FINAL pointer-kind decision,
+  including whatever the pass immediately before it just changed.
+- **`inferAliasReturningFreeFunctions`** — the free-function counterpart of
+  the original rule's "calls an already-classified alias-returning method"
+  case, since free functions have no class scope to be classified alongside
+  in the same fixed-point loop. This one has to run even LATER than
+  `promoteReturnsOfSharedLocals` — a free function calling a class method
+  needs that method's classification to be TRULY final. An earlier attempt
+  inlined this check directly into `inferAliasReturningMethods` (running
+  first, right after the class-method fixed-point loop) and it silently
+  failed: `Load`'s own check queried `parseDocument`'s classification before
+  `promoteReturnsOfSharedLocals` had set it, confirmed via temporary debug
+  instrumentation (`fprintf(stderr, ...)` gated behind `getenv
+  ("CLING_DEBUG_PTR")`, removed once the ordering bug was found and fixed).
+  Moving it to its own, later-running pass fixed it.
+- Two more small, separate wiring gaps surfaced alongside these:
+  `AstEmitter::emitFunction`'s free-function call site (`emitTopLevel`)
+  never passed the `methodName` parameter its own shared-return check
+  actually reads (`methodName` defaults to `""`; only class-method call
+  sites had ever wired it through) — even a CORRECTLY classified free
+  function stayed `unique_ptr` at emission until this was fixed. And a call
+  SITE outside the namespace (`Node root = NS::build(...);`) needed the
+  classification dual-registered under the QUALIFIED name too, since the
+  definition-side query always uses the bare name but a call site spells it
+  qualified — the same qualified-vs-bare split every other namespaced
+  lookup in this codebase already has, just one more place it needed
+  applying.
+
+### A real scanner bug that only a ground-truth cross-check against actual yaml-cpp caught
+
+Every fixture written up to this point passed. Re-testing against a more
+representative document — closer to what `yaml_node.clg`'s own smoke test
+already covered, but now parsed from TEXT instead of hand-built — surfaced
+two more real bugs that no fixture had been shaped to catch, because writing
+the "correct" fixture requires already knowing the right answer, and this is
+exactly the kind of case where the right answer isn't obvious without a
+ground-truth to compare against:
+
+- **Compact sequence-of-maps entries tagged every token on their line with
+  the DASH's column, not the KEY's.** `- key: v1` at column 2 has its key
+  actually starting at column 4 (`"- "` is two characters); a continuation
+  key on the next line (`    other: v2`) is correctly aligned at column 4
+  too. The scanner tagged `key`/`v1` with column 2 (the dash's own
+  `lineIndent()` result) instead of the content's real column, so `other`'s
+  correctly-computed indent (4) never matched what the parser expected for
+  that map (wrongly 2) — parsing silently stopped after the FIRST key.
+  `other: v2` simply vanished, a wrong VALUE with no error or crash, not
+  something a compile-only or even a run-only-on-a-simpler-fixture check
+  would ever surface. Fixed by tracking a separate `contentCol` (the dash's
+  column plus however many characters `- ` actually consumed) and tagging
+  the compact entry's own tokens with that instead of the line's leading
+  `lineIndent()` value.
+- **Returning from deep nesting straight to the top level can require
+  popping the indent stack multiple times** (one `TkDedent` per level), but
+  the map-parsing loop's `atEnd` check treated ANY single `TkDedent` as "this
+  map is over" — even when that dedent's own target indent was still ABOVE
+  the current map's own indent, meaning the map genuinely was not over yet.
+  A top-level key written after a multi-level-nested block (`flag: 'ok'`
+  after a compact sequence-of-maps entry two levels deep) was silently
+  never parsed at all. Fixed by having `atEnd` CONSUME (advance past) a
+  `TkDedent` whose own indent is still `>=` the scope currently being
+  parsed — only a dedent (or an ordinary token) genuinely below that scope's
+  indent actually ends it.
+
+Both were found by building and running ACTUAL upstream yaml-cpp
+(`C:\project\yaml-cpp`, compiled directly from its own real source on this
+machine, not simulated or recalled from training) on the exact same YAML
+text yaml-cling's port was being tested against, and diffing the two
+programs' output line by line. This is the strongest verification technique
+available for a port like this, and it earned its keep immediately — neither
+bug produced a compile error or a crash in yaml-cling's own output; both
+produced silently wrong VALUES that only a real ground-truth comparison
+could catch. `tests/run_parser_smoke_rust_backend.sh` locks in the fix with
+one representative document; the cross-check itself is not automated into
+CI (it requires yaml-cpp source on the machine, not a CeeLing/yaml-cling
+dependency), but the technique and result are recorded here for anyone
+revisiting the parser later.
+
+### The result
+
+Real upstream yaml-cpp and yaml-cling's `rust_backend` port now produce
+**byte-identical output** on a document exercising every feature in this
+slice's scope: nested maps, a plain sequence, a multi-key compact
+sequence-of-maps entry, a `#` comment, single- and double-quoted scalars,
+and a top-level key following deeply nested content. `.yaml` text now
+genuinely parses into a working `Node` tree — the last item Step 23's plan
+had explicitly excluded ("no parser this round") is done.
+
+Full CTest (13/13) and safety-suite (82/82, compile-gated) sweeps after this
+step showed zero regressions elsewhere.
+
+## Step 25 — Real multi-file compilation: `.h` header generation + `.clh` source-level includes
+
+`yaml-cling`'s three library files (`yaml_node.clg`, `yaml_scanner.clg`,
+`yaml_parser.clg`, plus a new `main.clg` entry point) had never actually been
+compiled as separate translation units. Every prior end-to-end proof (Step 24
+included) worked by textually concatenating the `.clg` SOURCE files together
+before invoking `cling` once on the combined text — documented at the time as
+the sanctioned workaround for "CeeLing has no cross-.clg include yet," but a
+workaround nonetheless: it could not catch a bug that only shows up under
+real separate compilation (ODR violations, missing out-of-line definitions,
+each `.clg` needing to compile and link independently). Asked to produce a
+genuine one-`.clg`-to-one-`.cpp` build — no source merging, ordinary `g++ -c`
+per file, then link — this gap became unavoidable to close for real.
+
+### The two things a multi-file C++ story actually needs
+
+Ordinary C++ separate compilation rests on two things `cling` did not have:
+a way to emit a DECLARATION-only artifact (a header) from a `.clg`, and a way
+for a `.clg`'s own semantic analysis to treat another `.clg`'s declarations
+as known rather than "unknown call" (Phase 1's default-reject rule otherwise
+rejects every method on an `#include`d type, since an opaque `#include` was
+never parsed for declarations — this is the exact gap
+[Chapter 9](09-status-and-roadmap.md)'s Phase 4.6 had flagged: "unknown call"
+and "call to anything external" were the same set).
+
+**Header generation** (`AstEmitter::emitHeader`, `cpp_generator.h`'s emitter
+family): output-file extension `.h` now requests a declaration-only emission
+instead of `.emit()`'s full-definition one. Fields emit as before; ordinary
+methods/constructors emit SIGNATURE + `;`, no body. Two exceptions, both
+forced by real C++ template rules rather than a design choice: the primary
+generic template (`<T> T as() {...}`) must stay fully defined in the header,
+because an ordinary function template's definition must be visible at every
+instantiation point; and each concrete specialization (`as<int>`, `as<bool>`,
+...) must ALSO stay in the header, marked `inline`, for the same reason — an
+explicit specialization is a full definition, not implicitly inline the way
+an ordinary template instantiation is, so without `inline` two translation
+units both including the header would violate ODR the moment both got
+compiled. `emitClassHeader`/`emitTopLevelHeader` mirror `emitClass`/
+`emitTopLevel`'s traversal exactly (same namespace grouping, same field/base
+handling) so a header and its paired `.cpp` never structurally drift apart.
+
+**The `.cpp` side had a latent bug this immediately surfaced**: with a header
+declaring signatures only, the paired `.cpp`'s method bodies needed to be
+REAL out-of-line definitions (`ReturnType Class::method(...) {...}`), not
+in-class bodies. An in-class body is implicitly `inline`, and the compiler is
+free to drop an unused inline function's code from that translation unit's
+object file entirely — which is exactly what happened: `yaml_node.cpp`
+itself never calls `IsMap()`/`operator[]`/etc., so `g++ -c` produced an
+object file with ONLY the four `as<T>` symbols in it (confirmed with `nm`),
+and `main.cpp`, seeing only the header's signature, failed at link time with
+"undefined reference" for everything else. `emitClass` was restructured to
+declare every constructor/method in-class (via the same
+`buildFunctionSignature` helper `emitClassHeader` uses) and define all of
+them out-of-line afterward — ordinary external-linkage functions, always
+emitted regardless of whether this TU itself calls them. Member-template
+specializations are the one thing deliberately NOT emitted in the `.cpp` at
+all anymore: they live in the header only (as `inline`), because emitting
+them a second time, non-inline, in the `.cpp` is a textbook ODR "multiple
+definition" the instant two TUs both include that header — confirmed by
+hitting exactly that linker error before removing the `.cpp`-side emission.
+
+**Cross-file semantic visibility** (`main.cpp`'s `mergeExternalDeclarations`):
+`.clg` source spells a local include as `#include "foo.clh"` — `.clh` is a
+SOURCE-level-only convention (no such file is ever read or written) that
+names foo's declarations the way `.clg` names foo's definitions. Resolving
+one does not parse a `.clh` file (there is none); it finds and parses foo's
+own `.clg` with the same `ASTBuilder`, then merges its top-level statements
+into the including program's `Program`, each marked with a new
+`Statement::isExternalDeclaration` flag. Every semantic pass
+(`EscapeHatchChecker`, `SmartPointerAnalyzer`, `DanglingChecker`) already
+just walks `program.statements`, so merging is sufficient to make `Node`/
+`Scanner`/etc. resolvable — no checker changed. `AstEmitter::emit`/
+`emitHeader` gained one new guard each (skip a statement whose
+`isExternalDeclaration` is set, including its own `#include` lines) so a
+merged-in declaration is visible for analysis but never re-emitted — the
+actual definition already lives in that file's own separately-generated
+`.cpp`. Resolution recurses (so `parser.clg`'s own `#include "yaml_node.clh"`
++ `"yaml_scanner.clh"` resolve transitively into `main.clg`'s program too)
+and de-duplicates via a `seenClgFiles` set, so a diamond include only merges
+once. The emitted C++ rewrites `#include "foo.clh"` to `#include "foo.h"`
+(`rewriteClhIncludes`) since `.h` is the real generated file g++ needs to
+find — the `.clg` author only ever writes `.clh`, never worrying about
+whether the on-disk artifact happens to exist yet.
+
+### What this does NOT do
+
+This is not the general "Multi-file compilation and module dependency" item
+[Chapter 9](09-status-and-roadmap.md) tracks as an open Phase 4.6 goal — there
+is still no incremental build, no package/module system, and a `.clh`
+include still requires the sibling `.clg` to be readable at compile time (it
+re-parses the dependency's full source on every compile, just for
+declarations — cheap at yaml-cling's current size, not yet optimized for a
+large project). What it does close is the specific, previously-open gap this
+step set out to fix: a `.clg` file can now `#include` another's declarations
+and the two compile as genuinely separate translation units, linkable with
+ordinary `g++ -c` + link — not a text merge.
+
+### The end-to-end proof
+
+`yaml-cling/src-clg/{yaml_node,yaml_scanner,yaml_parser,main}.clg` each
+transpile independently (`yaml_node.clg`/`yaml_scanner.clg` to both a `.cpp`
+and a `.h`; `yaml_parser.clg` additionally `#include`s both `.clh`s;
+`main.clg` is the new entry point, `#include`ing `yaml_node.clh` and
+`yaml_parser.clh`). All four `.cpp` files compile independently
+(`g++ -std=c++17 -c`) into `.o` files, and `g++`-linking the four `.o` files
+produces a working executable that prints the expected `Load`/`operator[]`/
+`.as<T>()`/`IsMap`/`IsSequence`/`size` output — the same YAML fixture Step 24
+proved correct against upstream yaml-cpp, now built the way a real multi-file
+C++ project actually builds, not via source concatenation.

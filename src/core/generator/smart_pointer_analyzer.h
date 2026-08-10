@@ -144,6 +144,20 @@ private:
     // picked up by that pass's applyExplicitHints call).
     void inferAliasReturningMethods(const Program& program);
 
+    // A FOURTH pass, running after promoteSharedCallArguments (needs every
+    // local's FINAL pointer-kind decision): promotes a method's return
+    // classification to SHARED if it returns a bare local variable whose own
+    // decided kind is SHARED, even though inferAliasReturningMethods's
+    // structural rule (this/field/alias-call only) never covers plain locals.
+    // See the .cpp for the concrete yaml-cling Parser shape this closes.
+    void promoteReturnsOfSharedLocals(const Program& program);
+
+    // Free-function counterpart of inferAliasReturningMethods's case (c) --
+    // MUST run AFTER promoteReturnsOfSharedLocals (needs a called class
+    // method's FINAL classification, which that pass may still be setting).
+    // See the .cpp for the exact yaml-cling Load() shape this closes.
+    void inferAliasReturningFreeFunctions(const Program& program);
+
     void scanSource(const std::string& source);
     void parseAnnotationLine(const std::string& trimmedLine, int lineNumber);
     void registerReference(const std::string& scopeName, const std::string& className,

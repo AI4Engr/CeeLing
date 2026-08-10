@@ -575,3 +575,92 @@ gap): a method call chained directly onto a subscript/call result
 (`root["name"].Scalar()`) is rejected, since every checker does lightweight,
 non-full-type-inference resolution — worked around with an intermediate
 variable at each chaining point, tracked as `yaml-cling/notes/GAPS.md`'s RB5.
+
+`char` as a value type, and a real YAML text parser (Ch. 18 Step 24) added
+12 more fixtures: **PASS=82, XFAIL=0, FAIL=0.**
+
+`char` was added as a prerequisite for a hand-rolled tokenizer — a pure
+VALUE type like `int`/`bool`, with `char*`/`char[]` grammatically
+inexpressible by construction (no pointer/array production exists anywhere
+in this grammar), closing the classic "char is secretly a raw C-string
+pointer" door before it could open (an explicit constraint from the user,
+not an afterthought).
+
+- `char_basic_accepted.clg` — declaration, a char literal, comparison. Run,
+  prints `x 0`.
+- `char_string_subscript_accepted.clg` — `string[i]` returns `char`, exercised
+  in a tokenizer-shaped while-loop counting spaces. Needed ZERO emitter
+  changes for the read side (the existing generic `SubscriptExpression`
+  fallback already emitted `receiver[index]` literally, which happens to be
+  exactly correct for `std::string::operator[]` too). Run, prints `1`.
+- `char_class_field_method_accepted.clg` — `char` as a method return type
+  and a class field access pattern (a Scanner-shaped `peek()`/`advance()`
+  pair). Run, prints `xy`.
+- `char_escape_accepted.clg` — `\n`/`\t` escape sequences, added only once a
+  real consumer (the scanner's own newline detection) needed one. Run,
+  prints `1 0`.
+- `char_pointer_rejected.clg` — positive control: `char*` stays a parse
+  error, the same way every other raw pointer type already is.
+- `multi_param_constructor_and_method_accepted.clg` — a real, significant,
+  previously-undiscovered bug: `buildConstructorDeclaration`/
+  `buildMethodDeclaration` both silently dropped every constructor/method
+  parameter after the first (a fixed `j += 2` stride over `parameter_list`,
+  correct only for the FIRST parameter — every one after it has a leading
+  `,` sibling, making it 3 children wide, not 2). `Token(int k, string v)`
+  compiled a constructor taking only `k`. Fixed by pairing type/identifier
+  by TYPE (walking every child) instead of a fixed stride. Run, prints
+  `1 a 5 9`.
+- `parenthesized_expression_accepted.clg` — another real, significant bug:
+  `primary_expression`'s grouped form (`'(' expr ')'`) has three children,
+  but `buildExpression` unconditionally used `child(0)` (the literal `(`
+  token). `bool b = (a);` and `a && (b || c)` both failed to parse entirely
+  — confirmed via `tree-sitter parse` directly that the GRAMMAR already
+  handled the shape correctly, purely an AST-builder bug. Fixed with
+  `ts_node_named_child(node, 0)`. Run, prints `1`.
+- `call_result_member_access_accepted.clg` — `someCall().field` had no
+  valid parse at all (`member_access`'s left-operand choices never included
+  `function_call`; `tree-sitter parse` confirmed `.field` became a bare
+  ERROR-node sibling, silently dropped by error recovery). Fixed by adding
+  `function_call` to `member_access`'s choices, plus new
+  `functionReturnType_`/`classMethodReturnType_` maps so `exprObjectClass`
+  can resolve a call RESULT's class (no variable to look up). Covers both
+  explicit-receiver (`h.get().val`) and implicit-`this` (`current().val`)
+  shapes. Run, prints `5 1`.
+- `container_field_via_member_access_accepted.clg` — `containerVarType`
+  only ever checked a bare-identifier receiver (a local/param, or the
+  CURRENT class's own implicit-`this` field); an explicit `member.field`
+  receiver (`scanner.out[pos]`) had no case, emitting `.kind` instead of
+  `->kind`. Fixed with a `MemberAccess` branch resolving the receiver's
+  class first. Run, prints `5`.
+- `shared_return_via_promoted_local_accepted.clg` — `inferAliasReturningMethods`'s
+  structural rule never recognized `return <local>;` at all; a method
+  returning a local that gets promoted to `shared_ptr` by a LATER pass
+  (`promoteSharedCallArguments`) kept its own return type at `unique_ptr`.
+  Fixed by a new `promoteReturnsOfSharedLocals` pass, running genuinely LAST
+  in `analyzeProgram`. Run, prints `2`.
+- `shared_return_free_function_namespaced_accepted.clg` — the free-function
+  counterpart (`inferAliasReturningFreeFunctions`, which must run even
+  LATER than `promoteReturnsOfSharedLocals` — confirmed via probe that
+  running it too early, as originally attempted, queried a classification
+  that did not exist yet), plus `AstEmitter::emitFunction`'s free-function
+  call site never passing the `methodName` its own shared-check reads, plus
+  a namespaced call site needing the classification dual-registered under
+  the qualified name. Run, prints `9`.
+
+**The definitive end-to-end proof**: real upstream yaml-cpp
+(`C:\project\yaml-cpp`, built and run directly on this machine from its own
+actual source, not simulated) and yaml-cling's `rust_backend` port
+(`yaml_scanner.clg` + `yaml_parser.clg` + `YAML::Load`) produce
+**byte-identical output** parsing the same representative YAML document
+(nested maps, a sequence, a multi-key compact sequence-of-maps entry, a `#`
+comment, quoted scalars, a top-level key after deep nesting). This
+cross-check caught two real scanner/parser bugs that no fixture written
+beforehand had been shaped to catch — a compact sequence-of-maps entry
+tagging its tokens with the dash's column instead of the key's own column
+(so a second key on a continuation line silently vanished), and the
+map-parsing loop treating ANY `TkDedent` as "this scope is over" even when
+its target indent was still above the current scope (so a top-level key
+after deeply nested content silently vanished). See
+`yaml-cling/tests/run_parser_smoke_rust_backend.sh` and Chapter 18 Step 24
+for the full account, including why the cross-check technique itself (not
+just its result) is worth recording for future parser work.

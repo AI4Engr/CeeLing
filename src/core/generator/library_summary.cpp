@@ -77,7 +77,7 @@ std::string vectorElementType(const std::string& type) {
 }
 
 bool isKnownVectorMethod(const std::string& methodName) {
-    static const std::set<std::string> kKnown = {"push_back", "size", "begin", "end"};
+    static const std::set<std::string> kKnown = {"push_back", "pop_back", "size", "begin", "end"};
     return kKnown.count(methodName) > 0;
 }
 
@@ -89,7 +89,13 @@ bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex) {
 }
 
 bool vectorMethodInvalidatesReferences(const std::string& methodName) {
-    return methodName == "push_back";
+    // pop_back doesn't reallocate (capacity is unchanged), but it DOES destroy
+    // the popped-back element itself, so any existing reference/observer of
+    // that element is dangling afterward -- conservatively treated the same
+    // as push_back's whole-container invalidation, since this codebase's
+    // model tracks invalidation at the container level, not per-element (see
+    // Chapter 18 Step 14's design note on this granularity choice).
+    return methodName == "push_back" || methodName == "pop_back";
 }
 
 bool isStringType(const std::string& type) {
@@ -117,8 +123,12 @@ std::string mapValueType(const std::string& type) {
 
 bool isPrimitiveType(const std::string& type) {
     static const std::set<std::string> kKnown = {
-        "int", "float", "double", "bool", "string", "std::string"};
+        "int", "float", "double", "bool", "string", "std::string", "char"};
     return kKnown.count(type) > 0;
+}
+
+bool isCharType(const std::string& type) {
+    return type == "char";
 }
 
 bool isKnownQualifiedFreeFunction(const std::string& qualifiedName) {

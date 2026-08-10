@@ -1,0 +1,59 @@
+//@ expect: accept
+//@ reason: real bugs found while writing yaml-cling's `Node Load(string text)
+//@ reason: { Parser p = new Parser(text); return p->parseDocument(); }`: a
+//@ reason: free function whose body only ever returns a call to an ALREADY-
+//@ reason: classified alias-returning method needed its own inference pass
+//@ reason: (inferAliasReturningFreeFunctions -- the free-function counterpart
+//@ reason: of inferAliasReturningMethods's case (c)), which must run AFTER
+//@ reason: every class method's classification is truly final (including
+//@ reason: whatever the LATER promoteReturnsOfSharedLocals pass sets) --
+//@ reason: running it too early (originally inlined into
+//@ reason: inferAliasReturningMethods itself) meant Load's own check queried
+//@ reason: a classification that did not exist yet. Separately,
+//@ reason: AstEmitter::emitFunction's free-function call site never passed
+//@ reason: the `methodName` parameter its own shared-check reads (methodName
+//@ reason: defaults to "" and only class-method call sites wired it through),
+//@ reason: so even a CORRECTLY classified free function stayed unique_ptr at
+//@ reason: emission. And a call SITE outside the namespace
+//@ reason: (`NS::build(...)`) needed the classification dual-registered under
+//@ reason: the QUALIFIED name too, since the definition-side query always
+//@ reason: uses the bare name.
+//@ run: 9
+
+namespace NS {
+
+class Box {
+public:
+    int val;
+    Box(int v) {
+        val = v;
+    }
+};
+
+class Holder {
+public:
+    Box target;
+    Holder() {
+        target = new Box(0);
+    }
+    void fill(Box b) {
+        target = b;
+    }
+    Box getBox() {
+        return target;
+    }
+};
+
+Box build() {
+    Holder h = new Holder();
+    h.fill(new Box(9));
+    return h.getBox();
+}
+
+}
+
+int main() {
+    NS::Box b = NS::build();
+    std::cout << b.val << std::endl;
+    return 0;
+}

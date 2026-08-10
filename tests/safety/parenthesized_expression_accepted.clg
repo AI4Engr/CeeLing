@@ -1,0 +1,26 @@
+//@ expect: accept
+//@ reason: a real, significant pre-existing bug found while writing yaml-cling's
+//@ reason: scanner (needs `a && (b || c)`-shaped grouping): `primary_expression`
+//@ reason: has multiple grammar alternatives -- scoped_identifier, identifier,
+//@ reason: number, string_literal, char_literal, and the grouped form
+//@ reason: `'(' expression ')'`. Every alternative except the grouped form has
+//@ reason: exactly ONE child, so buildExpression's primary_expression handling
+//@ reason: unconditionally used `ts_node_child(node, 0)` -- correct for the
+//@ reason: single-child alternatives, but for the grouped form child(0) is the
+//@ reason: LITERAL '(' TOKEN, not the inner expression. This silently broke
+//@ reason: EVERY parenthesized sub-expression (confirmed: `bool b = (a);` and
+//@ reason: `a && (b || c)` both failed to parse at all before this fix, despite
+//@ reason: the grammar itself (verified via `tree-sitter parse` directly)
+//@ reason: already handling the shape correctly -- this was purely an AST-
+//@ reason: builder bug, not a grammar gap). Fixed by using
+//@ reason: `ts_node_named_child(node, 0)` instead, which skips literal tokens
+//@ reason: automatically and is correct for every alternative.
+//@ run: 1
+
+int main() {
+    bool a = true;
+    bool b = false;
+    bool r = a && (b || a);
+    std::cout << r << std::endl;
+    return 0;
+}

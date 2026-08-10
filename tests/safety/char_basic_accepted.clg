@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ reason: `char` as a plain VALUE type (like int/bool) -- declaration, a char
+//@ reason: literal, and comparison. Added as a prerequisite for a hand-rolled
+//@ reason: yaml-cling tokenizer (character-by-character scanning); needed zero
+//@ reason: DanglingChecker changes -- an object-type check never matches "char",
+//@ reason: so it's automatically treated like int/bool already is.
+//@ run: x 0
+
+int main() {
+    char c = 'x';
+    char d = 'y';
+    bool eq = c == d;
+    std::cout << c << " " << eq << std::endl;
+    return 0;
+}

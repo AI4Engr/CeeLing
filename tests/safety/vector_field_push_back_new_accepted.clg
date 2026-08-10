@@ -1,0 +1,46 @@
+//@ expect: accept
+//@ reason: a real bug found while writing yaml-cling's scanner (a Scanner class
+//@ reason: with a `std::vector<Token> out;` FIELD, appended to via
+//@ reason: `out.push_back(new Token(...));`): AstEmitter::containerVarType only
+//@ reason: ever consulted containerVarType_, which is populated for LOCALS and
+//@ reason: PARAMETERS but never for class FIELDS. With no container type
+//@ reason: resolved, the push_back emission path's receiverIsVector was false,
+//@ reason: so the element-kind-aware factory (make_unique/make_shared matching
+//@ reason: the container's OWN declared element kind) never ran -- the generic
+//@ reason: NewExpression fallback fired instead, which unconditionally defaults
+//@ reason: to make_shared. Result: `std::vector<std::unique_ptr<Token>> out;`
+//@ reason: declared unique_ptr, but every push_back site emitted make_shared,
+//@ reason: a real "no matching push_back overload" compile error. Fixed by
+//@ reason: having containerVarType also check the current class's own fields,
+//@ reason: the same way exprObjectClass already does via isCurrentField/
+//@ reason: fieldType.
+//@ run: 2 1 2
+
+class Item {
+public:
+    int val;
+    Item(int v) { val = v; }
+};
+
+class Holder {
+public:
+    std::vector<Item> items;
+    void add(int v) {
+        items.push_back(new Item(v));
+    }
+    int count() {
+        return items.size();
+    }
+};
+
+int main() {
+    Holder h = new Holder();
+    h.add(1);
+    h.add(2);
+    std::cout << h.count();
+    for (Item it : h.items) {
+        std::cout << " " << it.val;
+    }
+    std::cout << std::endl;
+    return 0;
+}

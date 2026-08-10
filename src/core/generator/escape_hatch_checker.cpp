@@ -79,6 +79,13 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             knownFreeFunctions_.insert(fn->name);
+            // Dual-register under the qualified name (`YAML::Load`) -- a call
+            // site inside a DIFFERENT namespace (or at global scope) spells it
+            // qualified, same reasoning as ClassDeclaration's identical
+            // dual-registration for `YAML::Node`.
+            if (!fn->namespaceName.empty()) {
+                knownFreeFunctions_.insert(fn->namespaceName + "::" + fn->name);
+            }
         }
     }
     // Same base-before-derived flattening as collectClasses: without it,

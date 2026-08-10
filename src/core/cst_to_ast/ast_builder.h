@@ -51,6 +51,7 @@ private:
     ExpressionPtr buildIdentifier(TSNode node, const std::string& source);
     ExpressionPtr buildScopedIdentifier(TSNode node, const std::string& source);
     ExpressionPtr buildStringLiteral(TSNode node, const std::string& source);
+    ExpressionPtr buildCharLiteral(TSNode node, const std::string& source);
     ExpressionPtr buildNumber(TSNode node, const std::string& source);
     ExpressionPtr buildFunctionCall(TSNode node, const std::string& source);
     ExpressionPtr buildTemplateCall(TSNode node, const std::string& source);

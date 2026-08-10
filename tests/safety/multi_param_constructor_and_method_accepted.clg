@@ -1,0 +1,52 @@
+//@ expect: accept
+//@ reason: a real, significant pre-existing bug found while scoping yaml-cling's
+//@ reason: parser (needs multi-field Token/Node classes): both
+//@ reason: buildConstructorDeclaration and buildMethodDeclaration parsed
+//@ reason: parameter_list with a fixed j+=2 stride, assuming every parameter is
+//@ reason: exactly 2 children (type, identifier) wide. That's only true for the
+//@ reason: FIRST parameter -- parameter_list's grammar is seq(type, identifier),
+//@ reason: repeat(seq(',', type, identifier)), so every parameter after the
+//@ reason: first has a leading ',' sibling, making it 3 children wide. The fixed
+//@ reason: stride desynced after the first parameter and SILENTLY DROPPED every
+//@ reason: parameter after it -- `Token(int k, string v)` compiled a
+//@ reason: constructor taking only `k`, with `v` vanishing with no error or
+//@ reason: warning (confirmed: the constructor body's `this->value = v;`
+//@ reason: referenced an undeclared `v`, a real C++ compile error, not a silent
+//@ reason: miscompile -- but only because the body happened to reference the
+//@ reason: dropped parameter by name; a body that didn't would have compiled
+//@ reason: into something silently wrong). Fixed by pairing type/identifier by
+//@ reason: TYPE (walking every child, matching buildFunctionDeclaration's
+//@ reason: already-correct pattern) instead of by a fixed stride.
+//@ run: 1 a 5 9
+
+class Token {
+public:
+    int kind;
+    string value;
+    Token(int k, string v) {
+        kind = k;
+        value = v;
+    }
+};
+
+class Box {
+public:
+    int a;
+    int b;
+    Box(int x) { a = x; b = 0; }
+    void setBoth(int x, int y) {
+        a = x;
+        b = y;
+    }
+};
+
+int main() {
+    std::vector<Token> tokens;
+    tokens.push_back(new Token(1, "a"));
+
+    Box box = new Box(1);
+    box.setBoth(5, 9);
+
+    std::cout << tokens[0].kind << " " << tokens[0].value << " " << box.a << " " << box.b << std::endl;
+    return 0;
+}

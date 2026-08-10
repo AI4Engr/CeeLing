@@ -1,0 +1,50 @@
+//@ expect: accept
+//@ reason: a real, significant pre-existing bug found while writing yaml-cling's
+//@ reason: parser (needs `current().kind`-shaped chained access constantly):
+//@ reason: `member_access`'s left-operand choice never included `function_call`
+//@ reason: at all, so `someCall().field` had no valid parse -- confirmed via
+//@ reason: `tree-sitter parse` directly that `.field` became a bare ERROR node
+//@ reason: sibling, which the AST builder's error recovery then silently
+//@ reason: dropped. `int x = h.get().val;` transpiled clean with the `.val`
+//@ reason: entirely gone (`int x = h->get();`), only failing at the final g++
+//@ reason: step with a confusing type-mismatch pointing nowhere near the real
+//@ reason: cause. Fixed by adding function_call to member_access's left-operand
+//@ reason: choices, PLUS a companion fix: exprObjectClass (which decides `.`
+//@ reason: vs `->`) had no case for a FunctionCall object at all -- a call
+//@ reason: result has no varClass_/classFields_ entry to look up, so its class
+//@ reason: must come from the call's own declared RETURN type. New
+//@ reason: functionReturnType_/classMethodReturnType_ maps (mirroring
+//@ reason: functionParams_/classMethodParams_) close this, covering both an
+//@ reason: explicit-receiver call (`h.get().val`) and an implicit-`this` call
+//@ reason: inside a method body (`current().val`).
+//@ run: 5 1
+
+class Box {
+public:
+    int val;
+    Box(int v) {
+        val = v;
+    }
+};
+
+class Holder {
+public:
+    Box cur;
+    Holder() {
+        cur = new Box(5);
+    }
+    Box get() {
+        return cur;
+    }
+    bool checkImplicit() {
+        return get().val == 5;
+    }
+};
+
+int main() {
+    Holder h = new Holder();
+    int viaExplicitReceiver = h.get().val;
+    bool viaImplicitThis = h.checkImplicit();
+    std::cout << viaExplicitReceiver << " " << viaImplicitThis << std::endl;
+    return 0;
+}

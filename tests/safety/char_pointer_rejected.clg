@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ reason: positive control -- adding `char` as a value type must NOT reopen a
+//@ reason: raw-pointer/array escape hatch. `char*` is rejected the same way
+//@ reason: every other raw pointer type is: no pointer-declarator production
+//@ reason: exists anywhere in the grammar, so this is a parse error, not a
+//@ reason: semantic check that could be bypassed.
+
+int main() {
+    char* p = nullptr;
+    return 0;
+}

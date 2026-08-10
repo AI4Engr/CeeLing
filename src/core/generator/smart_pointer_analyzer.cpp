@@ -176,6 +176,14 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     // extension of the existing two.
     promoteParamsStoredInSharedFields(program);
     promoteSharedCallArguments(program);
+    // Must run LAST: needs every local's FINAL pointer-kind decision,
+    // including whatever promoteSharedCallArguments (immediately above) just
+    // changed.
+    promoteReturnsOfSharedLocals(program);
+    // Genuinely last: needs every CLASS METHOD's final alias-return
+    // classification (including whatever promoteReturnsOfSharedLocals just
+    // set) to correctly classify a free function that calls one.
+    inferAliasReturningFreeFunctions(program);
 }
 
 PointerType SmartPointerAnalyzer::getPointerType(const std::string& className, const std::string& variableName) const {
@@ -542,18 +550,33 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
         // A field returned by an alias-returning method needs the SAME SHARED
         // decision every other field lookup already goes through
         // (getPointerType consults this exact map) -- reuses explicitHints
-        // itself rather than adding a parallel map, since it's already exactly
-        // "className.fieldName -> forced PointerType". Deliberately does NOT
-        // touch explicitHintLines (no source line exists for an inferred
-        // decision): nothing reads explicitHintLines except
-        // applyExplicitHints's own "did every USER-WRITTEN hint match
+        // itself rather than adding a parallel map. CRITICAL: explicitHints'
+        // key convention is "<declared TYPE of the thing>.<variable name>"
+        // (confirmed via `//@ptr shared Node.a` in
+        // vector_push_back_shares_when_already_shared_accepted.clg, where `a`
+        // is a LOCAL of type Node -- "Node" there is a's TYPE, not some
+        // enclosing scope), matching VariableReference::className's own
+        // semantics (the field/local's TYPE, not its containing class) that
+        // secondPassDeterminePointerTypes's lookup (`makeMemberKey(ref.
+        // className, ref.variableName)`) actually queries. Keying by the
+        // CONTAINING class (classKey, same as methodReturnKinds_ correctly
+        // does -- but methodReturnKinds_'s query is genuinely
+        // (containingClass, methodName), a different lookup with different
+        // semantics) was a real bug: `Holder.cur` never matched anything,
+        // because getPointerType's real query for a `Box cur;` field is
+        // keyed "Box.cur", not "Holder.cur" -- confirmed via a direct probe
+        // (a field returned by an alias-returning method kept emitting
+        // unique_ptr while the method itself correctly emitted shared_ptr,
+        // a real return-type mismatch compile error). Fixed by keying on the
+        // field's own declared TYPE (fieldTypes[fieldName]) instead.
+        // Deliberately does NOT touch explicitHintLines (no source line
+        // exists for an inferred decision): nothing reads explicitHintLines
+        // except applyExplicitHints's own "did every USER-WRITTEN hint match
         // something" diagnostic sweep, which iterates explicitHintLines, not
-        // explicitHints -- so these inferred entries never appear in that
-        // sweep and never trigger a spurious "hint didn't match" diagnostic.
+        // explicitHints -- so these inferred entries never trigger a
+        // spurious "hint didn't match" diagnostic.
         for (const auto& fieldName : fieldsNeedingShared) {
-            for (const auto& classKey : classKeys) {
-                explicitHints[makeMemberKey(classKey, fieldName)] = PointerType::SHARED;
-            }
+            explicitHints[makeMemberKey(fieldTypes[fieldName], fieldName)] = PointerType::SHARED;
         }
         for (const auto& name : aliasReturning) {
             const bool anyReturnsThis = [&] {
@@ -580,6 +603,173 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                 classesNeedingSharedFromThis_.insert(cls->name);
                 classesNeedingSharedRoots.insert(cls->name);
             }
+        }
+    }
+}
+
+void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& program) {
+    // Free-function counterpart of inferAliasReturningMethods's case (c): a
+    // free function whose body ONLY ever returns a call to an ALREADY-
+    // classified alias-returning method/function is itself alias-returning.
+    // Needed for yaml-cling's `Node Load(string text) { Parser p = new
+    // Parser(text); return p->parseDocument(); }`.
+    //
+    // MUST run AFTER promoteReturnsOfSharedLocals, not alongside
+    // inferAliasReturningMethods (where an earlier version of this lived) --
+    // parseDocument (a CLASS method) only becomes SHARED via
+    // promoteReturnsOfSharedLocals (it returns a plain local, `root`, that
+    // was itself promoted to SHARED by the even-later promoteSharedCallArguments
+    // pass), which runs AFTER inferAliasReturningMethods entirely. Running
+    // this free-function check too early meant Load's own call to
+    // parseDocument() queried a classification that did not exist yet, and
+    // Load silently stayed unique_ptr while parseDocument was correctly
+    // shared_ptr -- a real return-type mismatch confirmed via probe before
+    // this pass was pulled out into its own, later-running function.
+    std::set<std::string> aliasReturningFreeFunctions;
+    for (const auto& stmt : program.statements) {
+        auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get());
+        if (fn == nullptr) continue;
+        if (classNames.find(fn->returnType) == classNames.end()) continue;
+
+        std::vector<const Expression*> returns;
+        collectReturnExpressions(fn->body, returns);
+        if (returns.empty()) continue;
+
+        bool allAliasCalls = true;
+        for (const Expression* expr : returns) {
+            auto call = dynamic_cast<const FunctionCall*>(expr);
+            if (call == nullptr) { allAliasCalls = false; break; }
+            std::string calledClass;
+            std::string calledName;
+            if (call->callee) {
+                auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+                if (member == nullptr) { allAliasCalls = false; break; }
+                if (auto recvId = dynamic_cast<const Identifier*>(member->object.get())) {
+                    auto typeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, recvId->name));
+                    if (typeIt != symbolTypesByScope.end()) calledClass = typeIt->second;
+                }
+                calledName = member->member;
+            } else {
+                calledName = call->function_name;
+            }
+            if (calledClass.empty()) {
+                if (aliasReturningFreeFunctions.count(calledName) == 0) { allAliasCalls = false; break; }
+            } else if (getMethodReturnPointerType(calledClass, calledName) != PointerType::SHARED) {
+                allAliasCalls = false;
+                break;
+            }
+        }
+        if (allAliasCalls) {
+            aliasReturningFreeFunctions.insert(fn->name);
+            methodReturnKinds_[makeMemberKey("", fn->name)] = PointerType::SHARED;
+            // Dual-register under the QUALIFIED name too (`YAML::Load`) --
+            // isSharedReturningCall's plain-call check (deciding a LOCAL
+            // declaration's pointer kind, e.g. `Node root = YAML::Load(x);`)
+            // queries call->function_name verbatim, which IS the qualified
+            // spelling at a call site outside the namespace, unlike
+            // emitFunction's DEFINITION-side query (always the bare name).
+            // Confirmed as a real bug via probe: Load itself correctly
+            // emitted shared_ptr, but `Node root = YAML::Load(...);` still
+            // declared root as unique_ptr because only the bare "Load" key
+            // existed.
+            if (!fn->namespaceName.empty()) {
+                methodReturnKinds_[makeMemberKey("", fn->namespaceName + "::" + fn->name)] =
+                    PointerType::SHARED;
+            }
+        }
+    }
+}
+
+void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) {
+    // A method's return classification (inferAliasReturningMethods, above) is
+    // structural: it only recognizes `return this;` / `return <field>;` /
+    // `return <alias-returning call>;`. It does NOT recognize `return <local
+    // variable>;` -- and a local can independently become SHARED via a LATER
+    // pass (promoteSharedCallArguments, the very last pass in analyzeProgram,
+    // since a local passed into a parameter that itself got promoted to
+    // SHARED must become SHARED too). Found as a real gap while writing
+    // yaml-cling's Parser: `Node parseDocument() { Node root = new Node(...);
+    // parseValueInto(root, -1); return root; }` -- `root` gets promoted to
+    // shared_ptr (it's passed into parseValueInto's `target` parameter, which
+    // itself needs SHARED because the body does `target[key]`, an alias-
+    // returning operator[] call), but parseDocument's OWN return type stayed
+    // unique_ptr, a real return-type mismatch compile error. This pass
+    // MUST run after promoteSharedCallArguments (needs every local's FINAL
+    // pointer-kind decision, not the one from the ordinary two-pass alone),
+    // and reuses getPointerTypeForVariable rather than re-deriving locals'
+    // kinds from scratch.
+    for (const auto& stmt : program.statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr) continue;
+        for (const auto& member : cls->members) {
+            auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+            if (method == nullptr) continue;
+            // Only meaningful for a CLASS-typed return -- getPointerTypeForVariable
+            // defaults to SHARED for any name it can't match at all (a real,
+            // separate quirk of that query, documented at its own definition),
+            // so restricting to class-typed returns keeps this pass from ever
+            // acting on a coincidentally-named primitive local.
+            if (classNames.find(method->returnType) == classNames.end()) continue;
+            const std::string key = makeMemberKey(cls->name, method->name);
+            if (methodReturnKinds_.count(key) > 0) continue;  // already SHARED
+
+            std::vector<const Expression*> returns;
+            collectReturnExpressions(method->body, returns);
+            bool anyLocalIsShared = false;
+            for (const Expression* expr : returns) {
+                auto id = dynamic_cast<const Identifier*>(expr);
+                if (id == nullptr || id->name == "this") continue;
+                if (getPointerTypeForVariable(id->name) == PointerType::SHARED) {
+                    anyLocalIsShared = true;
+                    break;
+                }
+            }
+            if (anyLocalIsShared) {
+                methodReturnKinds_[key] = PointerType::SHARED;
+                if (!cls->namespaceName.empty()) {
+                    methodReturnKinds_[makeMemberKey(cls->namespaceName + "::" + cls->name, method->name)] =
+                        PointerType::SHARED;
+                }
+            }
+        }
+    }
+
+    // Same check for top-level FREE FUNCTIONS, keyed under the "" class
+    // (matching how getMethodReturnPointerType/emitFunction now query a free
+    // function -- see AstEmitter::emitFunction's ownerClass="" case). Needed
+    // for `Node Load(string text) { ... return p->parseDocument(); }`-shaped
+    // code: this pass alone doesn't classify Load as alias-returning (Load
+    // returns a CALL RESULT, not a bare local -- that's
+    // inferAliasReturningMethods's case (c), not this pass's concern), but
+    // any free function that DOES return a shared local needs the same
+    // promotion class methods just got above.
+    for (const auto& stmt : program.statements) {
+        auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get());
+        if (fn == nullptr) continue;
+        if (classNames.find(fn->returnType) == classNames.end()) continue;
+        const std::string key = makeMemberKey("", fn->name);
+        if (methodReturnKinds_.count(key) > 0) continue;
+
+        std::vector<const Expression*> returns;
+        collectReturnExpressions(fn->body, returns);
+        bool anyLocalIsShared = false;
+        for (const Expression* expr : returns) {
+            auto id = dynamic_cast<const Identifier*>(expr);
+            if (id == nullptr) continue;
+            if (getPointerTypeForVariable(id->name) == PointerType::SHARED) {
+                anyLocalIsShared = true;
+                break;
+            }
+        }
+        if (anyLocalIsShared) {
+            // Keyed under the BARE name only ("" class + fn->name), matching
+            // exactly how AstEmitter::emitFunction queries it -- the emission
+            // call site (emitTopLevel) always passes fn->name verbatim, never
+            // a namespace-qualified spelling, for ownerClass="" free
+            // functions (unlike class methods, which route through
+            // emitClass's namespace re-wrapping instead of the name itself
+            // carrying the qualifier). No dual-registration needed here.
+            methodReturnKinds_[key] = PointerType::SHARED;
         }
     }
 }

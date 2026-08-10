@@ -45,6 +45,16 @@ public:
     // Emit a full translation unit for the program.
     std::string emit(const Program& program);
 
+    // Emit a declaration-only header for the program: class bodies with member/method
+    // SIGNATURES (no bodies -- `;` instead), enums in full (already pure declarations),
+    // and free-function signatures. No `main`. Lets a second .clg file `#include` this
+    // header and reference the declared classes/functions, while the definitions stay
+    // in the `.cpp` this same Program emits via emit() -- ordinary C++ separate
+    // compilation (declaration in the header, one defining translation unit), not a
+    // text-merge of the two source files. `guardName` becomes the `#ifndef`/`#define`
+    // include-guard token (e.g. "YAML_NODE_H" for yaml_node.h).
+    std::string emitHeader(const Program& program, const std::string& guardName);
+
 private:
     void collectClassNames(const Program& program);
     bool isClassType(const std::string& type) const;
@@ -64,6 +74,14 @@ private:
     // blindly (see emitMovedArg / the FunctionCall argument loop).
     std::map<std::string, std::vector<std::pair<std::string, std::string>>> functionParams_;
     std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, std::string>>>> classMethodParams_;
+    // Declared RETURN type for every free function / method, keyed identically to
+    // functionParams_/classMethodParams_ (including overload/specialization keys)
+    // -- needed so exprObjectClass can resolve `someCall().field`'s `.`-vs-`->`
+    // choice: the object being accessed is a CALL RESULT, not a variable, so
+    // there's no varClass_/classFields_ entry to look up; the call's own
+    // declared return type tells us whether it's class-typed at all.
+    std::map<std::string, std::string> functionReturnType_;
+    std::map<std::string, std::map<std::string, std::string>> classMethodReturnType_;
     // For a resolvable call (`recv.method(...)` or a plain `f(...)`), the (class,
     // name) of parameter `argIndex` -- needed together, since the analyzer's pointer
     // decisions are keyed by (className, variableName), not class alone. Returns
@@ -71,6 +89,21 @@ private:
     std::pair<std::string, std::string> calleeParam(const FunctionCall& call, size_t argIndex) const;
 
     void emitTopLevel(const Statement* stmt, std::ostringstream& out);
+    // Header-mode counterparts of emitTopLevel/emitClass: same traversal and type
+    // lowering, but member/method/function bodies are replaced with `;`.
+    void emitTopLevelHeader(const Statement* stmt, std::ostringstream& out);
+    void emitClassHeader(const ClassDeclaration& cls, std::ostringstream& out);
+    // Emits just the signature line(s) used by both emitFunction (body form) and
+    // emitClassHeader (`;`-terminated declaration form) -- returns the signature text
+    // without trailing body/semicolon/newline so callers append what they need. Has
+    // the SAME side effects on varKinds_/varClass_/containerVarType_ that emitFunction
+    // has today (so a later emitStatement pass, if any, sees consistent state); a
+    // declaration-only header never calls emitStatement, so those side effects are
+    // harmless there.
+    std::string buildFunctionSignature(const std::string& returnType, const std::string& name,
+                                       const std::vector<std::pair<std::string, std::string>>& params,
+                                       const std::string& ownerClass, bool isConst,
+                                       bool isVirtual, bool isOverride, const std::string& methodName);
     void emitClass(const ClassDeclaration& cls, std::ostringstream& out);
     // `ownerClass` is the enclosing class for methods/constructors (empty for free
     // functions); inside it, bare field names are lowered to `this->field`.

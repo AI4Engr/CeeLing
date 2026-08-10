@@ -1,0 +1,32 @@
+//@ expect: accept
+//@ reason: `char` as a method return type and used via `string[i]` on a class
+//@ reason: field -- the shape a Scanner class (yaml-cling's tokenizer) needs
+//@ reason: for peek()/advance()-style character access. No new mechanism: a
+//@ reason: char-typed return falls through the same non-class-type emission
+//@ reason: path every other primitive return already uses.
+//@ run: xy
+
+class Scanner {
+public:
+    string text;
+    int pos;
+    Scanner(string t) {
+        text = t;
+        pos = 0;
+    }
+    char peek() {
+        return text[pos];
+    }
+    void advance() {
+        pos = pos + 1;
+    }
+};
+
+int main() {
+    Scanner sc = new Scanner("xy");
+    char first = sc.peek();
+    sc.advance();
+    char second = sc.peek();
+    std::cout << first << second << std::endl;
+    return 0;
+}

@@ -9,6 +9,8 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <cctype>
+#include <set>
 
 #ifdef WITH_TREE_SITTER
 #include "core/cst_to_ast/ast_builder.h"
@@ -32,6 +34,104 @@ std::string readFile(const std::string& filename) {
     std::stringstream buffer;
     buffer << file.rdbuf();
     return buffer.str();
+}
+
+std::string dirnameOf(const std::string& path) {
+    size_t slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? "" : path.substr(0, slash + 1);
+}
+
+// `#include "yaml_node.clh"` extracts the quoted target ("yaml_node.clh"). Returns ""
+// for `#include <...>` (angle-bracket, real system header) or a malformed line.
+std::string quotedIncludeTarget(const std::string& includeText) {
+    size_t open = includeText.find('"');
+    if (open == std::string::npos) return "";
+    size_t close = includeText.find('"', open + 1);
+    if (close == std::string::npos) return "";
+    return includeText.substr(open + 1, close - open - 1);
+}
+
+#ifdef WITH_TREE_SITTER
+// CeeLing's multi-file story: `#include "foo.clh"` in one .clg makes foo's classes/
+// functions/enums usable there. `.clh` is a SOURCE-level, CeeLing-only spelling (no
+// such file needs to exist) that names foo's declarations the way `.clg` names foo's
+// definitions; resolved by finding foo's OWN .clg source (mergeExternalDeclarations
+// parses that, not any .clh file, which does not exist as CeeLing input) and merging
+// its top-level declarations into `program` marked isExternalDeclaration -- visible
+// to every semantic pass (so `Node`/`Scanner`/etc. are no longer "unknown calls"),
+// but never re-emitted by AstEmitter (the real definitions already live in foo's own
+// separately-generated .cpp; see Statement::isExternalDeclaration). This is genuine
+// separate compilation -- foo.clg's SOURCE is never copied into the including file's
+// own generated .cpp -- not a text merge of the two .clg files. The emitted C++
+// output rewrites `#include "foo.clh"` to `#include "foo.h"` (see rewriteClhIncludes)
+// since `.h` is the real, on-disk generated header g++ needs to find.
+// Recurses so a chain of #includes (parser -> node, parser -> scanner) resolves
+// transitively; `seenClgFiles` prevents infinite recursion / duplicate merges on a
+// diamond include.
+void mergeExternalDeclarations(Program& program, const std::string& baseDir,
+                                std::set<std::string>& seenClgFiles) {
+    std::vector<StatementPtr> merged;
+    for (const auto& stmt : program.statements) {
+        auto inc = dynamic_cast<const IncludeStatement*>(stmt.get());
+        if (inc == nullptr) continue;
+        std::string target = quotedIncludeTarget(inc->includeFile);
+        if (target.size() < 4 || target.compare(target.size() - 4, 4, ".clh") != 0) {
+            continue; // angle-bracket or non-.clh quoted include -- real C++ header
+        }
+        std::string clgTarget = target.substr(0, target.size() - 4) + ".clg";
+        std::string resolvedPath = baseDir + clgTarget;
+        std::ifstream test(resolvedPath);
+        if (!test.is_open()) {
+            throw std::runtime_error("Could not resolve #include \"" + target +
+                                     "\": no sibling source " + resolvedPath +
+                                     " (a .clh include must have a .clg of the same name next to it)");
+        }
+        test.close();
+        if (!seenClgFiles.insert(resolvedPath).second) {
+            continue; // already merged (diamond include)
+        }
+
+        std::string includedSource = readFile(resolvedPath);
+        ASTBuilder includedBuilder;
+        std::unique_ptr<Program> includedProgram = includedBuilder.buildProgram(includedSource);
+        std::string includedDir = dirnameOf(resolvedPath);
+        // Resolve the included file's OWN includes first, so a transitive dependency
+        // (parser -> node, parser -> scanner) is visible by the time we merge parser's.
+        mergeExternalDeclarations(*includedProgram, includedDir, seenClgFiles);
+        for (auto& includedStmt : includedProgram->statements) {
+            includedStmt->isExternalDeclaration = true;
+            merged.push_back(std::move(includedStmt));
+        }
+    }
+    if (!merged.empty()) {
+        merged.insert(merged.end(), std::make_move_iterator(program.statements.begin()),
+                      std::make_move_iterator(program.statements.end()));
+        program.statements = std::move(merged);
+    }
+}
+#endif
+
+// `.clh` is a source-level-only spelling (see mergeExternalDeclarations); the actual
+// generated header on disk is named `.h`. Rewrite every `#include "foo.clh"` in the
+// generated C++ to `#include "foo.h"` so the emitted #include lines resolve to real
+// files g++ can find, without requiring the .clg author to know the on-disk name.
+std::string rewriteClhIncludes(const std::string& cppCode) {
+    const std::string from = ".clh\"";
+    const std::string to = ".h\"";
+    std::string result;
+    result.reserve(cppCode.size());
+    size_t pos = 0;
+    while (true) {
+        size_t next = cppCode.find(from, pos);
+        if (next == std::string::npos) {
+            result.append(cppCode, pos, std::string::npos);
+            break;
+        }
+        result.append(cppCode, pos, next - pos);
+        result += to;
+        pos = next + from.size();
+    }
+    return result;
 }
 
 void showUsage(const char* programName) {
@@ -144,6 +244,13 @@ int main(int argc, char* argv[]) {
         // Use Tree-sitter parser to build AST from source
         ASTBuilder builder;
         program = builder.buildProgram(source);
+
+        // Resolve `#include "*.clh"` targets against their sibling .clg source so
+        // this file's semantic analysis sees the included classes/functions as
+        // known (see mergeExternalDeclarations). Codegen is unaffected: those
+        // merged declarations are marked external and skipped by AstEmitter.
+        std::set<std::string> seenClgFiles{inputFile};
+        mergeExternalDeclarations(*program, dirnameOf(inputFile), seenClgFiles);
 #else
         throw std::runtime_error("This build was configured without Tree-sitter support. Rebuild with -DWITH_TREE_SITTER=ON.");
 #endif
@@ -192,17 +299,34 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // Generate C++ code
+        // Generate C++ code. Output extension `.h` requests a declaration-only header
+        // (class/method/function SIGNATURES, no bodies -- except templates, which
+        // must stay fully defined at every instantiation point) instead of a full
+        // translation unit; any other extension (.cpp, .cc, ...) emits the ordinary
+        // full definition. This is what lets one .clg `#include "foo.clh"` another's
+        // generated foo.h and reference its types across a real, separately compiled
+        // translation unit -- not a text merge of the two .clg sources.
         std::string cppCode;
+        bool wantsHeader = outputFile.size() >= 2 &&
+            outputFile.compare(outputFile.size() - 2, 2, ".h") == 0;
         if (useLegacyGenerator) {
             CppGenerator generator;
             cppCode = generator.generateCpp(*program, source);
+        } else if (wantsHeader) {
+            AstEmitter emitter(analyzer);
+            size_t slash = outputFile.find_last_of("/\\");
+            std::string guardName = (slash == std::string::npos) ? outputFile : outputFile.substr(slash + 1);
+            for (char& c : guardName) {
+                c = (std::isalnum(static_cast<unsigned char>(c)) ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : '_');
+            }
+            cppCode = emitter.emitHeader(*program, "CEELING_GEN_" + guardName);
         } else {
             // AST-driven generator (default): walks the validated Program, so an
             // unsupported/forbidden construct cannot appear in the output.
             AstEmitter emitter(analyzer);
             cppCode = emitter.emit(*program);
         }
+        cppCode = rewriteClhIncludes(cppCode);
 
         // Write to output file
         std::ofstream outFile(outputFile);

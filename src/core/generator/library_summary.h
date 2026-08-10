@@ -57,12 +57,19 @@ std::string mapKeyType(const std::string& type);
 // "std::map<int, string>" -> "string". Returns "" if `type` isn't a map<...> shape.
 std::string mapValueType(const std::string& type);
 
-// Is `type` one of CeeLing's primitive value types (int/float/double/bool/string)?
-// Used to reject class-typed map keys/values this slice -- a map's element ownership
-// question (unique_ptr vs shared_ptr per entry, the same problem vector slice 1
-// solved for push_back) is deliberately deferred; primitives sidestep it entirely
-// since they're always plain-copy values.
+// Is `type` one of CeeLing's primitive value types (int/float/double/bool/string/
+// char)? Used to reject class-typed map keys/values this slice -- a map's element
+// ownership question (unique_ptr vs shared_ptr per entry, the same problem vector
+// slice 1 solved for push_back) is deliberately deferred; primitives sidestep it
+// entirely since they're always plain-copy values.
 bool isPrimitiveType(const std::string& type);
+
+// Is `type` CeeLing's `char` primitive? A pure value type like int/bool -- never
+// move/observer tracked (DanglingChecker::isObjectType), never a pointer/array (no
+// char*/char[] production exists in the grammar at all). Its only source this
+// slice is `string[i]` (see AstEmitter/DanglingChecker/EscapeHatchChecker's
+// SubscriptExpression string-receiver branch) and char literals (`'x'`).
+bool isCharType(const std::string& type);
 
 // Is `qualifiedName` (e.g. "std::stoi") a known qualified FREE function this
 // allow-list covers? Grown incrementally, same discipline as every other allow-

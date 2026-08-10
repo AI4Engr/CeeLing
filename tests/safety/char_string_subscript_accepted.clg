@@ -1,0 +1,28 @@
+//@ expect: accept
+//@ reason: `string[i]` returns `char` -- needed no new emitter/checker code at
+//@ reason: all. The existing generic SubscriptExpression read-path (the
+//@ reason: container fallback from Step 22's operator[] work) already emits
+//@ reason: `receiver[index]` literally, which is exactly correct real C++ for
+//@ reason: std::string::operator[] too. Exercises the shape a tokenizer needs:
+//@ reason: a while-loop scanning a string character by character, comparing
+//@ reason: each char against a literal, calling a char-parameter function.
+//@ run: 1
+
+bool isSpace(char c) {
+    return c == ' ';
+}
+
+int main() {
+    string s = "hello world";
+    int i = 0;
+    int spaceCount = 0;
+    while (i < s.length()) {
+        char c = s[i];
+        if (isSpace(c)) {
+            spaceCount = spaceCount + 1;
+        }
+        i = i + 1;
+    }
+    std::cout << spaceCount << std::endl;
+    return 0;
+}

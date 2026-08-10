@@ -1,0 +1,46 @@
+//@ expect: accept
+//@ reason: a real bug found while writing yaml-cling's Parser (holds its own
+//@ reason: Scanner as a field, reads `scanner.out[pos].kind` throughout):
+//@ reason: containerVarType only checked a BARE identifier receiver (a local,
+//@ reason: param, or -- after an earlier fix -- the current class's own
+//@ reason: implicit-this field), never an EXPLICIT class-typed receiver's
+//@ reason: field (`holder.items[i]`, a MemberAccess object). Without this,
+//@ reason: `scanner.out[pos].kind` emitted `.kind` instead of `->kind` (a
+//@ reason: std::vector<unique_ptr<Token>>::operator[] returns a reference to
+//@ reason: the smart pointer itself, not the pointee), a real
+//@ reason: "no member named kind" compile error. Fixed by extending
+//@ reason: containerVarType with a MemberAccess case, resolving the
+//@ reason: receiver's class via exprObjectClass then looking up the field.
+//@ run: 5
+
+class Item {
+public:
+    int val;
+    Item(int v) { val = v; }
+};
+
+class Holder {
+public:
+    std::vector<Item> items;
+    void add(int v) {
+        items.push_back(new Item(v));
+    }
+};
+
+class Wrapper {
+public:
+    Holder holder;
+    Wrapper() {
+        holder = new Holder();
+    }
+    int firstVal() {
+        return holder.items[0].val;
+    }
+};
+
+int main() {
+    Wrapper w = new Wrapper();
+    w.holder.add(5);
+    std::cout << w.firstVal() << std::endl;
+    return 0;
+}

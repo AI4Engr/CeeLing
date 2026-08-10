@@ -358,6 +358,10 @@
       "required": true,
       "types": [
         {
+          "type": "function_call",
+          "named": true
+        },
+        {
           "type": "identifier",
           "named": true
         },
@@ -542,6 +546,10 @@
       "multiple": false,
       "required": true,
       "types": [
+        {
+          "type": "char_literal",
+          "named": true
+        },
         {
           "type": "expression",
           "named": true
@@ -977,6 +985,14 @@
   {
     "type": "catch",
     "named": false
+  },
+  {
+    "type": "char",
+    "named": false
+  },
+  {
+    "type": "char_literal",
+    "named": true
   },
   {
     "type": "class",

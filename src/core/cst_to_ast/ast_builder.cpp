@@ -473,6 +473,8 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
         result = buildScopedIdentifier(node, source);
     } else if (strcmp(node_type, "string_literal") == 0) {
         result = buildStringLiteral(node, source);
+    } else if (strcmp(node_type, "char_literal") == 0) {
+        result = buildCharLiteral(node, source);
     } else if (strcmp(node_type, "number") == 0) {
         result = buildNumber(node, source);
     } else if (strcmp(node_type, "function_call") == 0) {
@@ -490,9 +492,19 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
     } else if (strcmp(node_type, "subscript_expression") == 0) {
         result = buildSubscriptExpression(node, source);
     } else if (strcmp(node_type, "primary_expression") == 0) {
-        // If we get a primary_expression node, look at its first child
-        if (ts_node_child_count(node) > 0) {
-            TSNode child = ts_node_child(node, 0);
+        // primary_expression: scoped_identifier | identifier | number |
+        // string_literal | char_literal | '(' expression ')'. Every alternative
+        // except the last has exactly ONE child, so `child(0)` used to be
+        // correct -- but the grouped `(expr)` form has THREE children ('(',
+        // expression, ')'), and child(0) is the LITERAL '(' TOKEN, not the
+        // inner expression. Using child(0) unconditionally silently built
+        // garbage (or crashed downstream) for any parenthesized sub-expression
+        // (`bool b = (a);`, `a && (b || c)`) -- confirmed via a direct probe
+        // that this failed to parse at all before this fix. Fixed by finding
+        // the NAMED child (skips literal tokens like '(' / ')' automatically),
+        // which is correct for every alternative including the grouped form.
+        if (ts_node_named_child_count(node) > 0) {
+            TSNode child = ts_node_named_child(node, 0);
             return buildExpression(child, source);
         }
     } else if (strcmp(node_type, "expression") == 0) {
@@ -532,6 +544,13 @@ ExpressionPtr ASTBuilder::buildStringLiteral(TSNode node, const std::string& sou
     // string_literal: a double-quoted token; keep it verbatim (quotes included).
     std::string text = getNodeText(node, source);
     return std::make_unique<StringLiteral>(text);
+}
+
+ExpressionPtr ASTBuilder::buildCharLiteral(TSNode node, const std::string& source) {
+    // char_literal: a single-quoted token; keep it verbatim (quotes included) --
+    // CeeLing's `'x'` and C++'s `'x'` char-literal syntax are identical.
+    std::string text = getNodeText(node, source);
+    return std::make_unique<CharLiteral>(text);
 }
 
 ExpressionPtr ASTBuilder::buildUnaryExpression(TSNode node, const std::string& source) {
@@ -944,6 +963,8 @@ std::vector<StatementPtr> ASTBuilder::buildNamespaceDeclaration(TSNode node, con
                 cls->namespaceName = namespaceName;
             } else if (auto enm = dynamic_cast<EnumDeclaration*>(stmt.get())) {
                 enm->namespaceName = namespaceName;
+            } else if (auto fn = dynamic_cast<FunctionDeclaration*>(stmt.get())) {
+                fn->namespaceName = namespaceName;
             }
             result.push_back(std::move(stmt));
         }
@@ -993,20 +1014,26 @@ StatementPtr ASTBuilder::buildConstructorDeclaration(TSNode node, const std::str
 
         if (strcmp(childType, "parameter_list") == 0) {
             rejectObserverParams(child);
-            // Parse parameters: seq(type, identifier), repeat(seq(',', type, identifier))
+            // Pair each `type` node with the following `identifier` node. A
+            // fixed j+=2 stride is WRONG here: parameter_list's grammar is
+            // seq(type, identifier), repeat(seq(',', type, identifier)) -- the
+            // FIRST parameter is 2 children wide, but every parameter after it
+            // has a leading ',' sibling too, making it 3 children wide. A fixed
+            // stride desyncs after the first parameter and silently drops
+            // every parameter after it (confirmed: `Token(int k, string v)`
+            // compiled a constructor taking only `k`, `v` vanished with no
+            // error). Walk every child and pair by TYPE instead, matching
+            // buildFunctionDeclaration's already-correct pattern.
             uint32_t paramCount = ts_node_child_count(child);
-            for (uint32_t j = 0; j < paramCount; j += 2) { // Skip commas
-                TSNode paramChild = ts_node_child(child, j);
-                const char* paramChildType = ts_node_type(paramChild);
-
-                if (strcmp(paramChildType, "type") == 0 && j + 1 < paramCount) {
-                    TSNode typeNode = paramChild;
-                    TSNode identifierNode = ts_node_child(child, j + 1);
-                    if (strcmp(ts_node_type(identifierNode), "identifier") == 0) {
-                        std::string type = getNodeText(typeNode, source);
-                        std::string name = getNodeText(identifierNode, source);
-                        parameters.push_back({type, name});
-                    }
+            std::string pendingType;
+            for (uint32_t j = 0; j < paramCount; j++) {
+                TSNode paramNode = ts_node_child(child, j);
+                const char* pt = ts_node_type(paramNode);
+                if (strcmp(pt, "type") == 0) {
+                    pendingType = getNodeText(paramNode, source);
+                } else if (strcmp(pt, "identifier") == 0 && !pendingType.empty()) {
+                    parameters.push_back({pendingType, getNodeText(paramNode, source)});
+                    pendingType.clear();
                 }
             }
         } else if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
@@ -1227,20 +1254,21 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
             }
         } else if (strcmp(childType, "parameter_list") == 0) {
             rejectObserverParams(child);
-            // Parse parameters: seq(type, identifier), repeat(seq(',', type, identifier))
+            // Pair each `type` node with the following `identifier` node --
+            // NOT a fixed j+=2 stride (see buildConstructorDeclaration's
+            // identical fix for why that silently drops every parameter after
+            // the first: only the FIRST parameter is 2 children wide, every
+            // one after it has a leading ',' sibling making it 3 wide).
             uint32_t paramCount = ts_node_child_count(child);
-            for (uint32_t j = 0; j < paramCount; j += 2) { // Skip commas
-                TSNode paramChild = ts_node_child(child, j);
-                const char* paramChildType = ts_node_type(paramChild);
-
-                if (strcmp(paramChildType, "type") == 0 && j + 1 < paramCount) {
-                    TSNode typeNode = paramChild;
-                    TSNode identifierNode = ts_node_child(child, j + 1);
-                    if (strcmp(ts_node_type(identifierNode), "identifier") == 0) {
-                        std::string type = getNodeText(typeNode, source);
-                        std::string name = getNodeText(identifierNode, source);
-                        parameters.push_back({type, name});
-                    }
+            std::string pendingType;
+            for (uint32_t j = 0; j < paramCount; j++) {
+                TSNode paramNode = ts_node_child(child, j);
+                const char* pt = ts_node_type(paramNode);
+                if (strcmp(pt, "type") == 0) {
+                    pendingType = getNodeText(paramNode, source);
+                } else if (strcmp(pt, "identifier") == 0 && !pendingType.empty()) {
+                    parameters.push_back({pendingType, getNodeText(paramNode, source)});
+                    pendingType.clear();
                 }
             }
         } else if (strcmp(childType, "const") == 0) {

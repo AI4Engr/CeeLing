@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ reason: char literal escape sequences (\n \t \\ \' \0) -- added on top of
+//@ reason: the initial plain-char-only char_literal grammar when a real
+//@ reason: consumer (a hand-rolled YAML scanner testing `peek() == '\n'`)
+//@ reason: needed one; not built speculatively ahead of that need. No AST/
+//@ reason: emitter changes needed -- original_text is emitted verbatim, and
+//@ reason: CeeLing's `'\n'` and C++'s `'\n'` escape syntax are identical.
+//@ run: 1 0
+
+int main() {
+    char nl = '\n';
+    char tab = '\t';
+    bool isNl = nl == '\n';
+    bool isTab = tab == '\n';
+    std::cout << isNl << " " << isTab << std::endl;
+    return 0;
+}

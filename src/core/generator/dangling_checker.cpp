@@ -131,6 +131,17 @@ void DanglingChecker::deriveSummaries(const Program& program) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             functionParams_[fn->name] = fn->parameters;
             summaries_[summaryKey("", fn->name)] = deriveSummaryForBody(fn->body, fn->parameters);
+            // Dual-register under the qualified name (`YAML::Load`), same
+            // reasoning as every other namespaced-declaration dual-
+            // registration in this codebase: a call site outside the
+            // namespace spells it qualified, and resolveCallReturnAlias's
+            // plain-call branch looks up functionParams_/summaries_ keyed by
+            // exactly that spelling.
+            if (!fn->namespaceName.empty()) {
+                const std::string qualified = fn->namespaceName + "::" + fn->name;
+                functionParams_[qualified] = fn->parameters;
+                summaries_[summaryKey("", qualified)] = summaries_[summaryKey("", fn->name)];
+            }
         }
     }
     // Base-before-derived again, for the same reason: `d.inheritedMethod(x)` has to

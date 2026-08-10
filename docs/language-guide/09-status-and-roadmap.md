@@ -205,6 +205,43 @@ real.
   real `yaml-cling/src-clg/yaml_node.clg` now compiles AND runs correctly
   end-to-end with zero ownership annotations — see
   `yaml-cling/tests/run_node_smoke_rust_backend.sh`.
+- **`char` as a value type** — a pure primitive, exactly like `int`/`bool`;
+  `string[i]` returns `char`. `char*`/`char[]` are grammatically
+  inexpressible by construction (no pointer/array production exists at all),
+  closing the classic "char is secretly a raw C-string pointer" door before
+  it could open. See `tests/safety/char_basic_accepted.clg` and siblings.
+- **A real YAML text parser (`YAML::Load`) for yaml-cling** — a hand-rolled,
+  block-style-only tokenizer + recursive-descent parser (no flow style, no
+  anchors/aliases, no multi-document, no tags), verified
+  **byte-identical against actual upstream yaml-cpp** built and run
+  directly on the same representative document. This closes yaml-cling's
+  last remaining exclusion ("no parser this round," see the templates/
+  operator-overloading bullets above) — real `.yaml` text now parses into a
+  `Node` tree, not just hand-built trees. See
+  `yaml-cling/src-clg/yaml_scanner.clg`, `yaml_parser.clg`, and
+  `yaml-cling/tests/run_parser_smoke_rust_backend.sh`, and Chapter 18 Step
+  24 for the four AST-builder bugs and two Parser bugs this surfaced (none
+  related to `char` itself — multi-parameter constructors silently dropping
+  parameters, parenthesized expressions not parsing at all, call-result
+  member access having no valid parse, and a compact-sequence-of-maps
+  indent-tracking bug only the yaml-cpp cross-check caught).
+- **Real multi-file compilation: `.h` header generation + `.clh` source-level
+  includes** — `cling --cpp foo.h foo.clg` emits a declaration-only header
+  (signatures, no bodies; templates/specializations excepted — they must stay
+  fully defined/`inline` at every instantiation point) instead of a full
+  translation unit. `.clg` source spells a local dependency as
+  `#include "foo.clh"` (a source-level-only convention — no `.clh` file is
+  ever read or written); resolving one parses `foo.clg` itself and merges its
+  declarations into the including file's semantic analysis (so `Node`/
+  `Scanner`/etc. are no longer "unknown calls"), without merging their
+  DEFINITIONS — each `.clg` still transpiles to its own independent `.cpp`,
+  compilable with an ordinary `g++ -c` and linkable with the others. This is
+  what `yaml-cling`'s `yaml_node.clg`/`yaml_scanner.clg`/`yaml_parser.clg`/
+  `main.clg` now do for real: four separately transpiled, separately
+  compiled, separately linked translation units — not the source-concatenation
+  workaround every prior end-to-end proof (including the parser above) had
+  relied on. See `yaml-cling/transpiled/` and Chapter 18 Step 25 for the
+  header/out-of-line-definition/ODR mechanics this forced.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**

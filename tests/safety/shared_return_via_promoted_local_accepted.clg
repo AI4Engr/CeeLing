@@ -1,0 +1,47 @@
+//@ expect: accept
+//@ reason: a real bug found while writing yaml-cling's Parser (`Node
+//@ reason: parseDocument() { Node root = new Node(...); parseValueInto(root,
+//@ reason: -1); return root; }`): inferAliasReturningMethods's structural
+//@ reason: rule (this/field/alias-call only) never recognized `return
+//@ reason: <local>;` at all -- a method returning a LOCAL that gets promoted
+//@ reason: to shared_ptr by a LATER pass (promoteSharedCallArguments: the
+//@ reason: local is passed into a parameter that itself needs sharing) kept
+//@ reason: its own return type at unique_ptr, a genuine return-type mismatch
+//@ reason: compile error confirmed via probe. Here, `kid` is promoted to
+//@ reason: shared_ptr because it's passed into `adopt`'s parameter (stored
+//@ reason: into the already-shared-needing `child` field), and
+//@ reason: `makeAdopted` then returns that same local. Fixed by a new
+//@ reason: promoteReturnsOfSharedLocals pass, running LAST in analyzeProgram
+//@ reason: (after every local's FINAL pointer-kind decision, including
+//@ reason: whatever promoteSharedCallArguments just changed).
+//@ run: 2
+
+class Box {
+public:
+    int val;
+    Box child;
+    Box(int v) {
+        val = v;
+        child = nullptr;
+    }
+    void adopt(Box b) {
+        child = b;
+    }
+};
+
+class Factory {
+public:
+    Box makeAdopted() {
+        Box parent = new Box(1);
+        Box kid = new Box(2);
+        parent.adopt(kid);
+        return kid;
+    }
+};
+
+int main() {
+    Factory f = new Factory();
+    Box k = f.makeAdopted();
+    std::cout << k.val << std::endl;
+    return 0;
+}

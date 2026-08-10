@@ -36,6 +36,15 @@ using ExpressionPtr = std::unique_ptr<Expression>;
 class Statement : public ASTNode {
 public:
     virtual ~Statement() = default;
+
+    // True for a top-level declaration (class/function/enum) pulled in ONLY to make
+    // an `#include`d sibling .clg file's types/functions visible to this file's own
+    // semantic analysis (EscapeHatchChecker/SmartPointerAnalyzer/DanglingChecker) --
+    // it is NOT part of this file's own source and must never be re-emitted by
+    // AstEmitter::emit/emitHeader, or the including file's .cpp/.clh would duplicate
+    // a definition that already exists in the included file's own .cpp/.clh (an ODR
+    // violation at link time). See main.cpp's collectExternalDeclarations.
+    bool isExternalDeclaration = false;
 };
 
 using StatementPtr = std::unique_ptr<Statement>;
@@ -74,6 +83,17 @@ public:
     std::string original_text;
 
     explicit StringLiteral(const std::string& text) : original_text(text) {}
+    std::string toString() const override { return original_text; }
+};
+
+// A single-quoted char literal, e.g. `':'`. Holds the original text including
+// the quotes (mirrors StringLiteral); emitted verbatim -- CeeLing's `'x'` and
+// C++'s `'x'` char-literal syntax are identical, so no translation is needed.
+class CharLiteral : public Expression {
+public:
+    std::string original_text;
+
+    explicit CharLiteral(const std::string& text) : original_text(text) {}
     std::string toString() const override { return original_text; }
 };
 
@@ -254,6 +274,15 @@ public:
     // (type, name) pairs, like MethodDeclaration. C++-style: `int f(int a, Node b)`.
     std::vector<std::pair<std::string, std::string>> parameters;
     std::vector<StatementPtr> body;
+    // Enclosing namespace name, or empty if this function was declared at the
+    // top level -- same desugaring ClassDeclaration/EnumDeclaration already
+    // get (see their own namespaceName fields for why): `namespace X { int f()
+    // {...} }` is DESUGARED by the AST builder into a top-level
+    // FunctionDeclaration with namespaceName="X". Free functions were not
+    // included in the original namespace design (only classes/enums were);
+    // added when yaml-cling's `YAML::Load(...)` needed a namespaced free
+    // function to actually resolve.
+    std::string namespaceName;
 
     FunctionDeclaration(const std::string& retType,
                         const std::string& func_name,
