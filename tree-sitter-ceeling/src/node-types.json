@@ -911,6 +911,10 @@
     "named": false
   },
   {
+    "type": "++",
+    "named": false
+  },
+  {
     "type": ",",
     "named": false
   },
@@ -1060,7 +1064,27 @@
     "named": true
   },
   {
+    "type": "operator!=",
+    "named": false
+  },
+  {
+    "type": "operator*",
+    "named": false
+  },
+  {
+    "type": "operator++",
+    "named": false
+  },
+  {
+    "type": "operator<<",
+    "named": false
+  },
+  {
     "type": "operator=",
+    "named": false
+  },
+  {
+    "type": "operator==",
     "named": false
   },
   {

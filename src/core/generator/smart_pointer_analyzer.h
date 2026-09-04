@@ -50,6 +50,18 @@ public:
     void analyzeProgram(const Program& program, const std::string& source = "");
     PointerType getPointerType(const std::string& className, const std::string& variableName) const;
     PointerType getPointerTypeForVariable(const std::string& variableName) const;
+    // Scoped variant of getPointerTypeForVariable: only matches pointerDecisions
+    // entries recorded under `scopeName` (a function/method name, matching
+    // buildKey's own containingScope argument), never a same-named local in an
+    // unrelated function. getPointerTypeForVariable's plain name-only suffix
+    // match is a REAL, pre-existing cross-function name collision (confirmed:
+    // two unrelated free functions each with their own local named `copy`
+    // wrongly classified each other's return type) -- this scoped variant
+    // exists specifically for promoteReturnsOfSharedLocals's two loops, which
+    // always know which single function/method body they're asking about and
+    // have no reason to risk a same-named local anywhere else in the program.
+    PointerType getPointerTypeForVariableInScope(const std::string& scopeName,
+                                                  const std::string& variableName) const;
     std::string buildAnalysisReport() const;
     const std::vector<AnalysisDiagnostic>& getDiagnostics() const;
     bool classRequiresSharedRoot(const std::string& className) const;
@@ -83,7 +95,48 @@ public:
     // pass, no user-facing annotation exists for this at all.
     bool classNeedsSharedFromThis(const std::string& className) const;
 
+    // Is `className` a VALUE TYPE -- never wrapped in unique_ptr/shared_ptr for
+    // its own variable declarations, class fields, or method return values,
+    // unlike every other user-defined class? Purely structural, no annotation
+    // (see classifyValueTypeClasses): true iff the class defines all three of
+    // operator*/operator++/operator!= (the C++ range-for iterator protocol).
+    // This is a SEPARATE, independent classification from PointerType --
+    // AstEmitter checks this FIRST and, if true, skips calling
+    // getPointerType/getMethodReturnPointerType entirely for that class-typed
+    // thing (a value-type class's own FIELDS of some OTHER class type are
+    // unaffected and still go through the ordinary pointer-kind decision).
+    bool isValueTypeClass(const std::string& className) const;
+
+    // Is free function `fnName`'s parameter `paramName` READ-ONLY -- never
+    // stored into a field/return/another owning sink anywhere in the body,
+    // only ever read via `paramName.field` (including passing such a field
+    // access on to another already-classified read-only parameter)? See
+    // classifyReadOnlyFreeFunctionParams for the exact structural rule.
+    // Motivated by yaml-cpp API-compatibility: a yaml-cpp function taking
+    // `const Node&` (e.g. `Clone`) must not consume its caller's argument,
+    // even though CeeLing has no reference-parameter syntax and an object
+    // parameter defaults to move-by-value.
+    bool isReadOnlyFreeFunctionParam(const std::string& fnName, const std::string& paramName) const;
+
+    // Same classification, for a CLASS METHOD's own parameter (e.g. Parser::
+    // parseValueInto's `target`, which is only ever mutated THROUGH -- never
+    // stored/returned/moved-into-another-owner -- so the caller's own local
+    // must survive the call). Kept as a separate query (not folded into
+    // isReadOnlyFreeFunctionParam) since methods key by (class, method, param)
+    // triples, not just (fnName, paramName) pairs -- two different classes'
+    // same-named methods must not collide. See classifyReadOnlyFreeFunctionParams,
+    // which now classifies both free functions and methods in one fixed point.
+    bool isReadOnlyMethodParam(const std::string& className, const std::string& methodName,
+                                const std::string& paramName) const;
+
 private:
+    // Classifies value-type classes (see isValueTypeClass) by scanning every
+    // ClassDeclaration's members for operator*/operator++/operator!= method
+    // definitions. Fully independent of the rest of the pipeline -- reads
+    // only the raw Program, writes only valueTypeClasses_ -- so it can run
+    // first, before firstPassCollectReferences, with no ordering dependency.
+    void classifyValueTypeClasses(const Program& program);
+
     // First pass: collect all reference relationships
     void firstPassCollectReferences(const Program& program);
     void analyzeStatement(const Statement& stmt, const std::string& currentClass = "");
@@ -158,6 +211,36 @@ private:
     // See the .cpp for the exact yaml-cling Load() shape this closes.
     void inferAliasReturningFreeFunctions(const Program& program);
 
+    // Classifies each free function's object-typed parameters as read-only or
+    // not (see isReadOnlyFreeFunctionParam). Purely structural over the raw
+    // Program (mirrors classifyValueTypeClasses's independence) -- runs FIRST,
+    // alongside it, before any pointer-kind decision exists yet, since this
+    // classification is about how a PARAMETER'S OWN BODY USAGE shapes it, not
+    // about any already-decided pointer kind. promoteSharedCallArguments
+    // consults this (much later) to force both a read-only parameter AND its
+    // call-site argument to SHARED -- see the .cpp for why both sides need it.
+    void classifyReadOnlyFreeFunctionParams(const Program& program);
+    // Does expression `expr`, within a function body where `paramName` names a
+    // read-only-candidate parameter, use `paramName` in a way that would
+    // require it to be consumed/stored (fails read-only), given `okCallees` --
+    // the set of "fnName::argIndex" call targets already known read-only this
+    // round (a fixed point, mirroring inferAliasReturningMethods's algorithm,
+    // since a parameter passed onward to another read-only parameter is itself
+    // still read-only, but that target might not be classified yet on an
+    // earlier round)? Returns true the first time a disqualifying use is
+    // found; a call site that reads only `paramName.field` (not bare
+    // `paramName`) never disqualifies, regardless of the callee.
+    // `currentClass` is the enclosing class of the body being scanned (empty
+    // for a free function) -- needed so a bare implicit-this call inside a
+    // METHOD (`parseBlockMapInto(target, ...)`, indistinguishable at the AST
+    // level from a free-function call: call->callee is null either way) can
+    // build the right okCallees key ("Class::method::argIndex", not just
+    // "method::argIndex", which would collide across classes and never match
+    // a free function's own differently-shaped key).
+    bool paramUseDisqualifiesReadOnly(const Expression* expr, const std::string& paramName,
+                                       const std::string& currentClass,
+                                       const std::set<std::string>& okCallees) const;
+
     void scanSource(const std::string& source);
     void parseAnnotationLine(const std::string& trimmedLine, int lineNumber);
     void registerReference(const std::string& scopeName, const std::string& className,
@@ -215,6 +298,17 @@ private:
     // base, auto-derived (never user-annotated) from an alias-returning
     // method's body containing `return this;`.
     std::set<std::string> classesNeedingSharedFromThis_;
+
+    // Classes classified as value types (see isValueTypeClass/
+    // classifyValueTypeClasses).
+    std::set<std::string> valueTypeClasses_;
+
+    // "fnName::paramName" -> read-only (see isReadOnlyFreeFunctionParam).
+    // Absence means "not read-only" (the safe default -- an ordinary,
+    // unclassified parameter keeps today's move-by-value behavior unchanged).
+    std::set<std::string> readOnlyFreeFunctionParams_;
+    // "className::methodName::paramName" -> read-only (see isReadOnlyMethodParam).
+    std::set<std::string> readOnlyMethodParams_;
 };
 
 } // namespace cling

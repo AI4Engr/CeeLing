@@ -130,6 +130,15 @@ private:
     // 100% of the existing move/observer machinery once recognized here.
     bool isObjectType(const std::string& type) const;
 
+    // Is `expr` provably a `string`-value expression? A string literal always is;
+    // a `string`-typed identifier is (via localType_); a `+` BinaryExpression of
+    // two string-valued operands is (string concatenation has no ownership/
+    // dangling implications -- it always produces a fresh value, same as any other
+    // primitive arithmetic). Recursive so `a + b + c` (left-associative chains)
+    // resolves correctly. Used by ThrowStatement's operand check -- see CLAUDE.md/
+    // TODO.md on why `throw` is restricted to string payloads at all.
+    bool isStringValuedExpr(const Expression* expr) const;
+
     // Walk an expression; for every use of a moved-from variable, emit an error.
     void checkExpressionUses(const Expression* expr);
 

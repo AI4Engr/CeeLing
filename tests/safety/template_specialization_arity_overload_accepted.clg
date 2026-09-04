@@ -1,0 +1,53 @@
+//@ expect: accept
+//@ reason: yaml-cpp's `as<T>()` (throws on failure) and `as<T>(T fallback)`
+//@ reason: (never throws) already coexist correctly on the SAME class with
+//@ reason: ZERO CeeLing changes -- each is its own PRIMARY generic method
+//@ reason: (`<T> T as() {...}` and `<T> T as(T fallback) {...}`, distinct
+//@ reason: arities), each with its own per-type specialization. Real C++
+//@ reason: requires this shape (an explicit specialization's parameter list
+//@ reason: must match the primary it specializes -- confirmed via probe
+//@ reason: that a single primary cannot host both arities), and CeeLing's
+//@ reason: existing return-type-genericity mechanism already supports
+//@ reason: declaring two same-named primaries at different arities.
+//@ run: throwing=5 fallback=5 fallback-on-empty=42
+//
+// Both the throwing (arity 0) and non-throwing (arity 1) forms are called
+// on the SAME object, plus the fallback form on a second object where the
+// fallback is actually used (empty scalar) -- proving both bodies dispatch
+// correctly and independently.
+
+class Box {
+public:
+    string scalar;
+    Box(string s) {
+        scalar = s;
+    }
+
+    <T> T as() {
+        throw "unsupported";
+    }
+
+    int as<int>() {
+        return std::stoi(scalar);
+    }
+
+    <T> T as(T fallback) {
+        return fallback;
+    }
+
+    int as<int>(int fallback) {
+        if (scalar.length() == 0) {
+            return fallback;
+        }
+        return std::stoi(scalar);
+    }
+};
+
+int main() {
+    Box b = new Box("5");
+    Box empty = new Box("");
+    std::cout << "throwing=" << b.as<int>()
+               << " fallback=" << b.as<int>(99)
+               << " fallback-on-empty=" << empty.as<int>(42) << std::endl;
+    return 0;
+}

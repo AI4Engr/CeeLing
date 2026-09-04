@@ -2228,3 +2228,1157 @@ produces a working executable that prints the expected `Load`/`operator[]`/
 `.as<T>()`/`IsMap`/`IsSequence`/`size` output — the same YAML fixture Step 24
 proved correct against upstream yaml-cpp, now built the way a real multi-file
 C++ project actually builds, not via source concatenation.
+
+## Step 26 — A real parser bug found by a fifth `yaml-cling` file: a top-level comment before a namespace-of-only-free-functions
+
+Writing `yaml-cling/src-clg/yaml_emitter.clg` (a `Dump(Node) -> string`
+serializer, the inverse of `yaml_parser.clg`'s `Load`) hit a genuine CeeLing
+bug on the very first attempt — a plain, conventional file header comment
+(the same style every other `src-clg/*.clg` file already used successfully)
+made `cling` reject the file with `Error: Parse error at line 1, column 1,
+node type 'comment'` — a message that pointed at the comment itself but
+was, in the end, unrelated to its content.
+
+### Root-caused with the CST, not by guessing at the fix
+
+`tree-sitter parse` on the failing input showed a completely clean tree —
+zero `ERROR` nodes, the comment sitting exactly where it should as a bare
+child of `source_file`. That ruled out the grammar (`grammar.js`) outright:
+whatever was wrong lived in CeeLing's own C++ (`ast_builder.cpp`), not the
+parser generator's output. `buildProgram`'s top-level loop
+(`ast_builder.cpp`) tracks two booleans while walking `source_file`'s
+children: `hasUnresolvedTopLevel` (some child failed to become a
+`Statement`) and `hasStructuralAnchor` (a `ClassDeclaration` or
+`MainFunction` was seen) — and rejects the whole file only when the first is
+true and the second is false, the idea being "a genuinely broken construct
+is only a hard error if there's nothing anchoring this as a real program."
+The loop calls `buildStatement` on every child that isn't `ERROR`/missing
+and isn't a `namespace_declaration`-wrapped-in-`statement` — including a
+bare `comment` node, which `buildStatement` naturally doesn't recognize
+(comments are declared as a grammar `extras` token, "skippable anywhere,
+like whitespace," specifically so they never need their own AST node). That
+made every top-level comment count as "unresolved." Ordinarily harmless
+(nearly every real `.clg` file has a `class`/`main` somewhere to serve as
+the anchor) — but `yaml_emitter.clg` is a pure library file: no class, no
+`main`, only free functions in a reopened `namespace YAML { ... }`. With
+nothing to set `hasStructuralAnchor`, the comment's false "unresolved" flag
+became fatal. `yaml_parser.clg` (which also opens with a comment, also
+reopens `namespace YAML`) never hit this only because its namespace's FIRST
+member is `class Parser` — one `ClassDeclaration` anywhere in the file is
+enough to mask the bug for the whole file.
+
+The actual confirmation this diagnosis was right, not just plausible: a
+sibling function, `buildNamespaceDeclaration`, walks a namespace body with
+the SAME shape of loop, and its `if`/`else if` dispatch (`"ERROR"`/missing →
+reject, `"statement"` → build) has no matching branch for a bare `comment`
+child at all — meaning it silently ignores one by simple fallthrough. That
+this second, independent loop already got it right (and that moving the
+same header comment to inside the namespace, as a manual test, made the
+top-level failure disappear) pinned the exact missing guard.
+
+### The fix
+
+`ast_builder.cpp`'s top-level loop in `buildProgram` gained one explicit
+check — skip (via `continue`) any child whose type is `"comment"`, mirroring
+`buildNamespaceDeclaration`'s existing (correct) fallthrough behavior —
+before the code that calls `buildStatement` and records "unresolved" on a
+null result. Three lines of real logic; the rest of the diff is the comment
+explaining why, per this project's own no-silent-fix discipline.
+
+### Verification
+
+Full CeeLing regression (`ctest`, all 13 tests including the 82-fixture
+safety-contract baseline) stayed green — this fix touches a path no
+existing fixture exercises (every fixture is a runnable program with
+`main()`, and `main()` itself always sets `hasStructuralAnchor`, which
+means **no existing or even hypothetical `main()`-containing fixture could
+ever have caught this bug**, since the masking condition is unconditional
+once any `MainFunction`/`ClassDeclaration` exists anywhere in the file — a
+real, permanent blind spot in the current safety-fixture convention, noted
+here rather than worked around with a mismatched fixture shape). Real
+regression coverage instead comes from `yaml-cling` itself:
+`src-clg/yaml_emitter.clg` now compiles as originally written (conventional
+top-of-file header comment, no workaround), and the previously-failing
+`yaml-cling/src-clg/CMakeLists.txt` build (which transpiles every
+`src-clg/*.clg` file, including the emitter, as part of its
+`add_custom_command`-driven library target) passes end to end. A dozen
+hand-bisected minimal repros (comment position, namespace member order,
+presence/absence of `#include`, free-function return type) were re-run
+against the fixed binary and all now transpile successfully.
+
+## Step 27 — `operator*`/`operator++`/`operator!=`, value-type classes, and real C++ range-for iteration
+
+yaml-cling wanted `for (Node x : node)`-style iteration, mirroring
+yaml-cpp's `begin()`/`end()`. This turned out to be the largest single
+feature added this session — not because the end result is large, but
+because building a genuine C++-range-for-compatible iterator class exposed
+three separate, previously-unknown CeeLing limitations, each requiring a
+real fix, each found by testing rather than assumed.
+
+### The core language additions
+
+`operator*` (dereference), `operator++` (prefix increment only — no
+postfix, unneeded by range-for's `++it` desugaring), and `operator!=`
+(equality only — no `operator==`, unneeded either) join `operator[]`/
+`operator=` as the full set of user-definable operator overloads
+(`grammar.js`'s `operator_method_name`). `unary_expression` gained `*`/`++`
+as prefix operators (previously only `!`/`-`) — confirmed via a real bug
+found in the SAME change: `buildUnaryExpression` (`ast_builder.cpp`)
+recovered the operator from the leading source text by taking exactly ONE
+character (`full[0]`), silently truncating `++` to a single `+`; fixed by
+special-casing the two-character `++` prefix before falling back to the
+one-character case.
+
+**A class defining all three of `operator*`/`operator++`/`operator!=` (all
+three, never fewer — confirmed as the exact threshold) is INFERRED as a
+VALUE TYPE** — never wrapped in `unique_ptr`/`shared_ptr` for its own
+variables, fields, or method returns, unlike every other CeeLing class.
+Purely structural, no annotation — same philosophy as Step 23's
+alias-returning-method inference. This exists because real C++ range-for
+needs `begin()`/`end()` to return the iterator BY BARE VALUE — `std::
+shared_ptr`/`unique_ptr` have no `operator++` at all, so a smart-pointer-
+wrapped iterator can never satisfy the range-for protocol, confirmed via
+direct probe before any design work started.
+
+`SmartPointerAnalyzer` gained `isValueTypeClass(className)`, backed by a
+new, fully independent `classifyValueTypeClasses` pass (reads only the raw
+`Program`, runs before everything else, no ordering dependency on the
+existing two-pass pointer-kind machinery). `AstEmitter` checks this at
+every site that previously assumed "class-typed means pointer-backed"
+unconditionally: local variable declarations, class fields, method/
+function return types, parameter types (passed by value — value types are
+meant to be cheap to copy), all four `new ClassName(...)` construction
+sites (plain constructor call, no `make_unique`/`make_shared` factory), and
+the `.`/`->` member-access decision. `DanglingChecker::isObjectType` gained
+a matching exclusion — without it, an ordinary legal copy
+(`Iterator b = a; Iterator c = a;`) was wrongly flagged "use of moved-from
+value `a`" on the second copy, confirmed via direct probe: value types are
+copyable, not move-only, unlike every other (always smart-pointer-backed)
+CeeLing class.
+
+**A real bug found via the FIRST test program** (a class returning `this`
+from a value-type method): `this` is ALWAYS a raw pointer in C++
+regardless of the containing class's value-type-ness, so `return this;`
+where the return type is the class itself (not a pointer) does not
+compile — confirmed via direct probe (`g++`: "invalid conversion from
+'Foo*' to 'int'", the compiler trying to construct a new `Foo` from the
+pointer, using the WRONG overload). Fixed by detecting this exact shape in
+`ReturnStatement` handling and emitting `return *this;` (dereference, then
+copy-construct) instead.
+
+### Applying it to yaml-cling's `Node`: three more real bugs, one genuine architectural fork
+
+Building the actual `Node::Iterator` (not a synthetic test class) surfaced
+problems the synthetic tests hadn't, in order:
+
+1. **A genuine circular class reference with no forward-declaration
+   escape.** `Node::begin()`/`end()` (member methods, the obvious design)
+   need `Iterator` fully defined for their return type; `Iterator` needs
+   `Node` fully defined for its own `current` field and `.next` access.
+   CeeLing has no forward-declaration syntax (`class Iterator;`) at all —
+   confirmed there is no way to write this circular pair as CeeLing member
+   methods. **Resolved architecturally, not by adding forward-declaration
+   support**: `begin(Node)`/`end(Node)` as FREE FUNCTIONS in the `YAML`
+   namespace instead of `Node` methods — the standard C++ idiom for adding
+   iteration to a type without adding member methods to it. C++'s
+   range-for resolves `begin`/`end` via ADL (argument-dependent lookup)
+   automatically when no member exists; CeeLing's existing native
+   `for (Type x : expr)` emission already relies on the C++ compiler to
+   pick member-vs-ADL lookup, so this needed zero additional CeeLing
+   changes on its own — `Iterator` is defined strictly after `Node`
+   (referencing it freely), and `Node` never needs to know `Iterator`
+   exists.
+
+2. **The for-loop's own container-dereference logic (added earlier this
+   session for a synthetic member-method test) broke the free-function
+   case.** A smart-pointer-wrapped class container with a MEMBER
+   `begin()`/`end()` needs dereferencing (`for (T x : *r)` — a smart
+   pointer has no `begin()`/`end()` of its own). But a container relying on
+   ADL free functions must NOT be dereferenced — the free function's
+   parameter is smart-pointer-wrapped (CeeLing always wraps class-typed
+   parameters; there is no reference-parameter syntax to avoid this), so it
+   needs the UNDEREFERENCED container variable to match. Fixed by checking
+   whether the container's class has a MEMBER `begin` (`classMethodParams_`
+   lookup, mirroring the existing `operator=`/`operator[]`
+   membership-check pattern) before deciding to dereference.
+
+3. **Two independent pointer-kind inferences (a local variable's default,
+   and a free function's parameter default) can disagree, and — more
+   fundamentally — `unique_ptr` cannot satisfy this pattern AT ALL,
+   regardless of matching.** `SmartPointerAnalyzer` decides a fresh local's
+   kind and a function parameter's kind through entirely separate code
+   paths with different defaults. Confirmed via direct probe that even
+   when forced to agree, the deeper problem is structural: CeeLing's free
+   functions always take a class-typed parameter BY VALUE (no reference
+   parameters), and range-for needs the container passed to BOTH `begin()`
+   and `end()` — but `std::unique_ptr`'s copy constructor is deleted, so a
+   unique_ptr-backed container can never be passed by value twice, no
+   matter what kind either side independently infers. Fixed by extending
+   `promoteSharedCallArguments` (previously scoped to real `FunctionCall`
+   AST nodes only, which a for-loop's implicit, compiler-synthesized
+   `begin`/`end` calls are NOT) to recognize a `ForStatement`'s container as
+   an implicit call site, and UNCONDITIONALLY force both the container
+   variable AND both free functions' own parameters to `shared_ptr` — not
+   merely matching whatever each side's independent inference happened to
+   decide. A related, separately-confirmed qualified-name bug in the same
+   fix: a container declared with a qualified type (`YAML::Node`, as the
+   source wrote it) needed comparing against a free function's BARE
+   parameter type (`Node`, since it's declared inside the `YAML`
+   namespace) — the same qualified-vs-bare mismatch class already found and
+   fixed several times this session for namespaced types, fixed here by
+   stripping to the simple name before comparing.
+
+4. **The for-loop's own LOOP VARIABLE type has a similar two-independent-
+   sources problem.** Its pointer kind previously came only from
+   `containerElementIsShared` — a mechanism designed for
+   `std::vector<T>`'s own push_back-tracking, with no signal at all for a
+   non-vector container (silently defaulting to unique). But the loop
+   variable's REAL required kind is whatever `Iterator::operator*()`
+   actually returns — confirmed via direct probe these two sources can
+   disagree, producing a loop variable type that doesn't match what
+   `operator*()` returns. Fixed by preferring `operator*()`'s own declared
+   return kind (via `getMethodReturnPointerType` on the free `begin()`'s
+   return-type class) whenever the container relies on ADL (no member
+   `begin`), falling back to `containerElementIsShared` only for genuine
+   vector/map containers.
+
+### `yaml_node.clg`'s actual design
+
+`Iterator` walks the same `child`/`next` chain `Node` already exposes.
+Dereferencing yields the current `Node` directly — NOT a
+`std::pair<Node,Node>` (CeeLing has no `std::pair` support and doesn't need
+it): for a map entry, the returned `Node`'s own `.key` field already IS the
+key, and the `Node` itself acts as the value (`.Scalar()`, nested
+`operator[]`, etc. all already work) — mirrors real yaml-cpp's own
+`iterator_value`, which is ITSELF `Node`-derived with pair-shaped access
+bolted on, not a bare `std::pair`, confirmed by reading yaml-cpp's actual
+`node/detail/iterator.h`.
+
+### Verification
+
+Three new CeeLing safety fixtures (`operator_iterator_protocol_accepted.clg`
+— direct operator use + the value-type-copy bug fix;
+`iterator_protocol_range_for_accepted.clg` — the member-method + container-
+deref path; `iterator_protocol_free_function_adl_accepted.clg` — the ADL
+free-function + forced-sharing path), all compiled AND run (not just
+parsed), full CTest + 85-fixture safety suite green. `yaml-cling`'s real
+`Node::Iterator` (`src-clg/yaml_node.clg`) verified via a new
+`tests/run_iterator_smoke_rust_backend.sh` (real separate compilation,
+mirroring the emitter/parser smoke tests), output cross-checked
+byte-for-byte against real yaml-cpp's own `for (auto it : node) { it.first;
+it.second; }` (map) and plain dereference (sequence) — including a
+composed case (`Load()` then iterate the parsed tree, not just a hand-built
+one) — on identical input.
+
+## Step 28 — Runtime helpers (`cling::readFileToString`/`cling::fileExists`) and a `throw` string-concatenation gap, for `YAML::LoadFile`
+
+yaml-cling wanted `YAML::LoadFile(path)`, yaml-cpp's own file-reading front
+door (`Node LoadFile(const std::string& filename)`). This exposed a real,
+previously-unnoticed gap: CeeLing has **zero file-I/O capability** — no
+object construction/method-call support for foreign types at all, so a
+`.clg` program cannot `new std::ifstream(path)` and call `.good()`/
+`.rdbuf()` on it, and there is no single real `std::` free function that
+reads a whole file into a string in one atomic call (unlike `std::stoi`,
+which Step 22 already allow-lists). The qualified-free-function mechanism
+from Step 22 was therefore the wrong tool — it only ever exposes a REAL
+`std::` function; file-reading needs actual new code to exist somewhere.
+
+### Runtime helpers: a second, distinct allow-list
+
+`library_summary.h` gained `isKnownRuntimeHelper` (parallel to, but
+deliberately separate from, `isKnownQualifiedFreeFunction`): a name on this
+list is NOT a real `std::` function but a small, hand-written C++ shim that
+CeeLing itself provides and `AstEmitter` auto-injects into any generated
+file that calls it. `requiredRuntimeHelperDefinitions(used)` returns the
+shim source for exactly the helpers a program actually calls, so a program
+that never calls one is emitted byte-identically to before this feature
+existed.
+
+Two helpers, both taking/returning only primitives (no ownership/move
+machinery needed, same reasoning as `std::stoi`):
+
+- `cling::readFileToString(path) -> string` — the whole file, or `""` on any
+  failure to open/read.
+- `cling::fileExists(path) -> bool` — can the path be opened at all.
+
+**Why two helpers, not one.** An earlier version had `LoadFile` check
+`readFileToString`'s return value directly (`if (text.length() == 0) throw
+...;`) — this is WRONG, confirmed by reading real yaml-cpp's own
+`LoadFile` (`src/parse.cpp`): it only throws `BadFile` when the
+`std::ifstream` fails to OPEN, never based on content length, so an
+existing-but-EMPTY file opens fine in real yaml-cpp and reads back as an
+empty/null `Node` — conflating that with "file not found" would be a real
+behavioral divergence, not just a style choice. `fileExists` is checked
+SEPARATELY, before the read, so the two cases stay distinct.
+
+`AstEmitter::collectUsedRuntimeHelpers` is a new, self-contained recursive
+walk (mirroring `SmartPointerAnalyzer`'s existing `visitExpr`/`visitStmt`
+shape for a similar full-body traversal) run once per `emit()` before the
+preamble is written, since deciding whether to inject `#include <fstream>`/
+`<sstream>` and the shim body has to happen before any output is emitted,
+but detecting the call requires walking every function/method/constructor
+body — a shallower, signature-only pass (like the existing
+`collectClassNames`) isn't enough. `EscapeHatchChecker::isKnownCallable`
+gained the matching allow-list branch, same shape as Step 22's qualified
+free-function check right above it.
+
+### A real, narrow, pre-existing `throw` gap found along the way
+
+`YAML::LoadFile`'s natural error message is `throw "yaml-cling: bad file: "
++ path;` — a `+` CONCATENATION, not a bare string literal or bare
+identifier. `DanglingChecker`'s `ThrowStatement` check (added in Step 18)
+only ever recognized those two shapes, so this was rejected:
+`error[semantic/use-after-move]: throw operand is not a string` (a
+misleading error CODE — this has nothing to do with moves — but it's the
+generic "throw failed its type check" errors ride on).
+
+This was a real, unjustified gap, not a safety boundary: string
+concatenation has no ownership or dangling implications whatsoever — `a +
+b` for two string-valued operands always produces a fresh value, exactly
+like any other primitive arithmetic. Fixed with a new recursive
+`DanglingChecker::isStringValuedExpr(expr)`: true for a string literal,
+true for an identifier whose `localType_` entry is `string` (already
+populated for string locals/parameters since Step 18), and true for a `+`
+`BinaryExpression` whose LEFT and RIGHT are both (recursively)
+string-valued — so chains like `a + b + c` resolve correctly via ordinary
+left-associative recursion. This replaced the old two-shape inline check
+verbatim; no other call site needed to change.
+
+### Applying it to yaml-cling's real `yaml_parser.clg`
+
+```
+Node LoadFile(string path) {
+    if (!cling::fileExists(path)) {
+        throw "yaml-cling: bad file: " + path;
+    }
+    string text = cling::readFileToString(path);
+    return Load(text);
+}
+```
+
+Real yaml-cpp throws a class-typed `BadFile` exception here; yaml-cling
+throws a plain string message instead — an already-documented divergence
+(`rust_backend`'s `throw`/`catch` is scoped to string payloads only, no
+exception-class hierarchy — see Step 18 and `notes/GAPS.md`'s G4/RB12
+entries in `yaml-cling`), not a new one introduced by this feature.
+
+### Verification
+
+Two new CeeLing safety fixtures:
+`runtime_helper_read_file_to_string_accepted.clg` (both helpers, exercised
+against a deliberately nonexistent path — no auxiliary fixture file needed,
+and the safety runner compiles/runs fixtures from a scratch tmp dir where a
+real file wouldn't exist anyway) and `throw_string_concat_accepted.clg`
+(a 3-way `+` chain of a literal and two string locals, thrown and caught).
+Both compiled AND run, not just parsed; full CTest + 87-fixture safety
+suite green.
+
+`yaml-cling`'s real `YAML::LoadFile` verified via a new
+`tests/run_loadfile_smoke_rust_backend.sh` (real separate compilation,
+mirroring the parser/emitter/iterator smoke tests) — reads an ACTUAL file
+from disk at runtime (not a hand-built in-memory string, unlike every prior
+smoke test), plus exercises the missing-file throw/catch path. The
+successful-read case's output was cross-checked against real yaml-cpp's own
+`LoadFile` on the identical input file (compiled from yaml-cpp's actual
+source, the same `g++ -DYAML_CPP_STATIC_DEFINE -I .../yaml-cpp/include -c
+src/*.cpp` method used since Step 24) — byte-identical
+(`key=name value=yaml-cling` / `key=count value=42`). The missing-file case
+confirmed real yaml-cpp's `BadFile::what()` is literally `"bad file: " +
+filename` (read directly from `include/yaml-cpp/exceptions.h`) — yaml-cling's
+`"yaml-cling: bad file: " + path` keeps its own `"yaml-cling: "` prefix
+deliberately (matching the existing convention set by `yaml_node.clg`'s
+`.as<T>()` throw), not a byte-identical match, since this is an
+informational caught-string message, not a structural correctness claim
+the way the successful-read output is.
+
+## Step 29 — Read-only free-function parameter inference, for `YAML::Clone`
+
+yaml-cling wanted `contains(Key)` and `Clone(const Node&)` — the last two
+gaps from `notes/API_COMPATIBILITY.md` flagged as "no CeeLing blocker, just
+unwritten." `contains` turned out to be exactly that: an ordinary method
+walking the same `child`/`next` chain `operator[]` already walks, no core
+changes needed. `Clone` was not — it surfaced a real, previously-unnoticed
+API-compatibility gap that took four found-and-fixed bugs to close properly.
+
+### The core problem
+
+Real yaml-cpp declares `Node Clone(const Node& node)` — a read-only
+reference. The whole point of `Clone` is that the caller's original stays
+usable afterward: `Node copy = Clone(root); use(root);` must not reject
+`root`. But CeeLing has no reference-parameter syntax at all — every
+object-typed parameter defaults to move-by-value — so a naive port
+(`Node Clone(Node node) { ...; return copy; }`) made `Clone(root)`
+unconditionally consume `root`, rejecting the very next use as
+"moved-from." This is a real, if narrow, yaml-cpp API-compatibility bug, not
+a cosmetic inconvenience — confirmed by writing it into `yaml-cling`'s own
+`CLAUDE.md` as an explicit rule (constraint #1): parameter-passing semantics
+must match yaml-cpp's declared reference-ness, not just names/return types,
+and the general fix (extend CeeLing's inference) is preferred over a
+function-specific workaround.
+
+### The inference: read-only free-function parameters
+
+A free function's object-typed parameter is INFERRED read-only — purely
+structural, no annotation, same philosophy as every other inference this
+project has built — iff its body:
+
+1. Never stores, returns, or moves the BARE parameter into any sink (a
+   disqualifying use), AND
+2. Contains at least one GENUINE read of it (`param.field`, or a falsy/null
+   check `!param`).
+
+Condition 2 is not optional bookkeeping — see bug 2 below for why an
+empty-bodied or unused parameter must NOT qualify just because it has zero
+disqualifying uses.
+
+`SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams` runs first
+(alongside `classifyValueTypeClasses`, before any pointer-kind decision
+exists — this classification is about a parameter's OWN body usage, nothing
+else depends on it existing yet). `paramUseDisqualifiesReadOnly` is the
+disqualifying-use walk (a bare `Identifier` matching the parameter name
+disqualifies almost everywhere, except inside `!paramName`, which is
+explicitly carved out).
+
+`promoteSharedCallArguments`'s free-function call-site handling was
+extended: when the callee's parameter is classified read-only, BOTH the
+parameter's own pointer kind AND the caller's argument are unconditionally
+forced to `shared_ptr` — the same reasoning Step 27's ADL `begin`/`end`
+forcing already established: the parameter and the argument must end up the
+SAME C++ type for the call to compile at all (a `shared_ptr` argument
+cannot bind to a `unique_ptr` parameter), and a fresh local's own default
+has no reason to already agree with a parameter's default by coincidence.
+
+### Four bugs found via testing, each confirmed with a minimal probe first
+
+**Bug 1 — `!paramName` wrongly disqualified.** The first version of
+`paramUseDisqualifiesReadOnly` handled `UnaryExpression` by naively
+recursing into the operand: `!node`'s operand IS the bare `Identifier`
+`node`, which matches the general bare-identifier disqualifying rule and
+returned `true` — even though a null/falsy check obviously doesn't consume
+anything. Confirmed via a minimal isolated repro
+(`if (!node) { return nullptr; } ... new Node(1); return copy;` — no
+reference to `node` anywhere else) still classifying `node` as disqualified.
+Fixed by special-casing `un->operator_str == "!"` with a bare-identifier
+operand to explicitly return `false` before the general recursion.
+
+**Bug 2 — an unused parameter wrongly qualified as read-only.** After fixing
+bug 1, the existing `tests/safety/move_then_use.clg` fixture (`void
+sink(Node n) {}`, `sink(a); use(a);` must reject) flipped from PASS to
+XFAIL — a real, hard regression signal from the pre-existing safety
+baseline, not something written into a new fixture. Root cause: an
+empty-bodied function has ZERO disqualifying uses of `n` by construction,
+so "no evidence it's consumed" was being read as "read-only" — the wrong
+inference. An unused parameter provides no positive evidence of anything;
+CLAUDE.md's "ambiguous → conservative reject" spirit applies here too:
+no read at all is exactly as ambiguous as a disqualifying use, and should
+default to ordinary move-by-value, not a new looser behavior. Fixed by
+adding a second, independent walk (`bodyHasGenuineRead`, mirroring
+`paramUseDisqualifiesReadOnly`'s statement-shape traversal) requiring at
+least one real `param.field` access or `!param` check before granting
+read-only status — condition 2 above.
+
+**Bug 3 — qualified-name mismatches, twice more.** The exact bug class this
+session had already hit twice before (Step 27's ADL forcing, Step 28's
+`inferAliasReturningFreeFunctions`/`promoteReturnsOfSharedLocals`
+dual-registration) recurred here: `collectCalleeParams`'s free-function map
+and the new `readOnlyFreeFunctionParams_` set were both keyed by the
+callee's BARE name only, but a call site from OUTSIDE the callee's
+namespace spells it qualified (`YAML::Clone`, captured verbatim by
+`ASTBuilder::buildFunctionCall`). Confirmed via probe: `Clone(root)`'s
+use-after-move error persisted even after bugs 1–2 were fixed, because the
+promotion code's `calleeParams.freeFunctions.find(call->function_name)`
+lookup (`"YAML::Clone"`) never matched the bare-keyed map entry
+(`"Clone"`). Fixed by dual-registering both `collectCalleeParams` and the
+read-only classification set under the qualified name too — and, separately,
+by stripping the qualifier back OFF before using it to build a
+`pointerDecisions` key (which is always scoped by the callee's bare
+DEFINITION-side name, per `registerParameters`), mirroring the
+`containerSimpleClass` stripping Step 27 already needed for the same
+reason.
+
+**Bug 4 — a genuinely new, pre-existing bug: scope-blind name matching in
+`promoteReturnsOfSharedLocals`.** After fixing bugs 1–3, `Clone(root)` no
+longer rejected `root`, but the generated C++ failed to COMPILE: `Node copy
+= Clone(root);` declared `copy` as `std::unique_ptr<Node>` while `Clone`
+itself was emitted returning `std::shared_ptr<Node>`. Tracing why `Clone`'s
+own return was shared at all (it returns a fresh local, `copy`, constructed
+via `new Node(...)` — nothing about that shape should be alias-returning)
+led to `promoteReturnsOfSharedLocals`: its existing (pre-dating this
+feature) free-function loop asks "is the returned local's OWN pointer kind
+SHARED" via `getPointerTypeForVariable(id->name)` — a query that does a
+**program-wide, scope-blind suffix match** over every `pointerDecisions`
+key ending in `.copy`, with no regard for which function that entry came
+from. `yaml_node.clg`'s new `cloneChain` (a self-recursive helper `Clone`
+calls) ALSO happens to declare its own, completely unrelated local named
+`copy` — and `cloneChain`'s `copy` legitimately becomes `shared_ptr`
+(`cloneChain`'s own parameter is read-only-and-self-recursive, forcing its
+return type shared too). The scope-blind lookup then wrongly concluded
+`Clone`'s `copy` must ALSO be shared, purely from sharing a bare name with
+an unrelated function's local. This is a real bug that pre-dates read-only
+parameter inference entirely — it just needed two same-named locals in two
+different functions to surface, which no earlier fixture happened to
+contain. Fixed with a new `getPointerTypeForVariableInScope(scopeName,
+variableName)` (scoped via the SAME `buildKey` prefix format everything
+else uses), swapped into BOTH of `promoteReturnsOfSharedLocals`'s loops
+(class methods and free functions) — its other two pre-existing
+`getPointerTypeForVariable` call sites (`ast_emitter.cpp`, `cpp_generator.cpp`,
+both weak-pointer-reset checks on a field name) were deliberately left on
+the original, unscoped query, since their semantics were not verified safe
+to change. This loop's free-function branch also needed the SAME
+qualified-name dual-registration fix as bug 3 (a separate instance, not the
+same code path — `promoteReturnsOfSharedLocals` and
+`inferAliasReturningFreeFunctions` are two different passes that both
+happened to only register the bare name).
+
+### Applying it to yaml-cling's real `yaml_node.clg`
+
+```
+bool contains(string entryKey) {
+    if (!child) { return false; }
+    return child.hasSibling(entryKey);
+}
+
+Node cloneChain(Node node) {
+    if (!node) { return nullptr; }
+    Node copy = new Node(node.kind);
+    copy.key = node.key;
+    copy.scalar = node.scalar;
+    copy.child = cloneChain(node.child);
+    copy.next = cloneChain(node.next);
+    return copy;
+}
+
+Node Clone(Node node) {
+    if (!node) { return nullptr; }
+    Node copy = new Node(node.kind);
+    copy.key = node.key;
+    copy.scalar = node.scalar;
+    copy.child = cloneChain(node.child);
+    return copy;
+}
+```
+
+`cloneChain` must be declared BEFORE `Clone` in source order (not after,
+despite `Clone` being the public-facing entry point) — CeeLing has no
+forward-declaration syntax, so a sibling free function calling another must
+be declared in call order (a function calling ITSELF, unlike calling a
+sibling, is always legal without one — the same constraint Step 25's
+emitter-design writeup already found for `yaml_emitter.clg`'s
+map/sequence/scalar handling). `cloneChain` is `Node`-recursive (clones a
+node AND its whole `.next` sibling chain) while `Clone` itself only clones
+ONE node's own subtree — a caller holding "this one specific Node" should
+get back a clone of that node's subtree, not accidentally also the rest of
+its parent's sibling chain.
+
+### Verification
+
+Two new CeeLing safety fixtures:
+`readonly_free_function_param_accepted.clg` (a read-only parameter's
+argument survives the call, compiled AND run — single-line output, per the
+`//@ run:` harness's documented one-line-only limitation, found again while
+writing this fixture) and
+`readonly_free_function_param_still_moves_when_stored_rejected.clg`
+(positive control — a parameter that IS stored/returned still moves
+normally). Full CTest + 89-fixture safety suite green (the bug-2 regression
+was caught and fixed before this count was reached, not silently left red).
+
+`yaml-cling`'s real `contains`/`Clone` verified via a new
+`tests/run_contains_clone_smoke_rust_backend.sh` (real separate
+compilation, mirroring the parser/emitter/iterator/loadfile smoke tests):
+`contains` on a present vs. absent key, `Clone` on a map (mutating the
+clone's value leaves the original untouched) and on a sequence (cloned
+items iterate in the same order). Output cross-checked byte-for-byte
+against real yaml-cpp's own `contains`/`Clone` on an identical tree
+(compiled from yaml-cpp's actual source, the same method used since Step
+24) — byte-identical on every line. Full regression on both repos (CeeLing's
+`ctest`; yaml-cling's 8 bash smoke scripts + `ctest` + the standalone
+`examples/consumer_project`) stayed green throughout.
+
+## Step 30 — Free-function `operator<<` + `ostream` passthrough type, for `YAML::operator<<`
+
+yaml-cling wanted `std::cout << node;` — real yaml-cpp's `std::ostream&
+operator<<(std::ostream& out, const Node& node)` (`node/emit.h:26`), the
+last item on `notes/API_COMPATIBILITY.md`'s "Small" bucket. Confirmed via
+direct read of `src/emit.cpp` that real yaml-cpp's implementation is
+genuinely a thin wrapper equivalent in output to `Dump(node)`, just
+streamed directly instead of returned as a string. Initially assumed
+trivial for exactly that reason — investigation found two real, confirmed
+gaps before any code was written, and implementation surfaced two more.
+
+### The two gaps found before writing any code
+
+1. **`operator_method_name` (the 5-operator allow-list: `[]`/`=`/`*`/`++`/
+   `!=`) is scoped to `method_declaration` — CLASS methods only.**
+   `function_declaration` (free functions) accepted only a plain
+   `$.identifier` as its name. Real yaml-cpp's `operator<<` is a free
+   function (not a `Node` member), so this needed new grammar, not reuse of
+   the existing set.
+2. **`ostream` had never been used as a CeeLing type anywhere.** `$.type`
+   already accepts any bare `$.identifier`, so `ostream` PARSES with zero
+   grammar change — but `AstEmitter::buildFunctionSignature`'s non-class-type
+   fallback would emit a bare, unqualified, by-VALUE `ostream out`. This is
+   not merely non-idiomatic: `std::ostream`'s copy constructor is deleted,
+   so passing it by value does not compile at all, confirmed via direct
+   g++ error before designing the fix.
+
+Fixed narrowly: `function_declaration`'s name gained `choice($.identifier,
+'operator<<')` (a separate, free-function-only allowance — NOT added to
+`operator_method_name`, which stays the fixed class-method set unchanged).
+Zero `ast_builder.cpp` changes needed (confirmed via probe:
+`FunctionDeclaration::name` is already a plain string, name-agnostic, the
+same as `operator[]`/`operator=` needed on the class-method side). New
+`library_summary.h::isOstreamType` (bare `ostream` only); `AstEmitter::
+buildFunctionSignature` checks it FIRST — before value-type/class-type — at
+both the return-type and parameter sites, always emitting `std::ostream&`
+(the only legal shape; not a choice the way value-type-vs-smart-pointer is
+elsewhere). The call site `std::cout << node;` needed ZERO emitter changes:
+it's an ordinary `BinaryExpression` (`<<`), already emitted generically
+before any user `operator<<` existed. `DanglingChecker` needed zero changes
+either — its `BinaryExpression` handling already treats both `<<` operands
+as a read (not a move), and `isObjectType` already excludes anything not in
+`classNames_`, so `ostream` is automatically excluded from move-tracking
+the same way `string` already is.
+
+### Bug 1 — `<<` never goes through the ordinary call-forcing path
+
+The read-only free-function-parameter forcing (Step 29) only ever triggers
+from inside a genuine `FunctionCall` AST node's visitor branch. But
+`std::cout << node` is a `BinaryExpression`, never a `FunctionCall` — the
+grammar/AST model `<<` uniformly this way, the same node `std::cout << x`
+already used long before any user `operator<<` existed. Confirmed via a
+minimal probe (`ostream operator<<(ostream out, Foo f) { ...; return out;
+}`, called as `std::cout << a;`): `g++` rejected it with `use of deleted
+function 'std::unique_ptr<...>::unique_ptr(const unique_ptr&)'` — the exact
+same failure shape Step 29's `Clone` fix addressed, just reached through a
+path the existing forcing code never visits. Fixed by extending
+`promoteSharedCallArguments`'s `BinaryExpression` visitor: for a `<<`
+operator whose right operand is a bare identifier of a class type matching
+a declared `operator<<`'s (read-only) second parameter, force BOTH the
+parameter and the argument to `shared_ptr` — the identical mechanism, just
+triggered from a different AST shape.
+
+### Bug 2 — the read-only classifier's own documented limit became a real blocker
+
+yaml-cling's actual `operator<<` body:
+
+```
+ostream operator<<(ostream out, Node node) {
+    out << Dump(node);
+    return out;
+}
+```
+
+passes `node` bare into `Dump(node)`. Step 29's `paramUseDisqualifiesReadOnly`
+had an explicitly documented, deliberate conservatism: "this pass does not
+attempt the passed-onward-to-another-read-only-parameter fixed-point case
+... since no known yaml-cling shape needs it yet." That shape now existed —
+`operator<<`'s own parameter was wrongly disqualified even though `Dump`
+itself only ever reads its parameter's fields. Closing this properly (not
+working around it) required a genuine fixed point, mirroring
+`inferAliasReturningMethods`'s already-established multi-round algorithm:
+`classifyReadOnlyFreeFunctionParams` now loops rounds, each round building
+an `okCallees` set (`"fnName::argIndex"` for every already-classified
+read-only parameter) from the PREVIOUS round's results, re-running both the
+disqualification check AND the genuine-read check with it. A bare-identifier
+argument passed to an already-classified read-only parameter neither
+disqualifies the caller NOR satisfies its genuine-read requirement on its
+own — it's treated as transparent, deferring to whatever the callee itself
+already proved.
+
+**A sub-bug found getting this right**: fixing disqualification alone was
+not enough — `Dump` still failed to classify, because `bodyHasGenuineRead`/
+`exprHasGenuineRead` (Step 29's positive-evidence requirement) had NO
+matching "counts via an already-good callee" exception; `Dump` never
+touches `node.field` directly itself, only `emitNode` (which `Dump` calls)
+does. Fixed by giving the genuine-read walk the identical `okCallees`
+exception the disqualification walk got. Confirmed via debug instrumentation
+during development (temporary, removed before finalizing) that `Dump`
+classified `dq=0 gr=0` after only the first fix — disqualification cleared,
+genuine-read still failing — pinpointing exactly which half needed the
+second fix, rather than guessing.
+
+**A second sub-bug — the qualified-name mismatch class recurred a FOURTH
+time this session**: after both fixed-point fixes, the standalone
+`yaml_emitter.clg` transpile correctly showed `operator<<`'s parameter as
+`shared_ptr`, but a SEPARATE driver `.clg` (`#include`-ing both `yaml_node.
+clh` and `yaml_emitter.clh`) still emitted `root` as `unique_ptr`. Traced to
+the SAME class of bug as Step 27's ADL forcing and Step 29's `Clone`
+forcing: the `<<`-BinaryExpression forcing code compared the driver's
+`root` (declared `YAML::Node`, qualified — the spelling a `.clg` file
+writes from OUTSIDE the namespace) directly against `operator<<`'s own
+`paramType` (bare `Node`, as declared INSIDE the namespace) — never equal.
+Fixed by stripping the qualifier off the right-hand-side's resolved type
+before comparing, the same `rfind("::")` pattern used at every prior
+instance of this bug.
+
+### Verification
+
+New CeeLing safety fixture `operator_stream_insertion_accepted.clg` (a free
+`operator<<` declared and used via `std::cout << x`, the streamed value's
+usability confirmed afterward — compiled AND run, not just parsed). Full
+CTest + 90-fixture safety suite green.
+
+`yaml-cling`'s real `YAML::operator<<` verified via a new
+`tests/run_operator_stream_smoke_rust_backend.sh` (real separate
+compilation, mirroring the contains/Clone smoke test): builds a map,
+streams it via `std::cout << root;`, then confirms `root` is still usable
+afterward. Output cross-checked byte-for-byte against real yaml-cpp's own
+`operator<<` on an identical tree (compiled from yaml-cpp's actual source,
+the same method used since Step 24) — byte-identical, including the
+"still usable" line proving the caller's `Node` genuinely survives the
+call, matching real yaml-cpp's `const Node&` semantics exactly. Full
+regression on both repos (CeeLing's `ctest`; yaml-cling's 9 bash smoke
+scripts + `ctest` + the standalone `examples/consumer_project`) stayed
+green throughout.
+
+## Step 31 — `==`/`!=` identity comparison: a discovery, not a feature
+
+yaml-cling wanted `Node::operator==`/`operator!=`, next in line on
+`notes/API_COMPATIBILITY.md`'s Medium bucket. yaml-cling's own `TODO.md` had
+a wrong assumption about the target semantics: it claimed real yaml-cpp's
+`operator==` compares STRUCTURE/scalar VALUE, contradicting its own note two
+sentences later that it "matches yaml-cpp's `is()` semantics" — `is()` is
+explicitly IDENTITY (same underlying storage), not value. Reading yaml-cpp's
+actual `include/yaml-cpp/node/impl.h` directly confirmed: `operator==(const
+Node&, const Node&) { return lhs.is(rhs); }` — pure identity, always.
+
+### The investigation found this already works, with zero code changes
+
+Before writing anything, a direct probe (`a == aAlias`, `a != b` on ordinary
+CeeLing class-typed locals, then confirming both operands stayed usable
+afterward) was tried against the CURRENT `cling.exe` — and it transpiled,
+compiled, and ran correctly with NO changes at all. The reason, once traced:
+
+- `==`/`!=` are already ordinary comparison operators in `binary_expression`
+  (`grammar.js`'s comparison production: `choice('==', '!=', '<', '>', '<=',
+  '>=')`) — completely ungated by `operator_method_name`'s 5-operator
+  allow-list, which only ever governed USER-DEFINABLE operator overloads on
+  a class, never built-in comparison syntax itself.
+- A class-typed operand is always smart-pointer-backed (`std::shared_ptr<T>`
+  or `std::unique_ptr<T>`), so `a == b` in the generated C++ compiles as
+  `std::shared_ptr<T>::operator==` — a REAL, BUILT-IN C++ standard library
+  operator that already does exactly IDENTITY comparison (pointer/control-
+  block equality). No CeeLing-side rewriting, no new grammar, no new
+  emitter branch, no new checker logic — the existing generic
+  `BinaryExpression` emission (unconditional since long before any operator
+  overload work this session) already produces exactly the right C++.
+- `DanglingChecker` needed nothing either: a comparison is a plain read via
+  `BinaryExpression`'s existing generic use-checking, never a move —
+  confirmed directly by the probe, where both compared locals remained
+  fully usable afterward.
+
+This mirrors this session's now-familiar "escape by construction" pattern
+(Step 27's `operator*`/`operator++` on a value-type operand needed zero
+emitter rewriting; the `<<` stream-chain BinaryExpression needed zero
+rewriting for `operator<<`) — but taken one step further: here, CeeLing
+didn't even need a NEW operator name in the grammar, because `==`/`!=` were
+never gated behind the operator-overload allow-list at all, and the
+underlying smart-pointer type already provides exactly the right built-in
+semantics with no user-defined operator required.
+
+### A real, honest asymmetry, found and documented rather than smoothed over
+
+Cross-checking against real yaml-cpp surfaced a genuine, worth-flagging
+difference: compiling a `root != other` probe against ACTUAL yaml-cpp
+source failed with a real `g++` error — `no match for 'operator!='` — real
+yaml-cpp defines `operator==` for `Node` but never `operator!=` at all.
+CeeLing's version works for both (the built-in `shared_ptr` comparison
+provides both unconditionally), which is a harmless superset, not a
+compatibility gap — but it does mean `root != other` is expressible in
+yaml-cling source that the literal equivalent C++ against real yaml-cpp
+could not write. Flagged explicitly in both the fixture and the yaml-cling
+smoke-test driver's comments, and the cross-check itself only exercises the
+`==` half a real yaml-cpp program could actually compile, keeping the
+byte-identical claim meaningful rather than comparing against something
+that couldn't exist on the other side.
+
+### Verification
+
+New CeeLing safety fixture `class_identity_comparison_accepted.clg` (an
+aliased reference compares equal to the original; two independently
+constructed objects with identical field values compare unequal —
+IDENTITY, not structural equality — both compared values remain usable
+afterward; compiled AND run, not just parsed, since this is fundamentally a
+runtime-behavior claim). Full CTest + 91-fixture safety suite green.
+
+`yaml-cling` needed ZERO `yaml_node.clg` changes — `Node`'s existing
+`shared_ptr`-backed handle shape already provides yaml-cpp's `is()`
+semantics for free. New `tests/run_identity_comparison_smoke_rust_backend.sh`
+(real separate compilation, mirroring the contains/Clone smoke test),
+output cross-checked byte-for-byte against real yaml-cpp's own `operator==`
+on an identical tree (only the `==` half, per the asymmetry above). Full
+regression on both repos (CeeLing's `ctest`; yaml-cling's 10 bash smoke
+scripts + `ctest`) stayed green throughout.
+
+## Step 32 — `as<T>(fallback)`: another already-works discovery, plus a real pre-existing checker bug
+
+yaml-cling wanted `Node::as<T>(fallback)` — real yaml-cpp's
+`template <typename T, typename S> T as(const S& fallback) const`
+(`node/impl.h`'s `as_if<T,S>`), the never-throws sibling of the existing
+throwing `as<T>()`. Confirmed by reading `as_if<T,S>::operator()` directly:
+on ANY failure (non-scalar/undefined node, or a failed `convert<T>::decode`)
+it returns `fallback` and never throws, under any input.
+
+### The core capability already worked
+
+Before writing anything, a direct probe declared TWO independent primary
+generics on the same class — `<T> T as() {...}` (existing) and
+`<T> T as(T fallback) {...}` (new) — each with its own per-type
+specialization, and it compiled and ran correctly with zero CeeLing
+changes. The reason: CeeLing's return-type-genericity mechanism
+(`method_type_parameter`/`method_specialization`) was never restricted to
+ONE primary per method name — it only requires a primary's return type
+equal its own type parameter, checked independently for each declaration.
+Two primaries of the same name at DIFFERENT arities simply coexist as two
+ordinary methods that happen to share a name (real C++ overloading, no
+CeeLing-specific machinery involved at all).
+
+This mirrors real C++'s own actual constraint, confirmed via a FAILING probe
+first: a single primary CANNOT host both arities.
+`template<> int as<int>(int)` does not compile against a zero-parameter
+primary `<T> T as()` — an explicit specialization's parameter list must
+match the primary it specializes, a genuine C++ language rule, not a
+CeeLing limitation. This is why real yaml-cpp's own `as_if<T,S>` template
+is a SEPARATE struct from `as_if<T,void>` (see `node/impl.h`) rather than
+one struct handling both call shapes — the same structural split CeeLing's
+"two primaries" approach mirrors.
+
+### A real, pre-existing `EscapeHatchChecker` bug, found while verifying the reject side
+
+Before trusting the accept case, a companion probe checked the REJECT
+case: calling `b.as<int>(99)` on a class declaring ONLY `as<int>()` (no
+fallback overload at all). This should be rejected — CLAUDE.md's
+"default-reject, never default-allow" contract demands it — but `cling.exe`
+exited 0, silently allowing it through. The generated C++ then failed to
+compile (`no matching function for call to 'Box::as<int>(int)'`), exactly
+the "misparse/mis-accept, not rejection" failure class this project has
+found and fixed several times before (Step 7, RB10).
+
+Root cause: `EscapeHatchChecker::isKnownCallable`'s specialization-call
+branch checked only that A specialization existed for the requested TYPE
+argument (`classMethods_[class].count(specializationKey(name, typeArg))`),
+never that the call's own ARGUMENT COUNT matched any of that
+specialization's actually-declared arities. `classMethods_` is a bare
+existence set (`std::set<std::string>`) — it can answer "does `Class` have
+a member keyed `as<int>`" but has no way to answer "at what arity."
+
+**This is a genuinely pre-existing gap, not introduced by `as(fallback)`**
+— it was simply unreachable before, since every specialization on every
+existing class had always been the ONLY one under its type argument.
+`as<T>(fallback)`'s two-primaries-same-name shape is the first time two
+specializations legitimately share a type argument at different arities.
+
+Fixed with a new `classSpecializationArities_` map (`"Class::specKey" ->
+every arity actually declared under that key`) — populated for EVERY
+specialization unconditionally (not just when a same-type-argument
+collision is detected, unlike `class_hierarchy.h`'s `overloadKey`
+precedent, which only switches key shapes on a detected collision — arity
+correctness needs to hold even for the single-arity common case, so
+tracking it always is simpler and more robust than trying to detect when
+tracking is "needed"). `isKnownCallable`'s two `templateArg`-carrying
+branches (receiver-qualified `n.as<int>(...)` and bare same-class
+`as<int>(...)` with implicit `this`) now check the call's own
+`call.arguments.size()` against this map after confirming the type match.
+Base-class inheritance and namespace-qualified dual-registration are both
+handled, mirroring `classMethods_`'s own existing patterns for those two
+concerns (a snapshot-then-insert pattern was needed for both, since
+inserting into `classSpecializationArities_` while iterating it directly
+would invalidate the iteration).
+
+### Applying it to yaml-cling's real `yaml_node.clg`
+
+`as<int>(fallback)`/`as<double>(fallback)`/`as<bool>(fallback)`/
+`as<string>(fallback)`, each mirroring its throwing sibling's parsing
+logic. The `int`/`double` forms needed new validation helpers
+(`isValidIntegerText`/`isValidOctalDigits`/`isValidDoubleText`) that check
+the scalar text is well-formed BEFORE calling `std::stoi`/`std::stod` --
+CeeLing's `catch` is scoped to `string` payloads only (Phase 1 scope, Step
+18), so there is no way to catch a `std::invalid_argument` the way real
+C++ could. This is not merely a workaround: real yaml-cpp's own
+`convert<T>::decode` doesn't rely on exceptions for its own scalar
+conversions internally either (it uses its own string-parsing helpers), so
+CeeLing's "validate first" approach matches yaml-cpp's actual strategy, not
+just its externally-observable behavior.
+
+### Verification
+
+Two new CeeLing safety fixtures:
+`template_specialization_arity_overload_accepted.clg` (both the throwing
+and fallback forms declared and called on the same class, correctly
+dispatching independently — compiled AND run) and
+`template_specialization_wrong_arity_rejected.clg` (positive control — the
+exact bug shape above, confirming a call to a nonexistent arity is now
+rejected). Full CTest + 93-fixture safety suite green.
+
+`yaml-cling`'s real `as<T>(fallback)` verified via a new
+`tests/run_as_fallback_smoke_rust_backend.sh` (real separate compilation,
+mirroring the contains/Clone smoke test) across `int`/`bool`/`string`,
+including the undefined-node and bad-parse fallback paths and the existing
+octal/`.inf` special-case literals still working in the fallback form.
+Output cross-checked byte-for-byte against real yaml-cpp's own
+`as<T>(fallback)` on identical inputs (compiled from yaml-cpp's actual
+source, the same method used since Step 24) — byte-identical on every
+line. Full regression on both repos (CeeLing's `ctest`; yaml-cling's 11
+bash smoke scripts + `ctest` + the standalone `examples/consumer_project`)
+stayed green throughout.
+
+## Step 33 — `Node::operator=(const Node&)` alias-rebind semantics (RB18): a real, multi-part core extension
+
+yaml-cling wanted `Node::operator=(const Node&)` — real yaml-cpp's handle-
+rebind assignment: `n = otherNode;` mutates `n`'s underlying storage in
+place (`AssignNode`/`node::set_ref`, confirmed via direct reading of
+`yaml-cpp/include/yaml-cpp/node/impl.h` and `node/detail/node.h`) so every
+OTHER `Node` handle that already aliases `n`'s old storage observes the new
+value too. This is fundamentally different from CeeLing's existing
+`operator=(string)` support (Step ~22): that case never repoints WHICH
+object a variable refers to, it mutates the one object in place. A
+same-class assignment (`n = otherNode;`) needs the same in-place mutation,
+but with TWO independently-aliasable handles both ending up consistent.
+
+### Why this needed a real structural rewrite, not an annotation
+
+Before RB18, `class Node` in `yaml_node.clg` directly held its own fields
+(`kind`/`key`/`scalar`/`child`/`next`); every `Node`-typed variable is a
+`std::shared_ptr<Node>` pointing straight at that object. Reassigning one
+`shared_ptr<Node>` only repoints THAT ONE variable — it cannot make some
+OTHER `shared_ptr<Node>` (aliasing the same object) observe a change,
+because there is no indirection layer one level further down for two
+handles to share. Real yaml-cpp solves this with a three-layer indirection
+(`Node` handle → `detail::node` stable slot → `detail::node_ref` payload,
+`shared_ptr`-held); yaml-cling doesn't need the middle "stable slot" layer
+(nothing keys off a payload's address the way yaml-cpp's own map/sequence
+storage does), so a two-layer split is sufficient:
+
+- **`NodeData`** (new) — the actual payload: `kind`/`key`/`scalar`, plus
+  `child`/`next` (see below for why these are `NodeData`, not `Node`).
+- **`Node`** — now a thin handle: `NodeData data;` (inferred
+  `shared_ptr<NodeData>`) plus every existing query/mutation method,
+  rewritten to read/write through `data.field`. `Node::operator=(Node
+  other) { data = other.data; }` is the whole mechanism: reassigning `data`
+  itself (not `this`) means any OTHER `Node` object that is the exact same
+  `shared_ptr<Node>` (two variables sharing one handle) shares the same
+  `data` pointer automatically, so both see the new payload.
+
+**A genuine circular-type problem, solved the same way Step 23's
+`Iterator`/`Node` split was**: `NodeData` originally needed `child`/`next`
+typed `Node` (so a caller holding `node.child` sees it live-update), but
+`Node.data` needs type `NodeData` — a two-way reference CeeLing cannot
+express (no forward-declaration syntax). Resolved by making `child`/`next`
+plain `NodeData` (self-referential only, no cycle with `Node`), moving the
+recursive chain-walkers (`siblingCount`/`findOrAppendSibling`/`hasSibling`/
+`siblingAt`/`appendScalar`) onto `NodeData` itself (they only ever need the
+payload chain, never handle semantics mid-walk), and giving `Node` a SECOND
+constructor, `Node(NodeData existingData)`, that wraps an existing payload
+as a fresh handle wherever a traversal step (`operator[]`, `Clone`) needs
+to hand one back to the caller. `yaml_emitter.clg`'s direct field access
+(`node.child`, `cur.key`, `cur.next`) — the only place OUTSIDE
+`yaml_node.clg` touching these fields — was replaced with new `Node`
+accessor methods (`firstChild()`/`nextSibling()`/`Key()`) that wrap the
+`NodeData` chain link on the way out, keeping `NodeData` an internal
+implementation detail nothing else ever names directly (mirroring real
+yaml-cpp's own encapsulation of `detail::node`).
+
+### Four real CeeLing core gaps found and fixed (confirmed via probe before each fix)
+
+1. **Same-class `operator=` never routed through the user's overload.**
+   `AstEmitter`'s `AssignmentStatement` handling had a DELIBERATE, documented
+   exclusion (from the original `operator=(string)` work): `n = otherNode;`
+   where `otherNode` IS the same class always fell through to ordinary
+   owner-reassignment (a plain `shared_ptr`/`unique_ptr` repoint), never
+   calling the user's `operator=`. Fixed by adding a second branch: when the
+   class declares an `operator=` whose OWN parameter type is the class
+   itself, route through `->operator=(...)` for a same-class RHS too — kept
+   as a genuinely separate condition from the pre-existing string-RHS branch
+   (different RHS-class comparison), not a generalization of it.
+
+2. **Two `operator=` overloads silently collided.** A class declaring BOTH
+   `operator=(string)` (pre-existing) and `operator=(Node)` (new) has two
+   arity-1 overloads. `classMethodParams_`'s key-selection rule
+   (`overloadKey(name, paramCount)` only when a name is genuinely
+   overloaded) is ARITY-ONLY — both overloads collapse to the SAME key
+   (`"operator=/1"`), and the second declaration silently overwrites the
+   first. Confirmed via probe: `nameEntry = "text";` on such a class stopped
+   compiling (routed to a raw `shared_ptr::operator=`, which has no
+   `const char*` overload) the moment a second `operator=` was added — a
+   real regression the arity-based overload key cannot resolve, since BOTH
+   overloads share the same arity. Fixed by tracking every `operator=`
+   overload's own parameter type independently (`operatorAssignParamTypes_`
+   in `AstEmitter`, `handleRebindAssignParamName` in
+   `SmartPointerAnalyzer::promoteSharedCallArguments`), bypassing the
+   collapsed map entirely for this one call shape.
+
+3. **`resolveDeclaredType` couldn't resolve a chained field access.**
+   `EscapeHatchChecker::isKnownCallable`'s string-method allow-list check
+   (`v.length()`, `v.substr(...)`) only resolved a bare-identifier receiver
+   (`resolveDeclaredType`), so `data.scalar.length()` — receiver is
+   `data.scalar`, a `MemberAccess`, not a bare identifier — was rejected as
+   an unknown call even though `.length()` is a perfectly legal string
+   method. This was ALREADY a latent gap (any class with a string field
+   reached through another field would have hit it), just never triggered
+   before `NodeData`'s introduction moved every scalar-string access one
+   field deeper. Fixed by extending `resolveDeclaredType` to walk a
+   `MemberAccess` chain via `resolveObjectType` (which already did this for
+   class-typed terminal fields) and return the terminal field's OWN declared
+   type, not just class-typed ones.
+
+4. **`inferAliasReturningMethods` didn't recognize `return new
+   SameClass(payloadField);`.** The existing alias-returning inference
+   (cases a/b/c: `return this`, `return <field>`, `return
+   <alias-returning-call>`) assumes a method returns something of ITS OWN
+   class directly. RB18's handle-wrapping shape is different: `Node::
+   operator[]` returns `new Node(data.child.findOrAppendSibling(...))` — a
+   FRESH handle wrapping a field reached through a DIFFERENT class
+   (`NodeData`)'s own chain. Added case (d): a `new SameClass(<inner>)`
+   return is alias-returning if `<inner>` resolves (via a new
+   `resolveInnerFieldChain` helper, walking `classMembersByClass_` across
+   whatever class each step's field belongs to, not just the method's own)
+   down to a field or an already-alias-returning call on ANY class. Without
+   this, `Node.data.child`/`.next` — despite `NodeData`'s OWN chain-walkers
+   correctly inferring `shared_ptr<NodeData>` — never propagated that
+   sharedness up through `Node::operator[]`'s wrapping return, so `Node`
+   itself silently defaulted back to `unique_ptr` at every call site.
+
+### A fifth, genuinely pre-existing `DanglingChecker` bug, exposed (not caused) by RB18
+
+`Parser::parseValueInto`'s shape (`if (cond) { other(target); return; }
+target.setScalar(...);`) was flagged use-after-move at the LAST statement,
+even though that statement is only reachable when the `if`'s condition was
+FALSE (the `if`-branch already returned). Reproduced on an ordinary FLAT
+class with no `NodeData` split at all — a real, pre-existing gap in
+`DanglingChecker`'s branch-merge logic, just never triggered by any
+existing fixture before RB18's restructuring changed which functions'
+argument-passing patterns got exercised. `mergeBranchStates`'s conservative
+union ("an effect in EITHER branch holds after the `if`") is correct for a
+branch that FALLS THROUGH, but wrong for one that unconditionally exits
+(`return`/`throw`, or an `if`/`else` where both arms do) — that branch's
+effects can never be observed by code after the `if`, since that code is
+only reachable via the OTHER path. Fixed with a new `alwaysExits(body)`
+helper (checks only the LAST statement, conservative by design — an early
+return nested deeper inside a loop does not make the enclosing block itself
+unconditionally exit) and a corresponding branch in the `IfStatement`
+handler: when exactly one side always exits, the post-`if` state is that
+branch's sibling's state directly, skipping `mergeBranchStates`'s union.
+
+### Read-only classification extended from free functions to class methods
+
+Real yaml-cpp's `Parser`-equivalent parsing functions mutate a `Node`
+parameter IN PLACE across a set of MUTUALLY RECURSIVE methods
+(`parseValueInto` ↔ `parseBlockMapInto` ↔ `parseBlockSeqInto`) — the same
+"never stored/returned, only read/mutated through" shape Step 29's
+read-only-free-function-parameter inference was built for, just one level
+down inside a class, and via IMPLICIT-`this` calls (`parseBlockMapInto(
+target, ...)`, no explicit receiver) rather than plain free-function calls.
+`classifyReadOnlyFreeFunctionParams` (kept its name for now; classifies
+BOTH free functions and methods) was extended: `okCallees` entries are
+"fnName::argIndex" for a free function or "ClassName::methodName::argIndex"
+for a method; `paramUseDisqualifiesReadOnly`/`exprHasGenuineRead` both
+gained a `currentClass` parameter so a bare implicit-this call can try the
+method-scoped key before falling back to the free-function key (the two
+shapes are indistinguishable at the raw AST level — `call->callee` is null
+either way). A new `isReadOnlyMethodParam(class, method, param)` query
+mirrors `isReadOnlyFreeFunctionParam`. Forcing the caller's argument to
+`SHARED` for a read-only METHOD parameter needed its own small traversal in
+`promoteSharedCallArguments` (`forceReadOnlyMethodArg`/
+`forceReadOnlyMethodArgsInBody`) — the existing `visitExpr`/`visitStmt`
+walk has no class-context parameter, and retrofitting one onto that
+already-large, deeply-recursive pair was judged riskier than a second,
+narrowly-scoped walk built specifically for implicit-this calls.
+
+### Two more real gaps found closing out the full pipeline
+
+Getting the ENTIRE yaml-cling regression suite green (not just
+`yaml_node.clg` in isolation) surfaced two more real, confirmed gaps:
+
+6. **`SubscriptExpression` wasn't counted as a genuine read** by the
+   read-only-parameter classifier (`exprHasGenuineRead` only recognized
+   `paramName.field`, never `paramName[index]`). `Parser::parseBlockMapInto`
+   touches its `target` parameter ONLY via `target[key]` — never a bare
+   `.field` access — so it never satisfied the positive-evidence
+   requirement, which cascaded: `parseValueInto` calls `parseBlockMapInto`
+   with `target` passed bare, so IT never qualified either, all the way up
+   to `parseDocument`'s `root` showing as moved-from. Fixed by adding
+   `SubscriptExpression` handling identical in shape to the existing
+   `MemberAccess` case.
+7. **`begin()`/`end()`/`Clone`'s parameter-sharing forcing only fired for a
+   call site in the SAME transpile unit.** CeeLing compiles each `.clg`
+   file as a genuinely separate translation unit (confirmed via
+   `main.cpp`'s `mergeExternalDeclarations`) — `yaml_node.clg`'s own
+   standalone transpile (defining `begin`/`end`/`Clone`) never contains a
+   `for`-loop or a `Clone(...)` call itself; those live in a SEPARATE driver
+   `.clg` that only `#include`s the header. The existing forcing logic
+   (Step 27's range-for forcing; Step 29's read-only-parameter forcing)
+   only fires when the triggering AST shape is found in the same program
+   being analyzed, so `yaml_node.h`'s already-emitted signature stayed
+   `unique_ptr` regardless of what the OTHER file's analysis concluded.
+   Fixed by forcing both unconditionally instead: any free function
+   literally named `begin`/`end` taking one class-typed parameter, or any
+   free function parameter already classified read-only, is forced SHARED
+   regardless of local call-site evidence — these are structural
+   requirements of the function's own PURPOSE, not usage-count heuristics.
+
+### A second identity-comparison consequence: `==`/`!=` needed re-deriving
+
+RB16 (`==`/`!=` already working via `shared_ptr<Node>`'s own built-in
+identity comparison, zero CeeLing changes) was correct ONLY because `Node`
+WAS its own payload — one handle meant one node. Once the handle/payload
+split landed, two DIFFERENT `Node` handles can legitimately alias the SAME
+`NodeData` (e.g. two separate `root["name"]` calls resolving to the same
+map entry), which yaml-cpp's real `is()` semantics say must compare equal
+— but `shared_ptr<Node>::operator==` compares HANDLE identity, which these
+two objects do NOT share. Confirmed as a real regression via a
+`root["name"] == root["name"]` probe wrongly returning false.
+
+Fixed with an explicit `Node::operator==`/`operator!=(Node other) { return
+data == other.data; }`, comparing the payload's own `shared_ptr<NodeData>`
+identity — but this needed two further CeeLing extensions, since `==`/`!=`
+are ordinary `BinaryExpression`s comparing `shared_ptr<T>` VARIABLES at the
+generated-C++ level, never reaching a class's own `operator==` at all
+through plain operator resolution:
+
+- **Grammar**: `operator_method_name` gained `'operator=='` (previously
+  only `[]`/`=`/`*`/`++`/`!=` were legal class-method operator names).
+- **`AstEmitter` routing**: `emitExpression`'s `BinaryExpression` handling
+  gained a branch that, for `a == b`/`a != b` where both operands are the
+  SAME class and that class declares the matching `operator==`/`!=`, emits
+  `a->operator==(b)` explicitly instead of the plain `(a == b)` `shared_ptr`
+  comparison. Two more bugs found getting this right:
+  - The method-name LOOKUP key needed the full `"operator=="` string
+    (`classMethodParams_` keys by `method->name` verbatim), not the bare
+    `"=="` symbol — confirmed via probe after the check first silently
+    never matched.
+  - **Iterator's own internal `current != other.current`** (comparing its
+    own `Node`-typed field for RANGE-FOR TERMINATION, needing to work when
+    `current` is a genuinely null `shared_ptr`, i.e. the `end()` sentinel)
+    had to be EXCLUDED from this routing — calling `this->current->
+    operator!=(...)` on a null receiver is undefined behavior, confirmed as
+    a real segfault. The correct exclusion signal is "the left operand is a
+    bare FIELD of the class currently being emitted" (`isCurrentField`),
+    not merely "inside some class" — a genuine external comparison like
+    `root == other` in `main()` is unaffected.
+- **`SmartPointerAnalyzer` forcing**: `operator==`/`!=`'s own parameter is
+  forced `shared_ptr` unconditionally (same reasoning as begin/end/Clone
+  above), and the RHS argument at each `==`/`!=` call site is forced too
+  (mirroring the existing `<<`-BinaryExpression forcing pattern for
+  read-only parameters).
+
+### Status: COMPLETE, full pipeline green
+
+Core mechanism verified end-to-end via minimal probe (two `Node`-shaped
+handles sharing one payload, reassigning one through `operator=` makes
+BOTH observe the new value — compiled and RUN). All 13 real CeeLing core
+bugs/extensions found this step (5 structural + 2 pipeline-closing + the
+operator==/!= consequence's own 3-part fix, plus the original operator=
+mechanism itself) are fixed and verified.
+
+**Final regression**: CeeLing's `ctest` (13 tests including the
+safety-fixture baseline) stayed green after every single fix, re-run
+after each change, zero regressions. yaml-cling's full 12-script bash
+smoke suite is green except `run_node_smoke.sh`, a PRE-EXISTING (confirmed
+present before this step's changes, not caused by them), already-known
+CRLF-only shell-comparison artifact — the actual program output is
+byte-identical to the expected file once line endings are normalized
+(`diff` after `tr -d '\r'` shows zero difference). Two test fixtures
+(`tests/iterator_smoke_main_rust_backend.clg`,
+`tests/loadfile_smoke_main_rust_backend.clg`) needed a mechanical `.key` →
+`.Key()` rename to match `Node`'s new public accessor (the field itself
+moved under the internal `NodeData` payload).

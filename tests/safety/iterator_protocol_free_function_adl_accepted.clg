@@ -1,0 +1,91 @@
+//@ expect: accept
+//@ reason: The ADL (argument-dependent lookup) free-function begin()/end() idiom --
+//@ reason: the standard C++ way to add range-for support to a type WITHOUT adding
+//@ reason: member methods to it, used specifically to break a circular class-
+//@ reason: ordering dependency CeeLing's lack of forward-declaration syntax can't
+//@ reason: otherwise resolve (Bag needs Item's full definition for its `head`
+//@ reason: field; if Bag ALSO declared member begin()/end() returning Iterator,
+//@ reason: Iterator would need to exist before Bag, but Iterator itself needs Item
+//@ reason: -- a genuine two-way cycle with no forward-declare escape). Two real
+//@ reason: bugs were found and fixed via this exact shape: (1) a for-loop's
+//@ reason: container variable and a free `begin()`'s parameter are decided by two
+//@ reason: INDEPENDENT SmartPointerAnalyzer inferences (locals default unique,
+//@ reason: parameters default shared) that can disagree -- fixed by extending
+//@ reason: promoteSharedCallArguments to recognize a for-loop's IMPLICIT begin/end
+//@ reason: call (invisible to the AST, pure C++ compiler desugaring) as a
+//@ reason: promotion site; (2) the loop variable's OWN pointer kind (previously
+//@ reason: only derived from containerElementIsShared, a std::vector-specific
+//@ reason: mechanism with no signal for a non-vector container) must instead come
+//@ reason: from Iterator::operator*()'s actual declared return kind when there is
+//@ reason: no member begin() -- confirmed via direct probe that these two sources
+//@ reason: can independently disagree, producing a loop variable type mismatched
+//@ reason: with what operator*() actually returns.
+//@ run: v=1 v=2 v=3
+class Item {
+public:
+    int value;
+    Item next;
+    Item(int v) {
+        value = v;
+        next = nullptr;
+    }
+};
+
+// Deliberately defined AFTER Item (needs Item's full definition for `current`) and
+// BEFORE Bag (Bag needs no knowledge of Iterator at all -- see the free functions
+// below).
+class Iterator {
+public:
+    Item current;
+    Iterator(Item start) {
+        current = start;
+    }
+    Item operator*() {
+        return current;
+    }
+    void operator++() {
+        current = current.next;
+    }
+    bool operator!=(Iterator other) {
+        return current != other.current;
+    }
+};
+
+class Bag {
+public:
+    Item head;
+    Bag() {
+        head = nullptr;
+    }
+    void push(int v) {
+        Item n = new Item(v);
+        n.next = head;
+        head = n;
+    }
+};
+
+// Free functions (not Bag members) -- found via ADL for `for (Item x : bag)`.
+Iterator begin(Bag b) {
+    return new Iterator(b.head);
+}
+
+Iterator end(Bag b) {
+    return new Iterator(nullptr);
+}
+
+int main() {
+    Bag bag = new Bag();
+    bag.push(3);
+    bag.push(2);
+    bag.push(1);
+    bool first = true;
+    for (Item x : bag) {
+        if (!first) {
+            std::cout << " ";
+        }
+        std::cout << "v=" << x.value;
+        first = false;
+    }
+    std::cout << std::endl;
+    return 0;
+}

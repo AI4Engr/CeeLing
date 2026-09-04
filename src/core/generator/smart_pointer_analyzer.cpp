@@ -6,6 +6,7 @@
 #include <cctype>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <regex>
 #include <sstream>
 
@@ -147,6 +148,14 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     classMembersByClass_.clear();
     methodReturnKinds_.clear();
     classesNeedingSharedFromThis_.clear();
+    valueTypeClasses_.clear();
+    readOnlyFreeFunctionParams_.clear();
+
+    // Independent of everything else below -- reads only the raw Program, writes
+    // only valueTypeClasses_/readOnlyFreeFunctionParams_ -- so they can run
+    // first with no ordering dependency.
+    classifyValueTypeClasses(program);
+    classifyReadOnlyFreeFunctionParams(program);
 
     firstPassCollectReferences(program);
     if (!source.empty()) {
@@ -232,6 +241,28 @@ PointerType SmartPointerAnalyzer::getPointerTypeForVariable(const std::string& v
     }
 
     return found ? resolved : PointerType::SHARED;
+}
+
+PointerType SmartPointerAnalyzer::getPointerTypeForVariableInScope(
+    const std::string& scopeName, const std::string& variableName) const {
+    const std::string prefix = normalizeScope(scopeName) + "|";
+    const std::string suffix = "." + variableName;
+    bool found = false;
+    PointerType resolved = PointerType::SHARED;
+
+    for (const auto& [key, decision] : pointerDecisions) {
+        if (key.size() < prefix.size() || key.compare(0, prefix.size(), prefix) != 0) continue;
+        if (key.size() < suffix.size() ||
+            key.compare(key.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+        if (!found) {
+            resolved = decision;
+            found = true;
+        } else if (resolved != decision) {
+            return PointerType::SHARED;
+        }
+    }
+
+    return found ? resolved : PointerType::UNIQUE;
 }
 
 std::string SmartPointerAnalyzer::buildAnalysisReport() const {
@@ -372,6 +403,100 @@ void collectReturnExpressions(const std::vector<StatementPtr>& body,
 }
 } // namespace
 
+namespace {
+// Resolves an expression reached inside a `new SameClass(<expr>)` return
+// (case (d) of inferAliasReturningMethods, below) down to the (declaredType,
+// fieldName) pair it ultimately reads, crossing class boundaries via
+// classMembersByClass_ as needed (unlike cases (a)-(c), which stay within a
+// single class's own fieldTypes map). Handles exactly the shapes this
+// pattern's own recursive walkers produce: a bare field/`this->field` (the
+// base case), or `<chain>.<method>(...)` where <method> is already known
+// alias-returning on <chain>'s resolved class (methodReturnKinds_, populated
+// for every class processed earlier in program.statements' source order --
+// safe because a handle class wrapping a payload class is always declared
+// AFTER that payload class, the same "no forward references" constraint
+// this codebase's whole design already works within). Returns nullopt for
+// any shape it cannot resolve (conservative: case (d) then fails closed,
+// same as every other case here).
+std::optional<std::pair<std::string, std::string>> resolveInnerFieldChain(
+    const Expression* expr,
+    const std::string& enclosingClass,
+    const std::map<std::string, std::map<std::string, std::string>>& classMembersByClass,
+    const std::map<std::string, PointerType>& methodReturnKinds) {
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        auto clsIt = classMembersByClass.find(enclosingClass);
+        if (clsIt == classMembersByClass.end()) return std::nullopt;
+        auto fIt = clsIt->second.find(id->name);
+        if (fIt == clsIt->second.end()) return std::nullopt;
+        return std::make_pair(fIt->second, id->name);
+    }
+    if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+        // `this->field` / `recv.field`: resolve the receiver's class first
+        // (bare identifier receiver only -- matches this whole pass's
+        // existing conservatism elsewhere), then look up `member->member`
+        // in THAT class's field map.
+        std::string receiverClass;
+        if (auto recv = dynamic_cast<const Identifier*>(member->object.get())) {
+            receiverClass = (recv->name == "this") ? enclosingClass : std::string{};
+            if (receiverClass.empty()) {
+                auto clsIt = classMembersByClass.find(enclosingClass);
+                if (clsIt != classMembersByClass.end()) {
+                    if (auto fIt = clsIt->second.find(recv->name); fIt != clsIt->second.end()) {
+                        receiverClass = fIt->second;
+                    }
+                }
+            }
+        } else if (auto innerMember = dynamic_cast<const MemberAccess*>(member->object.get())) {
+            // `a.b.c` -- resolve `a.b`'s class recursively first.
+            const auto inner = resolveInnerFieldChain(innerMember, enclosingClass, classMembersByClass,
+                                                        methodReturnKinds);
+            if (!inner.has_value()) return std::nullopt;
+            receiverClass = inner->first;
+        }
+        if (receiverClass.empty()) return std::nullopt;
+        auto clsIt = classMembersByClass.find(receiverClass);
+        if (clsIt == classMembersByClass.end()) return std::nullopt;
+        auto fIt = clsIt->second.find(member->member);
+        if (fIt == clsIt->second.end()) return std::nullopt;
+        return std::make_pair(fIt->second, member->member);
+    }
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        auto callMember = dynamic_cast<const MemberAccess*>(call->callee.get());
+        if (callMember == nullptr) return std::nullopt;
+        // Resolve the receiver chain's class, then require the called method
+        // to already be classified alias-returning ON THAT CLASS.
+        std::string receiverClass;
+        if (auto recv = dynamic_cast<const Identifier*>(callMember->object.get())) {
+            receiverClass = (recv->name == "this") ? enclosingClass : std::string{};
+            if (receiverClass.empty()) {
+                auto clsIt = classMembersByClass.find(enclosingClass);
+                if (clsIt != classMembersByClass.end()) {
+                    if (auto fIt = clsIt->second.find(recv->name); fIt != clsIt->second.end()) {
+                        receiverClass = fIt->second;
+                    }
+                }
+            }
+        } else {
+            const auto inner = resolveInnerFieldChain(callMember->object.get(), enclosingClass,
+                                                        classMembersByClass, methodReturnKinds);
+            if (!inner.has_value()) return std::nullopt;
+            receiverClass = inner->first;
+        }
+        if (receiverClass.empty()) return std::nullopt;
+        const std::string key = makeMemberKey(receiverClass, callMember->member);
+        auto kindIt = methodReturnKinds.find(key);
+        if (kindIt == methodReturnKinds.end() || kindIt->second != PointerType::SHARED) return std::nullopt;
+        // The call resolves to an alias of the RECEIVER's own class chain --
+        // the field ultimately being aliased is the receiver's OWN resolved
+        // field, so recurse into the receiver itself (same class, no field
+        // name to add beyond what the receiver already names).
+        return resolveInnerFieldChain(callMember->object.get(), enclosingClass, classMembersByClass,
+                                       methodReturnKinds);
+    }
+    return std::nullopt;
+}
+} // namespace
+
 void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
     // A method M is ALIAS_RETURNING (return type shared_ptr<T>, inferred, no
     // annotation -- CLAUDE.md's "ownership is inferred, not annotated" applies
@@ -412,6 +537,13 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
         std::set<std::string> aliasReturning;     // method names decided ALIAS_RETURNING this round
         std::set<std::string> notAliasReturning;  // method names decided NOT this round
         std::set<std::string> fieldsNeedingShared;
+        // Case (d)'s fields, resolved with their OWN (possibly different-class)
+        // declared type already attached -- see resolveInnerFieldChain. Kept
+        // separate from fieldsNeedingShared (whose entries are bare names
+        // resolved against THIS class's fieldTypes map at the write site
+        // below) since case (d)'s fields may belong to an entirely different
+        // class (NodeData, not Node).
+        std::vector<std::pair<std::string, std::string>> fieldsNeedingSharedTyped;
 
         bool progressed = true;
         while (progressed) {
@@ -506,7 +638,41 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                         allResolved = false;
                         break;
                     }
-                    // `new T(...)` or any other expression shape -> not alias-returning.
+                    // case (d): `return new T(<inner>);` where T is the method's
+                    // OWN class (a HANDLE constructor wrapping an existing payload,
+                    // e.g. `Node::operator[]`'s `return new Node(data.child...);`
+                    // -- the RB18 handle/payload split's shape: a method on the
+                    // HANDLE class (Node) returns a FRESH handle wrapping a field
+                    // reached through a DIFFERENT class's field chain (NodeData's
+                    // `child`/`next`, via Node's own `data` field), not a field of
+                    // its own class the way cases (a)-(c) assume. `<inner>` is
+                    // resolved the SAME way a return value is (bare identifier /
+                    // `x.field` chain / a call to an already-alias-returning
+                    // method), but walks classMembersByClass_ across WHATEVER
+                    // class each step's field actually belongs to (not just this
+                    // method's own class), since the chain crosses the Node/
+                    // NodeData boundary. Whatever field the chain terminates in is
+                    // recorded in fieldsNeedingShared keyed by ITS OWN declared
+                    // type (resolveInnerFieldChain returns (fieldType, fieldName)
+                    // directly, unlike fieldsThisMethod's bare names which rely on
+                    // the current method's fieldTypes map) -- this is exactly what
+                    // makeMemberKey needs, and mirrors the existing invariant that
+                    // this map is keyed by "field's own type", not "containing
+                    // class" (see the real bug this same invariant fixed, in the
+                    // comment below at the explicitHints write site).
+                    if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
+                        if (neww->className == cls->name && neww->arguments.size() == 1) {
+                            const auto resolved = resolveInnerFieldChain(
+                                neww->arguments[0].get(), cls->name, classMembersByClass_, methodReturnKinds_);
+                            if (resolved.has_value()) {
+                                fieldsNeedingSharedTyped.push_back(*resolved);
+                                continue;
+                            }
+                        }
+                        allResolved = false;
+                        break;
+                    }
+                    // any other expression shape -> not alias-returning.
                     allResolved = false;
                     break;
                 }
@@ -577,6 +743,13 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
         // spurious "hint didn't match" diagnostic.
         for (const auto& fieldName : fieldsNeedingShared) {
             explicitHints[makeMemberKey(fieldTypes[fieldName], fieldName)] = PointerType::SHARED;
+        }
+        // Case (d)'s fields already carry their own (declaredType, fieldName)
+        // pair (possibly a DIFFERENT class than cls->name -- see
+        // resolveInnerFieldChain), so write directly rather than looking the
+        // type up in this class's own fieldTypes map.
+        for (const auto& [fieldType, fieldName] : fieldsNeedingSharedTyped) {
+            explicitHints[makeMemberKey(fieldType, fieldName)] = PointerType::SHARED;
         }
         for (const auto& name : aliasReturning) {
             const bool anyReturnsThis = [&] {
@@ -716,10 +889,18 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
             std::vector<const Expression*> returns;
             collectReturnExpressions(method->body, returns);
             bool anyLocalIsShared = false;
+            // Scoped lookup ("Class::method") -- getPointerTypeForVariable's
+            // plain name-only match would wrongly collide with a same-named
+            // local in a COMPLETELY UNRELATED method/function elsewhere in the
+            // program (confirmed via a real bug: two free functions each with
+            // their own local named `copy` cross-contaminated each other's
+            // classification -- see getPointerTypeForVariableInScope's own
+            // comment).
+            const std::string methodScope = cls->name + "::" + method->name;
             for (const Expression* expr : returns) {
                 auto id = dynamic_cast<const Identifier*>(expr);
                 if (id == nullptr || id->name == "this") continue;
-                if (getPointerTypeForVariable(id->name) == PointerType::SHARED) {
+                if (getPointerTypeForVariableInScope(methodScope, id->name) == PointerType::SHARED) {
                     anyLocalIsShared = true;
                     break;
                 }
@@ -753,23 +934,43 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
         std::vector<const Expression*> returns;
         collectReturnExpressions(fn->body, returns);
         bool anyLocalIsShared = false;
+        // Scoped lookup (bare fn->name, matching registerParameters'
+        // scopeName for a free function) -- see the class-method loop above
+        // for why this must not be the plain name-only getPointerTypeForVariable
+        // (a real cross-function name collision, confirmed via yaml-cling's
+        // Clone/cloneChain both having their own local named `copy`).
         for (const Expression* expr : returns) {
             auto id = dynamic_cast<const Identifier*>(expr);
             if (id == nullptr) continue;
-            if (getPointerTypeForVariable(id->name) == PointerType::SHARED) {
+            if (getPointerTypeForVariableInScope(fn->name, id->name) == PointerType::SHARED) {
                 anyLocalIsShared = true;
                 break;
             }
         }
         if (anyLocalIsShared) {
-            // Keyed under the BARE name only ("" class + fn->name), matching
-            // exactly how AstEmitter::emitFunction queries it -- the emission
-            // call site (emitTopLevel) always passes fn->name verbatim, never
-            // a namespace-qualified spelling, for ownerClass="" free
+            // Keyed under the BARE name ("" class + fn->name), matching
+            // exactly how AstEmitter::buildFunctionSignature queries it on the
+            // DEFINITION side -- emitTopLevel always passes fn->name verbatim,
+            // never a namespace-qualified spelling, for ownerClass="" free
             // functions (unlike class methods, which route through
             // emitClass's namespace re-wrapping instead of the name itself
-            // carrying the qualifier). No dual-registration needed here.
+            // carrying the qualifier).
+            //
+            // ALSO dual-registered under the QUALIFIED name -- a real, confirmed
+            // gap found via yaml-cling's `YAML::Clone`: the CALLER-side query
+            // (AstEmitter::isSharedReturningCall, deciding a fresh local's OWN
+            // declared type from a call's RHS, e.g. `Node copy =
+            // YAML::Clone(root);`) uses call->function_name VERBATIM, which is
+            // the qualified spelling from outside the namespace -- exactly the
+            // same bug class inferAliasReturningFreeFunctions's own dual-
+            // registration comment already documents for YAML::Load, this
+            // pass just hadn't needed it until a function returning a locally-
+            // shared variable (rather than a call result) was namespaced too.
             methodReturnKinds_[key] = PointerType::SHARED;
+            if (!fn->namespaceName.empty()) {
+                methodReturnKinds_[makeMemberKey("", fn->namespaceName + "::" + fn->name)] =
+                    PointerType::SHARED;
+            }
         }
     }
 }
@@ -865,6 +1066,17 @@ CalleeParams collectCalleeParams(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             out.freeFunctions[fn->name] = fn->parameters;
+            // Dual-register under the QUALIFIED name too ("YAML::Clone") -- a
+            // call site OUTSIDE the namespace spells it qualified
+            // (FunctionCall::function_name is captured verbatim from source
+            // text, see ASTBuilder::buildFunctionCall), so a lookup keyed only
+            // by the bare name misses every external caller. Same bug class
+            // (and same fix shape) as AstEmitter::collectClassNames's
+            // functionParams_/functionReturnType_ dual-registration for
+            // YAML::Load.
+            if (!fn->namespaceName.empty()) {
+                out.freeFunctions[fn->namespaceName + "::" + fn->name] = fn->parameters;
+            }
         } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
             for (const auto& member : cls->members) {
                 if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
@@ -881,6 +1093,119 @@ CalleeParams collectCalleeParams(const Program& program) {
 
 void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
     const CalleeParams calleeParams = collectCalleeParams(program);
+
+    // A free function literally named `begin`/`end` taking a single
+    // class-typed parameter exists, BY CONSTRUCTION, to support ADL-found
+    // range-for from OTHER .clg files (Step 27's mechanism -- ordinary
+    // member begin()/end() can't be used when the iterator and the
+    // container have a circular type dependency CeeLing cannot express).
+    // The pre-existing forcing further down only fires when a `for`
+    // statement iterating this exact class appears in the SAME transpile
+    // unit as begin/end's own definition -- but CeeLing compiles each .clg
+    // file independently (real separate compilation, not a text merge), so
+    // `yaml_node.clg`'s own standalone transpile (defining begin/end) never
+    // sees ANY for-loop; the for-loop lives in a driver .clg that only
+    // #includes yaml_node.clh, transpiled as a SEPARATE unit that cannot
+    // retroactively change yaml_node.h's already-emitted signature.
+    // Confirmed as a real, reproducible cross-file gap (not new to RB18,
+    // though RB18's changes newly exposed it): forced here UNCONDITIONALLY,
+    // not merely when local usage evidence happens to agree, since a
+    // function named begin/end taking one class parameter has no other
+    // legitimate purpose in this codebase.
+    for (const char* fnName : {"begin", "end"}) {
+        const auto paramsIt = calleeParams.freeFunctions.find(fnName);
+        if (paramsIt == calleeParams.freeFunctions.end() || paramsIt->second.size() != 1) continue;
+        const auto& [paramType, paramName] = paramsIt->second[0];
+        if (classNames.find(paramType) == classNames.end()) continue;
+        const std::string paramKey = buildKey(fnName, paramType, paramName);
+        pointerDecisions[paramKey] = PointerType::SHARED;
+        pointerReasons[paramKey] =
+            "begin()/end() parameter for ADL range-for support (by-value, must accept a shared_ptr caller "
+            "argument from any .clg file, not just one with a for-loop in the same transpile unit)";
+    }
+
+    // A class method literally named `operator==`/`operator!=` whose single
+    // parameter is the class itself exists to support comparison call sites
+    // ANYWHERE that class is compared (AstEmitter routes `a == b` through it
+    // whenever both operands are that class -- see the BinaryExpression
+    // handling in ast_emitter.cpp's emitExpression). Forced unconditionally,
+    // same reasoning as begin/end above: a caller
+    // comparing two `Node`-typed locals ALWAYS passes a shared_ptr argument
+    // (every Node local defaults to shared_ptr unless something ELSE forces
+    // unique), so the comparison operator's own parameter must accept
+    // shared_ptr regardless of whether local usage evidence WITHIN the
+    // declaring class's own file happens to agree -- confirmed as a real
+    // compile failure via Iterator::operator!=(Iterator other)'s own body
+    // (`current != other.current`, both Node-typed shared_ptr fields),
+    // which never independently forces Node::operator!='s parameter shared.
+    for (const auto& stmt : program.statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr) continue;
+        for (const auto& member : cls->members) {
+            auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+            if (method == nullptr) continue;
+            if (method->name != "operator==" && method->name != "operator!=") continue;
+            if (method->parameters.size() != 1 || method->parameters[0].first != cls->name) continue;
+            const std::string methodScope = cls->name + "::" + method->name;
+            const std::string paramKey =
+                buildKey(methodScope, method->parameters[0].first, method->parameters[0].second);
+            pointerDecisions[paramKey] = PointerType::SHARED;
+            pointerReasons[paramKey] =
+                "operator==/!= comparison parameter (must accept a shared_ptr caller argument from any "
+                "comparison call site, not just one with matching local usage evidence in this file)";
+        }
+    }
+
+    // Same cross-file gap, for every free function parameter already
+    // classified read-only (classifyReadOnlyFreeFunctionParams, Step 29):
+    // the ordinary per-call-site forcing further down (`isReadOnlyFreeFunctionParam`
+    // branch) only fires for a call site actually present in THIS transpile
+    // unit -- a read-only function like `Clone(const Node&)` defined in
+    // yaml_node.clg but only ever CALLED from a separate driver .clg never
+    // gets its own parameter forced shared when yaml_node.clg is transpiled
+    // standalone (confirmed via probe: `Clone`'s parameter stayed
+    // unique_ptr in yaml_node.h, so a caller's shared_ptr argument from
+    // another file failed to bind). A read-only classification is a
+    // property of the FUNCTION's OWN body, independent of any particular
+    // call site, so it can and should be forced unconditionally here too.
+    for (const auto& stmt : program.statements) {
+        auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get());
+        if (fn == nullptr) continue;
+        for (const auto& [paramType, paramName] : fn->parameters) {
+            if (classNames.find(paramType) == classNames.end()) continue;
+            if (!isReadOnlyFreeFunctionParam(fn->name, paramName)) continue;
+            const std::string paramKey = buildKey(fn->name, paramType, paramName);
+            pointerDecisions[paramKey] = PointerType::SHARED;
+            pointerReasons[paramKey] =
+                "read-only free-function parameter (forced regardless of call sites in this transpile unit -- "
+                "a caller in ANY .clg file needs a shared_ptr to bind to)";
+        }
+    }
+
+    // "ClassName" -> the parameter name of that class's HANDLE-REBIND
+    // `operator=(SameClass other)` overload, if declared. Built separately
+    // from calleeParams.methods (keyed "Class::operator=", collapsed to ONE
+    // entry per class) because a class declaring BOTH `operator=(string)`
+    // and `operator=(SameClass)` (RB18's yaml-cling Node does exactly this)
+    // has two arity-1 overloads that silently overwrite each other under
+    // that collapsed key -- confirmed via probe: whichever overload is
+    // declared LAST in source order wins, so `calleeParams.methods.find(
+    // "Node::operator=")` could resolve to the STRING overload's params
+    // instead of the Node one, silently defeating the forcing below. Mirrors
+    // AstEmitter::operatorAssignParamTypes_'s identical fix for the same
+    // root cause on the emitter side.
+    std::map<std::string, std::string> handleRebindAssignParamName;
+    for (const auto& stmt : program.statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr) continue;
+        for (const auto& member : cls->members) {
+            auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+            if (method == nullptr || method->name != "operator=" || method->parameters.size() != 1) continue;
+            if (method->parameters[0].first == cls->name) {
+                handleRebindAssignParamName[cls->name] = method->parameters[0].second;
+            }
+        }
+    }
 
     // Resolve a call/constructor expression's target parameter list, then promote
     // every argument bound to an already-SHARED parameter to SHARED itself --
@@ -937,6 +1262,53 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
                 const auto paramsIt = calleeParams.freeFunctions.find(call->function_name);
                 if (paramsIt != calleeParams.freeFunctions.end()) {
                     promoteArgsAgainstParams(call->arguments, paramsIt->second);
+
+                    // A parameter classified read-only (classifyReadOnlyFreeFunctionParams
+                    // -- see isReadOnlyFreeFunctionParam) must be able to receive the
+                    // caller's argument WITHOUT consuming it (yaml-cpp API-compatibility:
+                    // a `const Node&`-shaped function like Clone must not move its
+                    // argument). Both the callee's OWN parameter and the caller's
+                    // argument are forced SHARED here -- unconditionally, not merely
+                    // "if already shared" -- for the exact same reason Step 27's ADL
+                    // begin()/end() forcing needed both sides forced: the parameter and
+                    // the argument must be the SAME C++ type for the call to compile at
+                    // all (a shared_ptr argument cannot bind to a unique_ptr parameter),
+                    // and a fresh local's own default (unique) has no reason to already
+                    // agree with a parameter's default (shared) by coincidence.
+                    // buildKey needs the callee's BARE name (matching how
+                    // registerParameters/analyzeStatement scope a function
+                    // DEFINITION's own parameters -- always funcDecl->name,
+                    // never qualified, even for a namespaced function) --
+                    // call->function_name may be qualified ("YAML::Clone") when
+                    // called from outside the namespace, so strip it the same
+                    // way Step 27's ADL-forcing code strips a qualified class
+                    // name for the same reason.
+                    const size_t fnSepPos = call->function_name.rfind("::");
+                    const std::string calleeBareName = fnSepPos == std::string::npos
+                        ? call->function_name : call->function_name.substr(fnSepPos + 2);
+                    for (size_t i = 0; i < call->arguments.size() && i < paramsIt->second.size(); ++i) {
+                        const auto& [paramType, paramName] = paramsIt->second[i];
+                        if (!isReadOnlyFreeFunctionParam(call->function_name, paramName)) continue;
+
+                        const std::string paramKey = buildKey(calleeBareName, paramType, paramName);
+                        pointerDecisions[paramKey] = PointerType::SHARED;
+                        pointerReasons[paramKey] =
+                            "read-only free-function parameter (yaml-cpp API-compatibility: "
+                            "must not consume the caller's argument, e.g. Clone(const Node&))";
+
+                        auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
+                        if (argId == nullptr) continue;
+                        const auto argTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, argId->name));
+                        if (argTypeIt == symbolTypesByScope.end()) continue;
+                        for (auto& [key, ref] : variableReferences) {
+                            if (ref.className == argTypeIt->second && ref.variableName == argId->name) {
+                                pointerDecisions[key] = PointerType::SHARED;
+                                pointerReasons[key] =
+                                    "passed to a read-only free-function parameter (must survive the call)";
+                                ref.reason = pointerReasons[key];
+                            }
+                        }
+                    }
                 }
             }
         } else if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
@@ -948,6 +1320,97 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
         } else if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
             visitExpr(bin->left.get());
             visitExpr(bin->right.get());
+            // `out << x` (stream chain) resolves to a user-defined free
+            // `operator<<(ostream, T)` via ORDINARY C++ operator overload
+            // resolution -- this is NOT a FunctionCall AST node at all (the
+            // grammar/AST model `<<` uniformly as a BinaryExpression, the same
+            // node std::cout << x already used before any user operator<<
+            // existed), so the free-function call-site forcing above never
+            // sees it. Without this, a class-typed right operand streamed via
+            // `<<` into a read-only `operator<<` parameter fails to compile
+            // the exact same way an ordinary call would without Step 29's
+            // forcing (confirmed via probe: std::unique_ptr's deleted copy
+            // constructor rejects the implicit by-value binding). Only the
+            // RIGHT operand can ever be the class-typed value being streamed
+            // (the left is always the stream itself); a bare Identifier is
+            // required here (mirrors promoteArgsAgainstParams's own
+            // resolution granularity).
+            if (bin->operator_str == "<<") {
+                const auto opParamsIt = calleeParams.freeFunctions.find("operator<<");
+                if (opParamsIt != calleeParams.freeFunctions.end() && opParamsIt->second.size() == 2) {
+                    const auto& [paramType, paramName] = opParamsIt->second[1];
+                    if (classNames.find(paramType) != classNames.end() &&
+                        isReadOnlyFreeFunctionParam("operator<<", paramName)) {
+                        if (auto rhsId = dynamic_cast<const Identifier*>(bin->right.get())) {
+                            const auto rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, rhsId->name));
+                            // Strip a qualified rhs type ("YAML::Node", as a
+                            // driver OUTSIDE the namespace spells it) down to
+                            // its simple name before comparing against
+                            // operator<<'s own bare paramType ("Node", as
+                            // declared inside the namespace) -- the same
+                            // qualified-vs-bare mismatch class found and fixed
+                            // repeatedly this session (Step 27's ADL forcing,
+                            // Step 29's Clone forcing).
+                            std::string rhsSimpleType;
+                            if (rhsTypeIt != symbolTypesByScope.end()) {
+                                const size_t sepPos = rhsTypeIt->second.rfind("::");
+                                rhsSimpleType = sepPos == std::string::npos
+                                    ? rhsTypeIt->second : rhsTypeIt->second.substr(sepPos + 2);
+                            }
+                            if (rhsTypeIt != symbolTypesByScope.end() && rhsSimpleType == paramType) {
+                                const std::string paramKey = buildKey("operator<<", paramType, paramName);
+                                pointerDecisions[paramKey] = PointerType::SHARED;
+                                pointerReasons[paramKey] =
+                                    "read-only operator<< parameter (must not consume the streamed value)";
+                                for (auto& [key, ref] : variableReferences) {
+                                    if (ref.className == rhsTypeIt->second && ref.variableName == rhsId->name) {
+                                        pointerDecisions[key] = PointerType::SHARED;
+                                        pointerReasons[key] = "streamed via operator<< (must survive the call)";
+                                        ref.reason = pointerReasons[key];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // `a == b`/`a != b` where both operands are the same class and
+            // that class declares its own operator==/!=: AstEmitter routes
+            // this through `a->operator==(b)` (see emitExpression's
+            // BinaryExpression handling) -- again NOT a FunctionCall AST
+            // node, so invisible to the ordinary call-site forcing above.
+            // The method's OWN parameter is already forced SHARED
+            // unconditionally (see the begin/end-style forcing near the top
+            // of this function), but the CALLER's argument (the right
+            // operand) still needs forcing too, or a caller whose local
+            // independently defaulted to UNIQUE (ordinary usage-based
+            // inference, e.g. a single-owner `Node other = new Node(...);`
+            // never shared elsewhere) fails to bind -- confirmed via a real
+            // compile error: `root->operator==(other)` needs a shared_ptr
+            // argument, `other` defaulted to unique_ptr.
+            if ((bin->operator_str == "==" || bin->operator_str == "!=")) {
+                if (auto rhsId = dynamic_cast<const Identifier*>(bin->right.get())) {
+                    const auto rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, rhsId->name));
+                    if (rhsTypeIt != symbolTypesByScope.end() && classNames.count(rhsTypeIt->second) > 0) {
+                        const size_t sepPos = rhsTypeIt->second.rfind("::");
+                        const std::string rhsSimpleType =
+                            sepPos == std::string::npos ? rhsTypeIt->second : rhsTypeIt->second.substr(sepPos + 2);
+                        const std::string methodName = "operator" + bin->operator_str;
+                        const auto opParamsIt = calleeParams.methods.find(rhsSimpleType + "::" + methodName);
+                        if (opParamsIt != calleeParams.methods.end() && opParamsIt->second.size() == 1 &&
+                            opParamsIt->second[0].first == rhsSimpleType) {
+                            for (auto& [key, ref] : variableReferences) {
+                                if (ref.className == rhsTypeIt->second && ref.variableName == rhsId->name) {
+                                    pointerDecisions[key] = PointerType::SHARED;
+                                    pointerReasons[key] = "passed as the right operand of a class-typed ==/!= "
+                                                           "comparison (must bind to the shared_ptr parameter)";
+                                    ref.reason = pointerReasons[key];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } else if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
             visitExpr(un->operand.get());
         } else if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
@@ -966,6 +1429,16 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
             visitExpr(decl->expression.get());
         } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
             visitExpr(assign->expression.get());
+            // Same-class `n = otherNode;` handle-rebind forcing lives in the
+            // separate forceHandleRebindAssignments walk below (needs class/
+            // method SCOPE context -- whether `n` is a read-only PARAMETER,
+            // not just any same-class local -- that this generic visitStmt
+            // does not track; see that walk's own header comment for why the
+            // gate is required: an ORDINARY loop-advancement local like
+            // yaml_emitter.clg's `cur = cur.nextSibling();` has the exact
+            // same AST shape but needs the OPPOSITE treatment, a plain
+            // repoint, not a forced-shared handle-rebind -- confirmed via a
+            // real segfault before this gate was added).
         } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
             visitExpr(ret->expression.get());
         } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
@@ -977,6 +1450,70 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
             for (const auto& inner : whiles->body) visitStmt(inner.get());
         } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
             visitExpr(fors->container.get());
+            // Range-for over a class-typed container relying on ADL-found free
+            // functions (no MEMBER begin() -- see AstEmitter's matching
+            // hasMemberBegin check) implicitly calls `begin(container)` AND
+            // `end(container)` in the generated C++ -- pure C++-compiler
+            // desugaring, invisible to the ordinary promoteArgsAgainstParams walk
+            // below (which only visits REAL call/constructor expressions in the
+            // AST). Both the container variable and BOTH free functions'
+            // parameters are forced to SHARED here, UNCONDITIONALLY (not merely
+            // matched to whatever the independent usage-based inference already
+            // decided) -- confirmed via direct probe that unique_ptr cannot work
+            // for this pattern AT ALL, regardless of matching: CeeLing has no
+            // reference-parameter syntax, so `begin`/`end` always take the
+            // container BY VALUE, and range-for needs the container passed to
+            // BOTH calls -- but unique_ptr's copy constructor is deleted, so
+            // passing a unique_ptr-backed container into two separate by-value
+            // parameters can never compile no matter what kind either side
+            // independently infers. shared_ptr's cheap, safe copy (refcount
+            // bump) is the only kind that can satisfy "passed by value twice".
+            // Mirrors promoteArgsAgainstParams's own bare-identifier-only
+            // resolution (this pass's established conservatism).
+            if (auto containerId = dynamic_cast<const Identifier*>(fors->container.get())) {
+                const auto classIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, containerId->name));
+                if (classIt != symbolTypesByScope.end()) {
+                    const std::string& containerClass = classIt->second;
+                    // The container variable's declared type may be qualified
+                    // ("YAML::Node", as the source wrote it) while a free
+                    // function's parameter declared INSIDE that namespace is
+                    // bare ("Node") -- strip to the simple name for comparison
+                    // (the same qualified-vs-bare mismatch class found and fixed
+                    // elsewhere this session for namespaced types).
+                    const size_t sepPos = containerClass.rfind("::");
+                    const std::string containerSimpleClass =
+                        sepPos == std::string::npos ? containerClass : containerClass.substr(sepPos + 2);
+                    const bool hasMemberBegin =
+                        calleeParams.methods.find(containerClass + "::begin") != calleeParams.methods.end() ||
+                        calleeParams.methods.find(containerSimpleClass + "::begin") != calleeParams.methods.end();
+                    if (!hasMemberBegin && classNames.find(containerClass) != classNames.end()) {
+                        const bool hasFreeBegin = calleeParams.freeFunctions.count("begin") > 0;
+                        const bool hasFreeEnd = calleeParams.freeFunctions.count("end") > 0;
+                        if (hasFreeBegin && hasFreeEnd) {
+                            // Force the container variable itself.
+                            for (auto& [key, ref] : variableReferences) {
+                                if (ref.className == containerClass && ref.variableName == containerId->name) {
+                                    pointerDecisions[key] = PointerType::SHARED;
+                                    pointerReasons[key] =
+                                        "used as a range-for container whose iteration relies on ADL-found free begin()/end() (by-value parameters, unique_ptr cannot work)";
+                                    ref.reason = pointerReasons[key];
+                                }
+                            }
+                            // Force `begin`'s and `end`'s own first parameter.
+                            for (const char* fnName : {"begin", "end"}) {
+                                const auto& params = calleeParams.freeFunctions.at(fnName);
+                                if (params.empty()) continue;
+                                const auto& [paramType, paramName] = params[0];
+                                if (paramType != containerClass && paramType != containerSimpleClass) continue;
+                                const std::string paramKey = buildKey(fnName, paramType, paramName);
+                                pointerDecisions[paramKey] = PointerType::SHARED;
+                                pointerReasons[paramKey] =
+                                    "range-for container parameter for ADL-found free begin()/end() (by-value, unique_ptr cannot work)";
+                            }
+                        }
+                    }
+                }
+            }
             for (const auto& inner : fors->body) visitStmt(inner.get());
         } else if (auto tryStmt = dynamic_cast<const TryStatement*>(stmt)) {
             for (const auto& inner : tryStmt->body) visitStmt(inner.get());
@@ -1001,6 +1538,624 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
             }
         }
     }
+
+    // A second, separate walk specifically for IMPLICIT-THIS calls to a
+    // read-only-classified SIBLING METHOD (`parseBlockMapInto(target, ...)`
+    // inside another Parser method -- call->callee is null, same AST shape as
+    // a free-function call, so the walk above's "Plain call f(args)" branch
+    // never matches it: calleeParams.freeFunctions has no entry for a method,
+    // which is only ever registered under "Class::method"). Kept as an
+    // independent pass (not folded into visitExpr/visitStmt above) rather than
+    // threading a `currentClass` parameter through that entire, already-large
+    // recursive walker -- this only needs to look at DIRECT calls in a
+    // method's own body, not descend into nested lambdas/closures (CeeLing
+    // has none), so a fresh, method-scoped recursive walk is simpler than
+    // retrofitting class-context onto every existing branch. Mirrors the
+    // free-function forcing above exactly, just keyed by (class, method).
+    std::function<void(const Expression*, const std::string&, const std::string&)> forceReadOnlyMethodArg =
+        [&](const Expression* expr, const std::string& currentClass, const std::string& currentMethod) {
+            if (expr == nullptr) return;
+            if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+                for (const auto& arg : call->arguments) forceReadOnlyMethodArg(arg.get(), currentClass, currentMethod);
+                if (!call->callee) {
+                    const auto paramsIt = calleeParams.methods.find(currentClass + "::" + call->function_name);
+                    if (paramsIt != calleeParams.methods.end()) {
+                        for (size_t i = 0; i < call->arguments.size() && i < paramsIt->second.size(); ++i) {
+                            const auto& [paramType, paramName] = paramsIt->second[i];
+                            if (!isReadOnlyMethodParam(currentClass, call->function_name, paramName)) continue;
+
+                            const std::string paramKey =
+                                buildKey(currentClass + "::" + call->function_name, paramType, paramName);
+                            pointerDecisions[paramKey] = PointerType::SHARED;
+                            pointerReasons[paramKey] =
+                                "read-only method parameter (mutated in place across a same-class call chain, "
+                                "e.g. Parser::parseValueInto's `target` -- must not consume the caller's argument)";
+
+                            auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
+                            if (argId == nullptr) continue;
+                            const auto argTypeIt = symbolTypesByScope.find(makeSymbolKey(currentMethod, argId->name));
+                            const auto argTypeItGlobal =
+                                symbolTypesByScope.find(makeSymbolKey(kGlobalScope, argId->name));
+                            const std::string argType = argTypeIt != symbolTypesByScope.end() ? argTypeIt->second
+                                : (argTypeItGlobal != symbolTypesByScope.end() ? argTypeItGlobal->second : "");
+                            if (argType.empty()) continue;
+                            for (auto& [key, ref] : variableReferences) {
+                                if (ref.className == argType && ref.variableName == argId->name) {
+                                    pointerDecisions[key] = PointerType::SHARED;
+                                    pointerReasons[key] =
+                                        "passed to a read-only method parameter (must survive the call)";
+                                    ref.reason = pointerReasons[key];
+                                }
+                            }
+                        }
+                    }
+                }
+                if (call->callee) forceReadOnlyMethodArg(call->callee.get(), currentClass, currentMethod);
+                return;
+            }
+            if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+                forceReadOnlyMethodArg(bin->left.get(), currentClass, currentMethod);
+                forceReadOnlyMethodArg(bin->right.get(), currentClass, currentMethod);
+            } else if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+                forceReadOnlyMethodArg(un->operand.get(), currentClass, currentMethod);
+            } else if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+                forceReadOnlyMethodArg(member->object.get(), currentClass, currentMethod);
+            } else if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+                forceReadOnlyMethodArg(sub->object.get(), currentClass, currentMethod);
+                forceReadOnlyMethodArg(sub->index.get(), currentClass, currentMethod);
+            }
+        };
+    std::function<void(const std::vector<StatementPtr>&, const std::string&, const std::string&)>
+        forceReadOnlyMethodArgsInBody = [&](const std::vector<StatementPtr>& body, const std::string& currentClass,
+                                             const std::string& currentMethod) {
+            for (const auto& stmtPtr : body) {
+                const Statement* stmt = stmtPtr.get();
+                if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+                    forceReadOnlyMethodArg(exprStmt->expression.get(), currentClass, currentMethod);
+                } else if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+                    forceReadOnlyMethodArg(decl->expression.get(), currentClass, currentMethod);
+                } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+                    forceReadOnlyMethodArg(assign->expression.get(), currentClass, currentMethod);
+                } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+                    forceReadOnlyMethodArg(ret->expression.get(), currentClass, currentMethod);
+                } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
+                    forceReadOnlyMethodArg(ifs->condition.get(), currentClass, currentMethod);
+                    forceReadOnlyMethodArgsInBody(ifs->body, currentClass, currentMethod);
+                    forceReadOnlyMethodArgsInBody(ifs->elseBody, currentClass, currentMethod);
+                } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+                    forceReadOnlyMethodArg(whiles->condition.get(), currentClass, currentMethod);
+                    forceReadOnlyMethodArgsInBody(whiles->body, currentClass, currentMethod);
+                } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+                    forceReadOnlyMethodArgsInBody(fors->body, currentClass, currentMethod);
+                } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
+                    forceReadOnlyMethodArgsInBody(trys->body, currentClass, currentMethod);
+                    forceReadOnlyMethodArgsInBody(trys->catchBody, currentClass, currentMethod);
+                }
+            }
+        };
+    for (const auto& stmt : program.statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr) continue;
+        for (const auto& member : cls->members) {
+            auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+            if (method == nullptr) continue;
+            forceReadOnlyMethodArgsInBody(method->body, cls->name, cls->name + "::" + method->name);
+        }
+    }
+
+    // `n = otherNode;` handle-rebind forcing (see AstEmitter's matching
+    // AssignmentStatement gate for the full rationale): the emitter only
+    // routes a same-class assignment through the user's `operator=` when the
+    // LHS is a PARAMETER already classified read-only (isReadOnlyMethodParam/
+    // isReadOnlyFreeFunctionParam) -- an ordinary local (e.g. yaml_emitter.
+    // clg's `cur = cur.nextSibling();`, a plain loop-advancement repoint) must
+    // NOT be forced shared here, or the SAME segfault that gate was added to
+    // fix reappears (this pass forcing sharedness independently of what the
+    // emitter will actually route through operator=). Scoped per (class,
+    // method) so `isReadOnlyMethodParam`/`isReadOnlyFreeFunctionParam` can be
+    // queried correctly -- mirrors forceReadOnlyMethodArgsInBody's own
+    // class/method-scoped walk immediately above, kept as a separate pass
+    // since it triggers on AssignmentStatement, not FunctionCall.
+    std::function<void(const std::vector<StatementPtr>&, const std::string&, const std::string&)>
+        forceHandleRebindAssignmentsInBody = [&](const std::vector<StatementPtr>& body,
+                                                  const std::string& currentClass,
+                                                  const std::string& currentFunctionName) {
+            for (const auto& stmtPtr : body) {
+                const Statement* stmt = stmtPtr.get();
+                if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+                    auto rhsId = dynamic_cast<const Identifier*>(assign->expression.get());
+                    if (rhsId == nullptr) continue;
+                    const auto lhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, assign->variable));
+                    const auto rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, rhsId->name));
+                    if (lhsTypeIt == symbolTypesByScope.end() || rhsTypeIt == symbolTypesByScope.end() ||
+                        lhsTypeIt->second != rhsTypeIt->second ||
+                        classNames.find(lhsTypeIt->second) == classNames.end()) {
+                        continue;
+                    }
+                    const auto paramNameIt = handleRebindAssignParamName.find(lhsTypeIt->second);
+                    if (paramNameIt == handleRebindAssignParamName.end()) continue;
+                    const bool lhsIsReadOnlyParam =
+                        (!currentClass.empty() &&
+                         isReadOnlyMethodParam(currentClass, currentFunctionName, assign->variable)) ||
+                        (currentClass.empty() && isReadOnlyFreeFunctionParam(currentFunctionName, assign->variable));
+                    if (!lhsIsReadOnlyParam) continue;
+
+                    const std::string methodScope = lhsTypeIt->second + "::operator=";
+                    const std::string paramKey = buildKey(methodScope, lhsTypeIt->second, paramNameIt->second);
+                    pointerDecisions[paramKey] = PointerType::SHARED;
+                    pointerReasons[paramKey] =
+                        "operator=(Node) handle-rebind parameter (must alias, not consume, the RHS)";
+                    for (auto& [key, ref] : variableReferences) {
+                        if (ref.className == rhsTypeIt->second && ref.variableName == rhsId->name) {
+                            pointerDecisions[key] = PointerType::SHARED;
+                            pointerReasons[key] = "passed to operator=(Node)'s handle-rebind parameter";
+                            ref.reason = pointerReasons[key];
+                        }
+                    }
+                } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
+                    forceHandleRebindAssignmentsInBody(ifs->body, currentClass, currentFunctionName);
+                    forceHandleRebindAssignmentsInBody(ifs->elseBody, currentClass, currentFunctionName);
+                } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+                    forceHandleRebindAssignmentsInBody(whiles->body, currentClass, currentFunctionName);
+                } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+                    forceHandleRebindAssignmentsInBody(fors->body, currentClass, currentFunctionName);
+                } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
+                    forceHandleRebindAssignmentsInBody(trys->body, currentClass, currentFunctionName);
+                    forceHandleRebindAssignmentsInBody(trys->catchBody, currentClass, currentFunctionName);
+                }
+            }
+        };
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            forceHandleRebindAssignmentsInBody(fn->body, "", fn->name);
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+                if (method == nullptr) continue;
+                forceHandleRebindAssignmentsInBody(method->body, cls->name, method->name);
+            }
+        }
+    }
+}
+
+void SmartPointerAnalyzer::classifyValueTypeClasses(const Program& program) {
+    for (const auto& stmt : program.statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (!cls) continue;
+        bool hasStar = false, hasIncrement = false, hasNotEqual = false;
+        for (const auto& member : cls->members) {
+            auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+            if (!method) continue;
+            if (method->name == "operator*") hasStar = true;
+            else if (method->name == "operator++") hasIncrement = true;
+            else if (method->name == "operator!=") hasNotEqual = true;
+        }
+        if (hasStar && hasIncrement && hasNotEqual) {
+            valueTypeClasses_.insert(cls->name);
+        }
+    }
+}
+
+bool SmartPointerAnalyzer::isValueTypeClass(const std::string& className) const {
+    return valueTypeClasses_.find(className) != valueTypeClasses_.end();
+}
+
+bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnly(
+    const Expression* expr, const std::string& paramName, const std::string& currentClass,
+    const std::set<std::string>& okCallees) const {
+    if (expr == nullptr) return false;
+    // A BARE occurrence of paramName is exactly what asObjectLocalName-style
+    // move detection keys on elsewhere (DanglingChecker) -- `paramName.field`
+    // is a MemberAccess, a completely different expression node, and never
+    // disqualifies on its own (checked by NOT recursing into a MemberAccess's
+    // object here the way visitExpr elsewhere does -- see the caller, which
+    // only calls this on argument/RHS positions, never descends through
+    // MemberAccess itself).
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        return id->name == paramName;
+    }
+    if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+        return paramUseDisqualifiesReadOnly(bin->left.get(), paramName, currentClass, okCallees) ||
+               paramUseDisqualifiesReadOnly(bin->right.get(), paramName, currentClass, okCallees);
+    }
+    if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+        // `!paramName` (falsy/null check, e.g. `if (!node) { ... }`) reads,
+        // does not consume -- explicitly non-disqualifying even when the
+        // operand IS the bare parameter itself (unlike every other position,
+        // where a bare paramName identifier disqualifies). A NESTED use inside
+        // the operand still needs checking (e.g. `!node.child` -- though that's
+        // a MemberAccess, already non-disqualifying on its own), so this still
+        // recurses rather than returning false unconditionally; the fix is
+        // narrowly that `!paramName` itself must not match the bare-identifier
+        // rule the way `un->operand.get()` being paramName directly would.
+        if (un->operator_str == "!") {
+            auto operandId = dynamic_cast<const Identifier*>(un->operand.get());
+            if (operandId != nullptr && operandId->name == paramName) return false;
+        }
+        return paramUseDisqualifiesReadOnly(un->operand.get(), paramName, currentClass, okCallees);
+    }
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        // A bare paramName passed as a CALL ARGUMENT disqualifies UNLESS the
+        // callee's OWN parameter at that position is already known read-only
+        // (`okCallees` -- a fixed point over ALL free functions AND methods,
+        // mirroring inferAliasReturningMethods's own established algorithm
+        // shape; see classifyReadOnlyFreeFunctionParams for the round-by-round
+        // driver). Motivated by a real, confirmed gap: yaml-cling's
+        // `operator<<(ostream out, Node node) { out << Dump(node); return
+        // out; }` passes `node` bare into `Dump(node)` -- without this,
+        // `operator<<`'s OWN parameter was wrongly disqualified even though
+        // Dump only ever reads its parameter's fields, causing `std::cout <<
+        // someNode;` to fail to compile (a shared_ptr couldn't bind to
+        // operator<<'s unique_ptr parameter). `!call->callee` covers BOTH a
+        // free-function call AND a same-class IMPLICIT-this method call
+        // (`parseBlockMapInto(target, ...)` inside another Parser method --
+        // indistinguishable from a free call at this AST shape); when
+        // `currentClass` is non-empty, the method-scoped key is tried FIRST
+        // (a same-class bare call always resolves to a sibling method, never
+        // an unrelated free function of the same name), falling back to the
+        // free-function key otherwise.
+        for (size_t i = 0; i < call->arguments.size(); ++i) {
+            auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
+            if (argId != nullptr && argId->name == paramName && !call->callee) {
+                const std::string methodKey =
+                    currentClass + "::" + call->function_name + "::" + std::to_string(i);
+                const std::string freeKey = call->function_name + "::" + std::to_string(i);
+                if ((!currentClass.empty() && okCallees.count(methodKey) > 0) ||
+                    okCallees.count(freeKey) > 0) {
+                    continue;  // passed to an already-read-only param
+                }
+            }
+            if (paramUseDisqualifiesReadOnly(call->arguments[i].get(), paramName, currentClass, okCallees)) {
+                return true;
+            }
+        }
+        if (call->callee) {
+            if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+                // The RECEIVER of a method call, e.g. `paramName.method()` --
+                // bare paramName as receiver is a read (dispatch), not a move;
+                // only descend into a nested receiver expression, never treat
+                // the immediate Identifier receiver itself as disqualifying.
+                if (auto recvMember = dynamic_cast<const MemberAccess*>(member->object.get())) {
+                    return paramUseDisqualifiesReadOnly(recvMember, paramName, currentClass, okCallees);
+                }
+            }
+        }
+        return false;
+    }
+    // MemberAccess (paramName.field), SubscriptExpression, NewExpression,
+    // literals: never disqualifying on their own -- MemberAccess's own
+    // `.object` is deliberately NOT recursed into (that's exactly the
+    // read-only access this classification exists to allow).
+    return false;
+}
+
+void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& program) {
+    // A parameter that is simply NEVER USED at all (e.g. an empty-bodied
+    // `void sink(Node n) {}`) has zero disqualifying uses by construction --
+    // but "no evidence it's consumed" is not the same claim as "read-only",
+    // and treating it as read-only would be a real regression (confirmed:
+    // it silently broke `sink(a)`'s ordinary move semantics in
+    // tests/safety/move_then_use.clg, which relies on an unused parameter
+    // still consuming its argument, matching every other CeeLing function).
+    // Requiring at least one GENUINE read of `paramName.field` (or a falsy/
+    // non-null check on the bare parameter) before granting read-only status
+    // keeps the classification positive evidence-based, matching CLAUDE.md's
+    // "ambiguous -> conservative reject" spirit: no read at all is exactly as
+    // ambiguous as a disqualifying use, so it defaults to the ordinary
+    // move-by-value behavior instead.
+    std::function<bool(const Expression*, const std::string&, const std::string&, const std::set<std::string>&)>
+        exprHasGenuineRead = [&](const Expression* expr, const std::string& paramName,
+                                  const std::string& currentClass, const std::set<std::string>& okCallees) -> bool {
+        if (expr == nullptr) return false;
+        if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+            if (auto id = dynamic_cast<const Identifier*>(member->object.get())) {
+                if (id->name == paramName) return true;
+            }
+            return exprHasGenuineRead(member->object.get(), paramName, currentClass, okCallees);
+        }
+        // `paramName[index]` (yaml-cpp-style operator[] read, e.g.
+        // `target["k"]`/`target[i]`) is exactly as genuine a read as
+        // `paramName.field` -- confirmed as a real gap via yaml-cling's own
+        // Parser::parseBlockMapInto, whose ONLY touch of its `target`
+        // parameter is `target[key]` (never a bare `.field` access); without
+        // this, that method's parameter never satisfied the genuine-read
+        // requirement despite being read-only in every other sense, which in
+        // turn meant callers of parseBlockMapInto never saw it as an
+        // okCallee, so `parseValueInto`'s OWN target parameter (which passes
+        // its argument bare into parseBlockMapInto) was wrongly disqualified
+        // too, cascading all the way up to `Parser::parseDocument`'s `root`
+        // showing as moved-from.
+        if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+            if (auto id = dynamic_cast<const Identifier*>(sub->object.get())) {
+                if (id->name == paramName) return true;
+            }
+            return exprHasGenuineRead(sub->object.get(), paramName, currentClass, okCallees) ||
+                   exprHasGenuineRead(sub->index.get(), paramName, currentClass, okCallees);
+        }
+        if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+            if (un->operator_str == "!") {
+                auto operandId = dynamic_cast<const Identifier*>(un->operand.get());
+                if (operandId != nullptr && operandId->name == paramName) return true;
+            }
+            return exprHasGenuineRead(un->operand.get(), paramName, currentClass, okCallees);
+        }
+        if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+            return exprHasGenuineRead(bin->left.get(), paramName, currentClass, okCallees) ||
+                   exprHasGenuineRead(bin->right.get(), paramName, currentClass, okCallees);
+        }
+        if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+            // A bare paramName passed to an already-read-only-AND-genuinely-
+            // read callee parameter (okCallees) counts as a genuine read HERE
+            // too, not just a non-disqualifying use -- mirrors
+            // paramUseDisqualifiesReadOnly's okCallees exception. Confirmed
+            // necessary via a real gap: `Dump(node) { return
+            // emitNode(node,...); }` never touches `node.field` directly
+            // itself (only emitNode does), so without this, Dump would pass
+            // the DISQUALIFICATION check (not disqualified) but fail the
+            // GENUINE-READ requirement, staying un-classified forever despite
+            // being exactly as read-only as emitNode itself. Method-scoped
+            // key tried first, same reasoning as paramUseDisqualifiesReadOnly.
+            for (size_t i = 0; i < call->arguments.size(); ++i) {
+                auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
+                if (argId != nullptr && argId->name == paramName && !call->callee) {
+                    const std::string methodKey =
+                        currentClass + "::" + call->function_name + "::" + std::to_string(i);
+                    const std::string freeKey = call->function_name + "::" + std::to_string(i);
+                    if ((!currentClass.empty() && okCallees.count(methodKey) > 0) ||
+                        okCallees.count(freeKey) > 0) {
+                        return true;
+                    }
+                }
+                if (exprHasGenuineRead(call->arguments[i].get(), paramName, currentClass, okCallees)) return true;
+            }
+            if (call->callee && exprHasGenuineRead(call->callee.get(), paramName, currentClass, okCallees)) {
+                return true;
+            }
+            return false;
+        }
+        return false;
+    };
+    std::function<bool(const std::vector<StatementPtr>&, const std::string&, const std::string&,
+                        const std::set<std::string>&)>
+        bodyHasGenuineRead = [&](const std::vector<StatementPtr>& body, const std::string& paramName,
+                                  const std::string& currentClass, const std::set<std::string>& okCallees) -> bool {
+        for (const auto& stmtPtr : body) {
+            const Statement* stmt = stmtPtr.get();
+            if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+                if (exprHasGenuineRead(ret->expression.get(), paramName, currentClass, okCallees)) return true;
+            } else if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+                if (exprHasGenuineRead(decl->expression.get(), paramName, currentClass, okCallees)) return true;
+            } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+                if (exprHasGenuineRead(assign->expression.get(), paramName, currentClass, okCallees)) return true;
+                if (assign->target &&
+                    exprHasGenuineRead(assign->target.get(), paramName, currentClass, okCallees)) return true;
+            } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+                if (exprHasGenuineRead(exprStmt->expression.get(), paramName, currentClass, okCallees)) return true;
+            } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
+                if (exprHasGenuineRead(ifs->condition.get(), paramName, currentClass, okCallees)) return true;
+                if (bodyHasGenuineRead(ifs->body, paramName, currentClass, okCallees)) return true;
+                if (bodyHasGenuineRead(ifs->elseBody, paramName, currentClass, okCallees)) return true;
+            } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+                if (exprHasGenuineRead(whiles->condition.get(), paramName, currentClass, okCallees)) return true;
+                if (bodyHasGenuineRead(whiles->body, paramName, currentClass, okCallees)) return true;
+            } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+                if (exprHasGenuineRead(fors->container.get(), paramName, currentClass, okCallees)) return true;
+                if (bodyHasGenuineRead(fors->body, paramName, currentClass, okCallees)) return true;
+            } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
+                if (exprHasGenuineRead(throwStmt->expression.get(), paramName, currentClass, okCallees)) return true;
+            } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
+                if (bodyHasGenuineRead(trys->body, paramName, currentClass, okCallees)) return true;
+                if (bodyHasGenuineRead(trys->catchBody, paramName, currentClass, okCallees)) return true;
+            }
+        }
+        return false;
+    };
+
+    // Every disqualifying-use CHECK (see paramUseDisqualifiesReadOnly) walks a
+    // statement body looking for any use of paramName that would require it to
+    // be consumed. A statement-level walk (not just returns, unlike
+    // inferAliasReturningFreeFunctions) since a disqualifying use can be a
+    // plain assignment or bare call argument anywhere in the body, not only in
+    // a `return`. Threads `okCallees` through (see paramUseDisqualifiesReadOnly's
+    // own comment) so a fixed-point round can re-check with a growing set of
+    // already-classified read-only callees.
+    std::function<bool(const std::vector<StatementPtr>&, const std::string&, const std::string&,
+                        const std::set<std::string>&)>
+        bodyDisqualifies = [&](const std::vector<StatementPtr>& body, const std::string& paramName,
+                                const std::string& currentClass, const std::set<std::string>& okCallees) -> bool {
+        for (const auto& stmtPtr : body) {
+            const Statement* stmt = stmtPtr.get();
+            if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnly(ret->expression.get(), paramName, currentClass, okCallees)) {
+                    return true;
+                }
+            } else if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+                if (paramUseDisqualifiesReadOnly(decl->expression.get(), paramName, currentClass, okCallees)) {
+                    return true;
+                }
+            } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnly(assign->expression.get(), paramName, currentClass, okCallees)) {
+                    return true;
+                }
+                if (assign->target &&
+                    paramUseDisqualifiesReadOnly(assign->target.get(), paramName, currentClass, okCallees)) {
+                    return true;
+                }
+            } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnly(exprStmt->expression.get(), paramName, currentClass, okCallees)) {
+                    return true;
+                }
+            } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnly(ifs->condition.get(), paramName, currentClass, okCallees)) {
+                    return true;
+                }
+                if (bodyDisqualifies(ifs->body, paramName, currentClass, okCallees)) return true;
+                if (bodyDisqualifies(ifs->elseBody, paramName, currentClass, okCallees)) return true;
+            } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnly(whiles->condition.get(), paramName, currentClass, okCallees)) {
+                    return true;
+                }
+                if (bodyDisqualifies(whiles->body, paramName, currentClass, okCallees)) return true;
+            } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnly(fors->container.get(), paramName, currentClass, okCallees)) {
+                    return true;
+                }
+                if (bodyDisqualifies(fors->body, paramName, currentClass, okCallees)) return true;
+            } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnly(throwStmt->expression.get(), paramName, currentClass, okCallees)) {
+                    return true;
+                }
+            } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
+                if (bodyDisqualifies(trys->body, paramName, currentClass, okCallees)) return true;
+                if (bodyDisqualifies(trys->catchBody, paramName, currentClass, okCallees)) return true;
+            }
+        }
+        return false;
+    };
+
+    // Fixed-point over ALL free functions AND class methods (mirrors
+    // inferAliasReturningMethods's established shape): a function/method
+    // passing paramName bare into ANOTHER function/method's already-read-only
+    // parameter is itself still read-only (see paramUseDisqualifiesReadOnly's
+    // FunctionCall handling) -- but that target might not be classified until
+    // a LATER round (e.g. `operator<<` depends on `Dump`, which is a
+    // completely ordinary function classified on round 1; `operator<<` itself
+    // then only classifies correctly on round 2, once `okCallees` contains
+    // "Dump::0"). Bounded by the number of functions+methods (each round must
+    // classify at least one new pair to continue, same termination argument
+    // as every other fixed point in this file). Methods were added for RB18
+    // (yaml_parser.clg's Parser::parseValueInto/parseBlockMapInto/
+    // parseBlockSeqInto mutate their `target` parameter in place across a
+    // MUTUALLY RECURSIVE set of same-class methods -- exactly the
+    // free-function walker shape this mechanism was built for, just one
+    // level down inside a class -- confirmed as a real gap via the actual
+    // yaml-cling parser, not a hypothetical).
+    std::set<std::string> classified;         // "fnName::paramName", free functions
+    std::set<std::string> classifiedMethods;  // "ClassName::methodName::paramName"
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        // okCallees: "fnName::argIndex" for a read-only free-function param,
+        // "ClassName::methodName::argIndex" for a read-only method param --
+        // built fresh each round from `classified`/`classifiedMethods` +
+        // each function/method's own parameter list, so a newly-classified
+        // callee becomes visible starting next round (not the same round it
+        // was itself classified in, keeping the iteration simple and
+        // monotonic).
+        std::set<std::string> okCallees;
+        for (const auto& stmt : program.statements) {
+            if (auto fn2 = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+                for (size_t i = 0; i < fn2->parameters.size(); ++i) {
+                    if (classified.count(fn2->name + "::" + fn2->parameters[i].second) > 0) {
+                        okCallees.insert(fn2->name + "::" + std::to_string(i));
+                    }
+                }
+            } else if (auto cls2 = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+                for (const auto& member : cls2->members) {
+                    auto method2 = dynamic_cast<const MethodDeclaration*>(member.get());
+                    if (method2 == nullptr) continue;
+                    for (size_t i = 0; i < method2->parameters.size(); ++i) {
+                        const std::string key =
+                            cls2->name + "::" + method2->name + "::" + method2->parameters[i].second;
+                        if (classifiedMethods.count(key) > 0) {
+                            okCallees.insert(cls2->name + "::" + method2->name + "::" + std::to_string(i));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (const auto& stmt : program.statements) {
+            if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+                for (const auto& [ptype, pname] : fn->parameters) {
+                    const std::string classifiedKey = fn->name + "::" + pname;
+                    if (classified.count(classifiedKey) > 0) continue;  // already decided
+
+                    // Only object-typed parameters are ever a move-vs-share question --
+                    // a primitive/string/container parameter is never smart-pointer-
+                    // backed in the first place, so read-only-ness is moot for it.
+                    bool isClassType = false;
+                    for (const auto& s2 : program.statements) {
+                        if (auto cls = dynamic_cast<const ClassDeclaration*>(s2.get())) {
+                            if (cls->name == ptype) { isClassType = true; break; }
+                        }
+                    }
+                    if (!isClassType) continue;
+                    if (!bodyDisqualifies(fn->body, pname, "", okCallees) &&
+                        bodyHasGenuineRead(fn->body, pname, "", okCallees)) {
+                        classified.insert(classifiedKey);
+                        changed = true;
+                    }
+                }
+            } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+                for (const auto& member : cls->members) {
+                    auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+                    if (method == nullptr) continue;
+                    for (const auto& [ptype, pname] : method->parameters) {
+                        const std::string classifiedKey = cls->name + "::" + method->name + "::" + pname;
+                        if (classifiedMethods.count(classifiedKey) > 0) continue;  // already decided
+
+                        bool isClassType = false;
+                        for (const auto& s2 : program.statements) {
+                            if (auto cls2 = dynamic_cast<const ClassDeclaration*>(s2.get())) {
+                                if (cls2->name == ptype) { isClassType = true; break; }
+                            }
+                        }
+                        if (!isClassType) continue;
+                        if (!bodyDisqualifies(method->body, pname, cls->name, okCallees) &&
+                            bodyHasGenuineRead(method->body, pname, cls->name, okCallees)) {
+                            classifiedMethods.insert(classifiedKey);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (const auto& key : classified) {
+        readOnlyFreeFunctionParams_.insert(key);
+    }
+    for (const auto& key : classifiedMethods) {
+        readOnlyMethodParams_.insert(key);
+    }
+    // Dual-register under the qualified name too -- see collectCalleeParams's
+    // matching comment; isReadOnlyFreeFunctionParam is queried with whatever
+    // spelling the CALL SITE used (call->function_name), which is qualified
+    // from outside the namespace.
+    for (const auto& stmt : program.statements) {
+        auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get());
+        if (fn == nullptr || fn->namespaceName.empty()) continue;
+        for (const auto& [ptype, pname] : fn->parameters) {
+            if (classified.count(fn->name + "::" + pname) > 0) {
+                readOnlyFreeFunctionParams_.insert(fn->namespaceName + "::" + fn->name + "::" + pname);
+            }
+        }
+    }
+    for (const auto& stmt : program.statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr || cls->namespaceName.empty()) continue;
+        for (const auto& member : cls->members) {
+            auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+            if (method == nullptr) continue;
+            for (const auto& [ptype, pname] : method->parameters) {
+                if (classifiedMethods.count(cls->name + "::" + method->name + "::" + pname) > 0) {
+                    readOnlyMethodParams_.insert(cls->namespaceName + "::" + cls->name + "::" + method->name +
+                                                  "::" + pname);
+                }
+            }
+        }
+    }
+}
+
+bool SmartPointerAnalyzer::isReadOnlyFreeFunctionParam(const std::string& fnName,
+                                                        const std::string& paramName) const {
+    return readOnlyFreeFunctionParams_.count(fnName + "::" + paramName) > 0;
+}
+
+bool SmartPointerAnalyzer::isReadOnlyMethodParam(const std::string& className, const std::string& methodName,
+                                                  const std::string& paramName) const {
+    return readOnlyMethodParams_.count(className + "::" + methodName + "::" + paramName) > 0;
 }
 
 void SmartPointerAnalyzer::firstPassCollectReferences(const Program& program) {

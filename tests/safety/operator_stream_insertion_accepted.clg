@@ -1,0 +1,40 @@
+//@ expect: accept
+//@ reason: a FREE function named `operator<<` (yaml-cpp's own free-function
+//@ reason: shape -- `std::ostream& operator<<(std::ostream&, const Node&)`,
+//@ reason: not a class method) can be declared and used via ordinary
+//@ reason: `std::cout << x` syntax. `ostream` is a new passthrough type,
+//@ reason: always by-reference (std::ostream's copy constructor is deleted,
+//@ reason: so by-value is not merely suboptimal -- it does not compile at
+//@ reason: all). The streamed class-typed argument survives the call (its
+//@ reason: parameter is INFERRED read-only via the same mechanism Clone
+//@ reason: uses -- see ceeling/docs/language-guide/18-implementation-notes.md
+//@ reason: Step 30), proving the caller's value is still usable afterward.
+//@ run: Foo(5) still usable: 5
+//
+// Motivated by yaml-cling wanting `std::cout << node;` (see notes/GAPS.md
+// RB15 in yaml-cling) -- this fixture is the minimal, isolated proof, kept
+// in CeeLing's own suite so the language mechanism has independent coverage.
+
+class Foo {
+public:
+    int x;
+    Foo(int v) {
+        x = v;
+    }
+};
+
+int describeFoo(Foo f) {
+    return f.x;
+}
+
+ostream operator<<(ostream out, Foo f) {
+    out << "Foo(" << describeFoo(f) << ")";
+    return out;
+}
+
+int main() {
+    Foo a = new Foo(5);
+    std::cout << a;
+    std::cout << " still usable: " << a.x << std::endl;
+    return 0;
+}

@@ -2,6 +2,7 @@
 
 #include "../cst_to_ast/ast.h"
 #include "smart_pointer_analyzer.h"
+#include <functional>
 #include <map>
 #include <set>
 #include <sstream>
@@ -58,6 +59,12 @@ public:
 private:
     void collectClassNames(const Program& program);
     bool isClassType(const std::string& type) const;
+    // A value-type class (see SmartPointerAnalyzer::isValueTypeClass) -- never
+    // wrapped in a smart pointer, accessed via `.` not `->`, constructed as a
+    // plain `ClassName(args)` call, never moved (copied instead). Checked
+    // BEFORE the ordinary isClassType/smartPointerType wrapping path at every
+    // site that currently assumes "class-typed means pointer-backed".
+    bool isValueType(const std::string& type) const;
     // "std::vector<Node>" -> "std::vector<std::shared_ptr<Node>>" or
     // "std::vector<std::unique_ptr<Node>>", depending on `varName`'s scanned
     // element kind (SmartPointerAnalyzer::containerElementIsShared -- decided once
@@ -74,6 +81,20 @@ private:
     // blindly (see emitMovedArg / the FunctionCall argument loop).
     std::map<std::string, std::vector<std::pair<std::string, std::string>>> functionParams_;
     std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, std::string>>>> classMethodParams_;
+    // Every operator= overload's SINGLE parameter type, per class (bare AND
+    // namespace-qualified keys, matching every other collection here) --
+    // built directly from each ClassDeclaration's raw member list in
+    // collectClassNames, independent of the collapsed classMethodParams_
+    // map. Needed because a class declaring BOTH `operator=(string)` and
+    // `operator=(Node)` (yaml-cling's real Node does exactly this, RB18) has
+    // two arity-1 operator= overloads that COLLIDE under
+    // classMethodParams_'s overloadKey (arity-only disambiguation, confirmed
+    // via probe -- the second declaration silently overwrote the first,
+    // so classMethodParams_[cls].count("operator=") went from true to FALSE
+    // once a second overload existed, wrongly falling through to a plain
+    // shared_ptr::operator= for BOTH overloads' call sites, one of which --
+    // the string RHS -- doesn't even compile against shared_ptr).
+    std::map<std::string, std::set<std::string>> operatorAssignParamTypes_;
     // Declared RETURN type for every free function / method, keyed identically to
     // functionParams_/classMethodParams_ (including overload/specialization keys)
     // -- needed so exprObjectClass can resolve `someCall().field`'s `.`-vs-`->`
@@ -173,6 +194,13 @@ private:
 
     const SmartPointerAnalyzer& analyzer_;
     std::set<std::string> classNames_;
+    // Runtime helpers (see library_summary.h's isKnownRuntimeHelper) actually
+    // called anywhere in this program -- computed once up front by
+    // collectUsedRuntimeHelpers so emit()/emitHeader() know which shim
+    // definitions (if any) to inject, without restructuring emission into a
+    // buffer-then-decide-preamble shape.
+    std::set<std::string> usedRuntimeHelpers_;
+    void collectUsedRuntimeHelpers(const Program& program);
     // Classes that some other class inherits from. Any such class gets an
     // auto-generated `virtual ~Base() = default;` -- destroying a derived object
     // through a base-typed owner is undefined behavior without one, and CeeLing has
@@ -191,11 +219,23 @@ private:
     // Per-class field name -> declared type (for `this->` and nested `->` resolution).
     std::map<std::string, std::map<std::string, std::string>> classFields_;
     std::string currentClass_;  // class whose method is being emitted ("" = free fn)
+    // The bare name of the function/method currently being emitted, and the
+    // set of ITS OWN parameter names -- needed to gate the same-class
+    // operator= handle-rebind routing (see the AssignmentStatement handling)
+    // to PARAMETERS only, never an ordinary local. Set in emitFunction,
+    // restored on return (mirrors currentClass_'s own save/restore).
+    std::string currentFunctionName_;
+    std::set<std::string> currentParamNames_;
     // True while emitting a method whose return was `@ptr shared`-hinted --
     // ReturnStatement emits a COPY (aliasing) instead of emitMovedArg's move in
     // this case. False (the default) preserves today's unique_ptr move-return
     // behavior unchanged for every method without a hint.
     bool currentMethodReturnsShared_ = false;
+    // True while emitting a method/function whose return type is a value-type
+    // class (see isValueType) -- ReturnStatement emits a plain, unwrapped return
+    // (copy, never move; `new T(...)` becomes a bare constructor call, never a
+    // make_unique/make_shared factory).
+    bool currentMethodReturnsValueType_ = false;
 };
 
 } // namespace cling

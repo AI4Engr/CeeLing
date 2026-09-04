@@ -108,6 +108,10 @@ bool isKnownStringMethod(const std::string& methodName) {
     return kKnown.count(methodName) > 0;
 }
 
+bool isOstreamType(const std::string& type) {
+    return type == "ostream";
+}
+
 bool isMapType(const std::string& type) {
     const auto [key, value] = splitMapArgs(mapArgsText(type));
     return !key.empty() && !value.empty();
@@ -134,6 +138,37 @@ bool isCharType(const std::string& type) {
 bool isKnownQualifiedFreeFunction(const std::string& qualifiedName) {
     static const std::set<std::string> kKnown = {"std::stoi", "std::stod"};
     return kKnown.count(qualifiedName) > 0;
+}
+
+bool isKnownRuntimeHelper(const std::string& qualifiedName) {
+    static const std::set<std::string> kKnown = {"cling::readFileToString", "cling::fileExists"};
+    return kKnown.count(qualifiedName) > 0;
+}
+
+std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used) {
+    std::string out;
+    bool needNamespace = used.count("cling::readFileToString") > 0 ||
+                          used.count("cling::fileExists") > 0;
+    if (needNamespace) out += "namespace cling {\n";
+    if (used.count("cling::fileExists") > 0) {
+        out +=
+            "inline bool fileExists(const std::string& path) {\n"
+            "    std::ifstream fin(path);\n"
+            "    return static_cast<bool>(fin);\n"
+            "}\n";
+    }
+    if (used.count("cling::readFileToString") > 0) {
+        out +=
+            "inline std::string readFileToString(const std::string& path) {\n"
+            "    std::ifstream fin(path);\n"
+            "    if (!fin) { return std::string(); }\n"
+            "    std::stringstream ss;\n"
+            "    ss << fin.rdbuf();\n"
+            "    return ss.str();\n"
+            "}\n";
+    }
+    if (needNamespace) out += "} // namespace cling\n";
+    return out;
 }
 
 } // namespace cling

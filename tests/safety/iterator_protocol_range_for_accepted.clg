@@ -1,0 +1,63 @@
+//@ expect: accept
+//@ reason: The actual motivating use case for operator*/operator++/operator!= and
+//@ reason: value-type classes: a genuine C++-range-for-compatible iterator class
+//@ reason: written entirely in CeeLing source, with begin()/end() on an ordinary
+//@ reason: (non-value-type, smart-pointer-managed) container class returning the
+//@ reason: iterator BY VALUE. Two real bugs were found and fixed via this exact
+//@ reason: shape: (1) a value-type method's return type is now correctly emitted
+//@ reason: unwrapped (`Counter begin()`, not `std::unique_ptr<Counter> begin()` --
+//@ reason: std::unique_ptr/shared_ptr have no operator++ at all, so range-for could
+//@ reason: never have worked without this); (2) the for-loop's own CONTAINER
+//@ reason: expression needed a `*` dereference when the container itself is a
+//@ reason: smart-pointer-wrapped class (`for (int x : *r)`, not `for (int x : r)`
+//@ reason: -- confirmed via direct probe: "no matching function for call to
+//@ reason: 'begin(std::unique_ptr<Range>&)'", since a smart pointer has no
+//@ reason: begin()/end() of its own). std::vector<T>/std::map<K,V> containers are
+//@ reason: unaffected (never smart-pointer-wrapped in the first place).
+//@ run: x=1 x=2 x=3 x=4
+class Counter {
+public:
+    int value;
+    Counter(int v) {
+        value = v;
+    }
+    int operator*() {
+        return value;
+    }
+    void operator++() {
+        value = value + 1;
+    }
+    bool operator!=(Counter other) {
+        return value != other.value;
+    }
+};
+
+class Range {
+public:
+    int lo;
+    int hi;
+    Range(int a, int b) {
+        lo = a;
+        hi = b;
+    }
+    Counter begin() {
+        return new Counter(lo);
+    }
+    Counter end() {
+        return new Counter(hi);
+    }
+};
+
+int main() {
+    Range r = new Range(1, 5);
+    bool first = true;
+    for (int x : r) {
+        if (!first) {
+            std::cout << " ";
+        }
+        std::cout << "x=" << x;
+        first = false;
+    }
+    std::cout << std::endl;
+    return 0;
+}

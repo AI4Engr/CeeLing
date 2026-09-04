@@ -1,0 +1,47 @@
+//@ expect: accept
+//@ reason: operator*/operator++/operator!= (the C++ range-for iterator protocol),
+//@ reason: added alongside a new "value-type class" classification: a class
+//@ reason: defining all THREE of these operators (never fewer -- confirmed as the
+//@ reason: exact classification threshold) is inferred as a VALUE TYPE, purely
+//@ reason: structurally, no annotation -- never wrapped in unique_ptr/shared_ptr for
+//@ reason: its own variables/fields/returns, unlike every other user-defined class.
+//@ reason: This exercises all three operators directly (not via a for-loop -- see
+//@ reason: iterator_protocol_range_for_accepted.clg for that), and specifically
+//@ reason: proves value-type COPY semantics: `Foo b = a; Foo c = a;` are two
+//@ reason: independent copies (confirmed via a real bug found and fixed here --
+//@ reason: DanglingChecker::isObjectType previously treated every class as
+//@ reason: move-only, wrongly rejecting the second copy as "use of moved-from value
+//@ reason: `a`"; value-type classes are now excluded from that tracking, matching
+//@ reason: how `string` locals already were).
+//@ run: f.x=2 g.x=1 ne=1 b.x=1 c.x=1
+class Foo {
+public:
+    int x;
+    Foo(int v) {
+        x = v;
+    }
+    Foo operator*() {
+        return this;
+    }
+    void operator++() {
+        x = x + 1;
+    }
+    bool operator!=(Foo other) {
+        return x != other.x;
+    }
+};
+
+int main() {
+    Foo f = new Foo(1);
+    Foo g = *f;
+    ++f;
+    bool ne = (f != g);
+
+    Foo a = new Foo(1);
+    Foo b = a;
+    Foo c = a;
+
+    std::cout << "f.x=" << f.x << " g.x=" << g.x << " ne=" << ne
+               << " b.x=" << b.x << " c.x=" << c.x << std::endl;
+    return 0;
+}

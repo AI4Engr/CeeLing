@@ -214,9 +214,15 @@ module.exports = grammar({
 
     // C++-style function declaration: `returnType name(params) { ... }`.
     // (There is no `fn` keyword; functions read like ordinary C++.)
+    // The name is an ordinary identifier, OR (free-function-only) 'operator<<'
+    // -- yaml-cpp's own `std::ostream& operator<<(std::ostream&, const Node&)`
+    // is a FREE function, not a class method, so this is deliberately separate
+    // from operator_method_name (below), the fixed 5-operator set scoped to
+    // method_declaration. Narrowly just this one operator -- nothing else
+    // needs a free-function operator name yet.
     function_declaration: $ => seq(
       $.type,
-      $.identifier,
+      choice($.identifier, 'operator<<'),
       '(',
       optional($.parameter_list),
       ')',
@@ -288,11 +294,15 @@ module.exports = grammar({
     // binary_expression's comparison rule the way the call-site type argument
     // (template_call, below) does -- no conflict risk here.
     //
-    // The method NAME may be an ordinary identifier or one of the two supported
-    // operator names (operator_method_name, below) -- narrowly scoped to
-    // `operator[]`/`operator=` only, the shape yaml-cpp's Node needs. General
-    // operator overloading (operator+, operator<<, ...) is a separate, unstarted
-    // TODO.md item, not this.
+    // The method NAME may be an ordinary identifier or one of the supported
+    // operator names (operator_method_name, below) -- narrowly scoped to exactly
+    // what yaml-cpp's Node and a range-for-compatible iterator need:
+    // `operator[]`/`operator=` (subscript/assignment) plus `operator*`/
+    // `operator++`/`operator!=` (the C++ iterator protocol -- dereference, prefix
+    // increment only (no postfix), inequality only (no `operator==`, unneeded by
+    // range-for's desugaring)). General operator overloading (operator+,
+    // operator<<, ...) beyond this fixed set is a separate, unstarted TODO.md item,
+    // not this.
     method_declaration: $ => seq(
       optional($.method_type_parameter),
       optional('virtual'),
@@ -309,12 +319,14 @@ module.exports = grammar({
       '}'
     ),
 
-    // `operator[]` or `operator=` as a method name. Kept as its own token (not
-    // built from separate `operator`/`[`/`]`/`=` terminals) so it can never be
+    // A supported operator as a method name. Kept as its own token (not built
+    // from separate `operator`/`[`/`]`/`=`/etc. terminals) so it can never be
     // mistaken for `operator` used as an ordinary identifier elsewhere -- there is
     // no other place in the grammar `operator` is meaningful, so this is
     // unambiguous.
-    operator_method_name: $ => choice('operator[]', 'operator='),
+    operator_method_name: $ => choice(
+      'operator[]', 'operator=', 'operator*', 'operator++', 'operator!=', 'operator=='
+    ),
 
     // `<T>` before a method's return type: declares ONE type parameter, usable only
     // as that method's own return type (`<T> T as()`). Enforced in ast_builder.cpp,
@@ -415,9 +427,15 @@ module.exports = grammar({
       prec.left(1, seq($.expression, token('<<'), $.expression))
     ),
 
-    // Unary prefix operators: `!x`, `-x`. Higher precedence than any binary operator.
+    // Unary prefix operators: `!x`, `-x`, `*x` (dereference, e.g. an iterator's
+    // `operator*`), `++x` (prefix increment ONLY -- no postfix `x++`, unneeded by
+    // range-for's `++it` desugaring and would need a disambiguating dummy-`int`
+    // parameter shape nothing here requires). Higher precedence than any binary
+    // operator. `*` here is unambiguous against binary_expression's multiplication
+    // rule (`a * b`) -- a leading `*` can only be prefix since binary `*` requires
+    // an already-parsed left operand first.
     unary_expression: $ => prec(7, seq(
-      choice('!', '-'),
+      choice('!', '-', '*', '++'),
       $.expression
     )),
 

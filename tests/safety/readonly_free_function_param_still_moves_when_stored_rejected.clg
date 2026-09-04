@@ -1,0 +1,26 @@
+//@ expect: reject
+//@ reason: positive control -- a free function that STORES its parameter
+//@ reason: (not merely reads its fields) still consumes its argument
+//@ reason: normally. Proves read-only inference doesn't over-correct into
+//@ reason: "no free-function parameter ever moves": `kept` here is stored
+//@ reason: into a global-lifetime sink (returned out, escaping the call),
+//@ reason: so `n` is genuinely consumed and `b` must reject after `keep(b)`.
+
+class Box {
+public:
+    int value;
+    Box(int v) {
+        value = v;
+    }
+};
+
+Box keep(Box n) {
+    return n;
+}
+
+int main() {
+    Box b = new Box(1);
+    Box kept = keep(b);
+    std::cout << b.value << std::endl;   // ERROR: b was moved into keep(b)
+    return 0;
+}

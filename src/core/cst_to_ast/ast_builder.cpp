@@ -124,6 +124,22 @@ ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
             continue;
         }
 
+        // A top-level "//" comment is declared in the grammar's `extras` (skippable
+        // anywhere, like whitespace -- see grammar.js) and reaches here as a bare
+        // `comment`-typed child of source_file, distinct from the `statement` wrapper
+        // every real declaration is wrapped in. buildNamespaceDeclaration's own
+        // member loop already ignores anything that isn't `statement`/`ERROR` for
+        // exactly this reason; this top-level loop lacked the same guard, so a bare
+        // comment fell through to buildStatement (which doesn't recognize a raw
+        // `comment` node), returned null, and got recorded as an "unresolved"
+        // top-level statement -- wrongly rejecting any file whose ONLY top-level
+        // content besides the comment was a namespace containing solely free
+        // functions (no class/MainFunction to satisfy hasStructuralAnchor below),
+        // with a misleading error pointing at the comment itself. Skip it instead.
+        if (strcmp(ts_node_type(child), "comment") == 0) {
+            continue;
+        }
+
         // `namespace X { ... }` is handled specially, not via buildStatement: it
         // desugars into MULTIPLE top-level statements (each member's own
         // ClassDeclaration/EnumDeclaration, tagged with namespaceName), which does
@@ -554,14 +570,18 @@ ExpressionPtr ASTBuilder::buildCharLiteral(TSNode node, const std::string& sourc
 }
 
 ExpressionPtr ASTBuilder::buildUnaryExpression(TSNode node, const std::string& source) {
-    // unary_expression: operator operand. The operator token ('!' or '-') is inlined,
-    // so the only named child is the operand; recover the operator from the leading text.
+    // unary_expression: operator operand. The operator token ('!', '-', '*', or
+    // '++') is inlined, so the only named child is the operand; recover the
+    // operator from the leading text. '++' is TWO characters -- unlike the other
+    // three single-character operators, a bare `full[0]` would silently truncate
+    // it to a single '+' (a real bug this fixes, not present before '++' existed).
     TSNode operand_node = ts_node_child(node, ts_node_child_count(node) - 1);
     auto operand = buildExpression(operand_node, source);
     if (!operand) return nullptr;
 
     std::string full = getNodeText(node, source);
-    std::string op = full.empty() ? "!" : std::string(1, full[0]);
+    std::string op = full.empty() ? "!"
+        : (full.rfind("++", 0) == 0 ? "++" : std::string(1, full[0]));
     return std::make_unique<UnaryExpression>(op, std::move(operand));
 }
 

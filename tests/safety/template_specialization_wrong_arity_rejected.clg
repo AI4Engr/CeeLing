@@ -1,0 +1,33 @@
+//@ expect: reject
+//@ reason: positive control -- calling a specialization with an arity that
+//@ reason: was never actually declared (only `as<int>()` exists, no
+//@ reason: `as<int>(int)` overload) must be rejected, not silently allowed
+//@ reason: through to fail at the g++ stage. A real, confirmed pre-existing
+//@ reason: gap: EscapeHatchChecker's isKnownCallable used to check only
+//@ reason: that A specialization existed for the requested TYPE argument,
+//@ reason: never that the call's own ARGUMENT COUNT matched one of that
+//@ reason: specialization's actually-declared arities -- found while adding
+//@ reason: as<T>(fallback) support (yaml-cling's notes/GAPS.md), not
+//@ reason: introduced by it.
+
+class Box {
+public:
+    string scalar;
+    Box(string s) {
+        scalar = s;
+    }
+
+    <T> T as() {
+        throw "unsupported";
+    }
+
+    int as<int>() {
+        return std::stoi(scalar);
+    }
+};
+
+int main() {
+    Box b = new Box("5");
+    std::cout << b.as<int>(99) << std::endl;   // ERROR: no as<int>(int) exists
+    return 0;
+}

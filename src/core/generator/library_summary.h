@@ -1,5 +1,6 @@
 #pragma once
 
+#include <set>
 #include <string>
 
 namespace cling {
@@ -48,6 +49,18 @@ bool isStringType(const std::string& type);
 // raw pointer has nowhere legal to go once raw pointers are otherwise forbidden.
 bool isKnownStringMethod(const std::string& methodName);
 
+// Is `type` CeeLing's `ostream` type (bare keyword only -- no `std::ostream`
+// spelling accepted, unlike isStringType's flexibility, since no fixture needs
+// the qualified form written explicitly)? Motivated by a free `operator<<`
+// definition needing a real, by-REFERENCE `std::ostream&` parameter/return type
+// (yaml-cpp's `std::ostream& operator<<(std::ostream&, const Node&)`) -- a plain
+// value type like `string`/`int` never fits here, since std::ostream's copy
+// constructor is deleted (passing it by value is not merely suboptimal, it does
+// not compile at all). AstEmitter checks this to force `std::ostream&` at every
+// parameter/return-type site, never falling through to the ordinary
+// value/class-type wrapping logic.
+bool isOstreamType(const std::string& type);
+
 // Is `type` a `std::map<K,V>` (or bare `map<K,V>`) shape? (Phase 2.6 map slice.)
 bool isMapType(const std::string& type);
 
@@ -78,5 +91,28 @@ bool isCharType(const std::string& type);
 // argument or return value, so unlike the vector/string method allow-lists above,
 // no share-vs-move or invalidation summary is needed for these.
 bool isKnownQualifiedFreeFunction(const std::string& qualifiedName);
+
+// Is `qualifiedName` a CeeLing-provided runtime helper (e.g.
+// "cling::readFileToString") rather than a real std:: function? These are tiny,
+// hand-written C++ shims AstEmitter auto-injects into every generated file that
+// calls one (see requiredRuntimeHelperDefinitions), used only when CeeLing's
+// language model has no way to express the operation itself (no object
+// construction/method-call support for foreign types like std::ifstream) but the
+// operation is a single, well-defined, ownership-free primitive (string/bool in,
+// string/bool out) that a real std:: free function doesn't already cover in one
+// call. Takes/returns only primitives, same as isKnownQualifiedFreeFunction's set
+// -- no share-vs-move or invalidation summary needed here either.
+//
+// Currently: "cling::readFileToString" (whole-file slurp, "" on any failure) and
+// "cling::fileExists" (can the path be opened for reading at all -- lets a caller
+// distinguish "file not found" from "file opened fine but is empty", which
+// readFileToString's own return value alone cannot, since both cases return "").
+bool isKnownRuntimeHelper(const std::string& qualifiedName);
+
+// The C++ source text of the runtime helper(s) actually called in this program
+// (only the ones in `used`, so a program that never calls one gets no injected
+// code). Each definition is self-contained and requires only <fstream>/<sstream>/
+// <string>, already covered by AstEmitter's unconditional-include list.
+std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used);
 
 } // namespace cling

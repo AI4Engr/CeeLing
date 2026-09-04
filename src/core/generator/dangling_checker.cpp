@@ -4,6 +4,38 @@
 
 namespace cling {
 
+namespace {
+// True iff `body` is guaranteed to leave its enclosing function before falling
+// through to whatever statement follows it (a `return`/`throw` as its LAST
+// statement, or an `if`/`else` whose BOTH arms always exit). Used by the
+// IfStatement branch-merge below to avoid a false use-after-move: a move
+// inside a branch that unconditionally returns can never be observed by code
+// AFTER the `if` (that code is only reachable via the OTHER path), so its
+// effects must not be merged into the post-`if` state the way an ordinary
+// (fall-through) branch's effects are. Confirmed as a real, pre-existing gap
+// (not introduced by RB18 -- reproduced on an ordinary flat class with no
+// NodeData/handle split at all) via a minimal probe: `if (x) { other(n);
+// return; } n.use();` wrongly flagged `n` as moved-from at the LAST line,
+// even though that line is only reachable when the `if` was false. Only
+// looks at the LAST statement (conservative: an early return nested deeper
+// inside, say, a `while`, does not make the enclosing block itself
+// unconditionally exit, since the loop might not execute that path) --
+// deliberately narrow, matching this checker's overall "ambiguous ->
+// conservative reject" bias elsewhere; a genuinely exiting shape this misses
+// just falls back to the pre-existing (safe, if occasionally over-strict)
+// merge behavior.
+bool alwaysExits(const std::vector<StatementPtr>& body) {
+    if (body.empty()) return false;
+    const Statement* last = body.back().get();
+    if (dynamic_cast<const ReturnStatement*>(last) != nullptr) return true;
+    if (dynamic_cast<const ThrowStatement*>(last) != nullptr) return true;
+    if (auto ifs = dynamic_cast<const IfStatement*>(last)) {
+        return !ifs->elseBody.empty() && alwaysExits(ifs->body) && alwaysExits(ifs->elseBody);
+    }
+    return false;
+}
+} // namespace
+
 std::vector<DanglingError> DanglingChecker::check(const Program& program, const SmartPointerAnalyzer& analyzer) {
     errors_.clear();
     classNames_.clear();
@@ -77,7 +109,32 @@ bool DanglingChecker::isObjectType(const std::string& type) const {
     // a vector variable). `string` deliberately stays excluded: a bare `string`
     // local is a plain C++ value type with cheap real copies everywhere, not a
     // container whose "old" and "new" handles could diverge.
+    //
+    // A value-type class (Iterator etc. -- see SmartPointerAnalyzer::
+    // isValueTypeClass) is excluded for the SAME reason `string` is: it's never
+    // smart-pointer-backed, so it's copyable, not move-only -- confirmed via
+    // direct probe that without this exclusion, `Foo b = a; Foo c = a;` (two
+    // ordinary, legal copies of the same value-type local) was wrongly flagged
+    // "use of moved-from value `a`" on the second copy.
+    if (analyzer_ != nullptr && analyzer_->isValueTypeClass(type)) {
+        return false;
+    }
     return classNames_.find(type) != classNames_.end() || isVectorType(type) || isMapType(type);
+}
+
+bool DanglingChecker::isStringValuedExpr(const Expression* expr) const {
+    if (expr == nullptr) return false;
+    if (dynamic_cast<const StringLiteral*>(expr) != nullptr) return true;
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        auto typeIt = localType_.find(id->name);
+        return typeIt != localType_.end() && isStringType(typeIt->second);
+    }
+    if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+        return bin->operator_str == "+" &&
+               isStringValuedExpr(bin->left.get()) &&
+               isStringValuedExpr(bin->right.get());
+    }
+    return false;
 }
 
 DanglingChecker::FunctionSummary DanglingChecker::deriveSummaryForBody(
@@ -838,7 +895,24 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             endBlockScope(ownersBefore);
             elseState = snapshotBranchState();
         }
-        mergeBranchStates(before, thenState, elseState);
+        // A branch that unconditionally exits (return/throw, or an if/else
+        // where both arms do) can never reach the code AFTER this `if` --
+        // that code only runs via the OTHER branch, so an exiting branch's
+        // effects must not be merged into the post-`if` state (they'd falsely
+        // "leak" a move/dangling-mark from a path that can't actually reach
+        // there). Only one side can meaningfully exit for this to matter (if
+        // BOTH did, every statement after the `if` is unreachable and this
+        // choice is moot); each case just uses the OTHER branch's state
+        // as-is, skipping the union mergeBranchStates would otherwise do.
+        const bool thenExits = alwaysExits(ifs->body);
+        const bool elseExits = !ifs->elseBody.empty() && alwaysExits(ifs->elseBody);
+        if (thenExits && !elseExits) {
+            restoreBranchState(elseState);
+        } else if (elseExits && !thenExits) {
+            restoreBranchState(thenState);
+        } else {
+            mergeBranchStates(before, thenState, elseState);
+        }
     } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
         checkExpressionUses(whiles->condition.get());
         // Same conservatism as `if`: the loop body may run zero or more times, so any
@@ -890,18 +964,11 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         checkExpressionUses(throwStmt->expression.get());
         // `throw` is restricted to string-typed operands this slice (CeeLing has no
         // exception-class hierarchy without inheritance -- see CLAUDE.md/TODO.md).
-        // A string literal is always fine; an identifier must resolve (via
-        // localType_, populated for string locals/params alongside object types --
-        // see checkBody/VariableDeclaration above) to `string`; anything else
-        // (a class object, a container, a numeric expression, an unresolvable
-        // expression) is rejected, per the conservative-reject rule.
-        bool isStringOperand = dynamic_cast<const StringLiteral*>(throwStmt->expression.get()) != nullptr;
-        if (!isStringOperand) {
-            if (auto id = dynamic_cast<const Identifier*>(throwStmt->expression.get())) {
-                auto typeIt = localType_.find(id->name);
-                isStringOperand = typeIt != localType_.end() && isStringType(typeIt->second);
-            }
-        }
+        // A string literal, a string-typed identifier, or a `+` concatenation of
+        // such (recursively) is fine; anything else (a class object, a container, a
+        // numeric expression, an unresolvable expression) is rejected, per the
+        // conservative-reject rule.
+        bool isStringOperand = isStringValuedExpr(throwStmt->expression.get());
         if (!isStringOperand) {
             DanglingError e;
             e.line = throwStmt->expression->loc.line;

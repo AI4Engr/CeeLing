@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ reason: `throw` accepts a `+` concatenation of string-valued operands (a string
+//@ reason: literal, a string-typed identifier, or a nested concatenation), not just
+//@ reason: a bare literal/identifier -- string concatenation has no ownership or
+//@ reason: dangling implications (always produces a fresh value), so restricting
+//@ reason: throw to a single bare operand was an arbitrary gap, not a safety rule.
+//@ run: bad path: x.yaml really
+//
+// Found while building yaml-cling's LoadFile (`throw "bad file: " + path;`) --
+// see notes/GAPS.md in yaml-cling for the motivating real-world call site.
+
+int main() {
+    string path = "x.yaml";
+    string suffix = "really";
+    try {
+        throw "bad path: " + path + " " + suffix;
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    return 0;
+}

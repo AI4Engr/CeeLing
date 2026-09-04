@@ -1,0 +1,47 @@
+//@ expect: accept
+//@ reason: `==`/`!=` between two class-typed values already work TODAY with
+//@ reason: ZERO CeeLing-specific operator-overload machinery -- `==`/`!=` are
+//@ reason: ordinary comparison operators in binary_expression (same
+//@ reason: grammar production as `<`/`>`/etc.), and a class-typed operand is
+//@ reason: always smart-pointer-backed, so the comparison compiles as
+//@ reason: `std::shared_ptr<T>::operator==`/`!=` (C++'s own built-in pointer-
+//@ reason: identity comparison) with no rewriting needed at all -- the exact
+//@ reason: "escape by construction" pattern operator*/operator++ on a value
+//@ reason: type already established, just via a completely different route
+//@ reason: (smart-pointer built-ins, not a user-defined operator).
+//@ reason: Motivated by yaml-cpp's `Node::operator==` (== `is()`, IDENTITY
+//@ reason: comparison, not structural/value comparison -- confirmed by
+//@ reason: reading yaml-cpp's own node/impl.h) needing exactly this
+//@ reason: semantics for yaml-cling; see notes/GAPS.md in yaml-cling.
+//@ run: same=1 different=1 still usable: 1
+//
+// A shared alias (via an alias-returning method) compares equal to the
+// original; two independently-constructed objects compare unequal even with
+// identical field values (IDENTITY, not structural equality) -- and the
+// compared values remain fully usable afterward (comparison is a read, never
+// a move -- BinaryExpression's existing generic handling already covers
+// this, confirmed via this fixture actually running, not just parsing).
+
+class Foo {
+public:
+    int x;
+    Foo(int v) {
+        x = v;
+    }
+    Foo getSelf() {
+        return this;
+    }
+};
+
+int main() {
+    Foo a = new Foo(1);
+    Foo aAlias = a.getSelf();
+    Foo b = new Foo(1);
+
+    bool same = (a == aAlias);
+    bool different = (a != b);
+
+    std::cout << "same=" << same << " different=" << different
+               << " still usable: " << a.x << std::endl;
+    return 0;
+}

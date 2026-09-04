@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ reason: `cling::readFileToString`/`cling::fileExists` are CeeLing-provided
+//@ reason: runtime helpers (not real std:: functions) -- the only way a .clg
+//@ reason: program can read a file at all, since CeeLing has no object
+//@ reason: construction/method-call support for foreign types like std::ifstream.
+//@ reason: Take/return only `string`/`bool`, so they need no ownership/move
+//@ reason: handling, same as std::stoi/std::stod.
+//@ run: exists=0 len=0
+//
+// A nonexistent path is used deliberately (no auxiliary fixture file needed, and the
+// safety runner compiles/runs fixtures from a scratch tmp dir where a real file
+// wouldn't exist anyway) -- proves the documented failure behavior (fileExists false,
+// readFileToString "", no crash/exception at this layer) is real, not just asserted
+// in a comment. See yaml-cling's `YAML::LoadFile` for the real call site that needed
+// BOTH helpers separately (distinguishing "file not found" from "file opened fine
+// but is empty").
+
+int main() {
+    string path = "this_file_does_not_exist_12345.yaml";
+    bool exists = cling::fileExists(path);
+    string text = cling::readFileToString(path);
+    std::cout << "exists=" << exists << " len=" << text.length() << std::endl;
+    return 0;
+}

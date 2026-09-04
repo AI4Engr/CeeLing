@@ -89,6 +89,18 @@ private:
     // className -> set of method names declared on that class (constructors excluded
     // -- they are never called by name, only via `new T(...)`, a distinct AST node).
     std::map<std::string, std::set<std::string>> classMethods_;
+    // "Class::as<int>"-style key (className + "::" + specializationKey) -> every
+    // arity (parameter count) a specialization under that key is actually
+    // declared with. ALWAYS populated for every specialization (not just ones
+    // that collide with a same-type-argument sibling), so a call's own argument
+    // count can be checked against real declared arities regardless of whether
+    // more than one exists -- see isKnownCallable's templateArg branch. Needed
+    // because `classMethods_`'s specializationKey membership alone says nothing
+    // about arity (confirmed via probe: yaml-cpp's `as<T>()`/`as<T>(T fallback)`
+    // pair needs two distinct C++ template primaries with different parameter
+    // lists, so a call to a nonexistent arity must be rejected, not silently
+    // let through to fail at the g++ stage instead).
+    std::map<std::string, std::set<size_t>> classSpecializationArities_;
     // className -> method names that are `virtual` anywhere in that class's
     // hierarchy (flattened like classMethods_, and a method marked `override` counts
     // too -- it is virtual by definition even without repeating the keyword).

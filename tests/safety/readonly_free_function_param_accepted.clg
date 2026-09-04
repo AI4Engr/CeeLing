@@ -1,0 +1,30 @@
+//@ expect: accept
+//@ reason: a free function whose body only ever READS its object-typed
+//@ reason: parameter's fields (never stores/returns/moves the parameter
+//@ reason: itself) is INFERRED read-only -- the caller's argument survives
+//@ reason: the call and can still be used afterward, matching yaml-cpp
+//@ reason: API-compatibility for functions like `Clone(const Node&)` (see
+//@ reason: yaml-cling's notes/GAPS.md). Purely structural, no annotation.
+//@ run: original=1 doubled=2 original-after=1
+//
+// `describe` only reads `n.value` (never stores/returns `n` itself) -- `a`
+// must still be usable after `describe(a)` returns.
+
+class Box {
+public:
+    int value;
+    Box(int v) {
+        value = v;
+    }
+};
+
+int describe(Box n) {
+    return n.value * 2;
+}
+
+int main() {
+    Box a = new Box(1);
+    std::cout << "original=" << a.value << " doubled=" << describe(a)
+               << " original-after=" << a.value << std::endl;
+    return 0;
+}

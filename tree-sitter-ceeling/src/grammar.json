@@ -532,8 +532,17 @@
           "name": "type"
         },
         {
-          "type": "SYMBOL",
-          "name": "identifier"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "identifier"
+            },
+            {
+              "type": "STRING",
+              "value": "operator<<"
+            }
+          ]
         },
         {
           "type": "STRING",
@@ -842,6 +851,22 @@
         {
           "type": "STRING",
           "value": "operator="
+        },
+        {
+          "type": "STRING",
+          "value": "operator*"
+        },
+        {
+          "type": "STRING",
+          "value": "operator++"
+        },
+        {
+          "type": "STRING",
+          "value": "operator!="
+        },
+        {
+          "type": "STRING",
+          "value": "operator=="
         }
       ]
     },
@@ -1385,6 +1410,14 @@
               {
                 "type": "STRING",
                 "value": "-"
+              },
+              {
+                "type": "STRING",
+                "value": "*"
+              },
+              {
+                "type": "STRING",
+                "value": "++"
               }
             ]
           },

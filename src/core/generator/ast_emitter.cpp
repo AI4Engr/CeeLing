@@ -14,7 +14,9 @@ bool isNullptrLiteral(const Expression* expr) {
 std::string AstEmitter::emit(const Program& program) {
     classNames_.clear();
     varKinds_.clear();
+    usedRuntimeHelpers_.clear();
     collectClassNames(program);
+    collectUsedRuntimeHelpers(program);
 
     std::ostringstream out;
     // Headers the lowered constructs always need (smart pointers, std::move, cout),
@@ -25,6 +27,11 @@ std::string AstEmitter::emit(const Program& program) {
                             "#include <iostream>", "#include <vector>",
                             "#include <string>", "#include <map>"}) {
         if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
+    }
+    if (!usedRuntimeHelpers_.empty()) {
+        for (const char* hdr : {"#include <fstream>", "#include <sstream>"}) {
+            if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
+        }
     }
     for (const auto& stmt : program.statements) {
         // Only THIS file's own #include lines -- an external declaration's includes
@@ -37,6 +44,9 @@ std::string AstEmitter::emit(const Program& program) {
         }
     }
     out << "\n";
+    if (!usedRuntimeHelpers_.empty()) {
+        out << requiredRuntimeHelperDefinitions(usedRuntimeHelpers_) << "\n";
+    }
 
     // Group top-level declarations by namespaceName and wrap each contiguous run in
     // `namespace X { ... }`. Desugaring (ASTBuilder::buildNamespaceDeclaration)
@@ -194,6 +204,12 @@ void AstEmitter::collectClassNames(const Program& program) {
                 }
                 methodParams[key] = method->parameters;
                 methodReturnTypes[key] = method->returnType;
+                // Every operator= overload's parameter type, tracked
+                // independently of the collapsed classMethodParams_ map --
+                // see the field's own header comment for why.
+                if (method->name == "operator=" && method->parameters.size() == 1) {
+                    operatorAssignParamTypes_[cls->name].insert(method->parameters[0].first);
+                }
             }
         }
 
@@ -211,6 +227,86 @@ void AstEmitter::collectClassNames(const Program& program) {
             classFields_[qualified] = fields;
             classMethodParams_[qualified] = methodParams;
             classMethodReturnType_[qualified] = methodReturnTypes;
+            if (auto opIt = operatorAssignParamTypes_.find(cls->name); opIt != operatorAssignParamTypes_.end()) {
+                operatorAssignParamTypes_[qualified] = opIt->second;
+            }
+        }
+    }
+}
+
+void AstEmitter::collectUsedRuntimeHelpers(const Program& program) {
+    std::function<void(const Expression*)> visitExpr = [&](const Expression* expr) {
+        if (expr == nullptr) return;
+        if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+            for (const auto& arg : call->arguments) visitExpr(arg.get());
+            if (call->callee) {
+                visitExpr(call->callee.get());
+            } else if (isKnownRuntimeHelper(call->function_name)) {
+                usedRuntimeHelpers_.insert(call->function_name);
+            }
+        } else if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
+            for (const auto& arg : neww->arguments) visitExpr(arg.get());
+        } else if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+            visitExpr(bin->left.get());
+            visitExpr(bin->right.get());
+        } else if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+            visitExpr(un->operand.get());
+        } else if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+            visitExpr(member->object.get());
+        } else if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+            visitExpr(sub->object.get());
+            visitExpr(sub->index.get());
+        }
+    };
+
+    std::function<void(const Statement*)> visitStmt = [&](const Statement* stmt) {
+        if (stmt == nullptr) return;
+        if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+            visitExpr(exprStmt->expression.get());
+        } else if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+            visitExpr(decl->expression.get());
+        } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+            visitExpr(assign->expression.get());
+        } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+            visitExpr(ret->expression.get());
+        } else if (auto th = dynamic_cast<const ThrowStatement*>(stmt)) {
+            visitExpr(th->expression.get());
+        } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
+            visitExpr(ifs->condition.get());
+            for (const auto& inner : ifs->body) visitStmt(inner.get());
+            for (const auto& inner : ifs->elseBody) visitStmt(inner.get());
+        } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+            visitExpr(whiles->condition.get());
+            for (const auto& inner : whiles->body) visitStmt(inner.get());
+        } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+            visitExpr(fors->container.get());
+            for (const auto& inner : fors->body) visitStmt(inner.get());
+        } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
+            for (const auto& inner : trys->body) visitStmt(inner.get());
+            for (const auto& inner : trys->catchBody) visitStmt(inner.get());
+        }
+    };
+
+    std::function<void(const std::vector<StatementPtr>&)> visitBody =
+        [&](const std::vector<StatementPtr>& body) {
+            for (const auto& stmt : body) visitStmt(stmt.get());
+        };
+
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            visitBody(fn->body);
+        } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
+            visitBody(mn->body);
+        } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(stmt.get())) {
+            visitBody(ctor->body);
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    visitBody(method->body);
+                } else if (auto ctor2 = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    visitBody(ctor2->body);
+                }
+            }
         }
     }
 }
@@ -354,6 +450,10 @@ std::string AstEmitter::exprObjectClass(const Expression* expr) const {
 
 bool AstEmitter::isClassType(const std::string& type) const {
     return classNames_.find(type) != classNames_.end();
+}
+
+bool AstEmitter::isValueType(const std::string& type) const {
+    return analyzer_.isValueTypeClass(type);
 }
 
 std::string AstEmitter::containerVarType(const Expression* expr) const {
@@ -610,8 +710,12 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
 
     for (const auto& member : cls.members) {
         if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
-            // Member field. Object-typed fields become smart pointers.
-            if (isClassType(var->type)) {
+            // Member field. Object-typed fields become smart pointers, EXCEPT a
+            // value-type class field (Iterator etc.), which stays a plain,
+            // unwrapped member -- consistent with every other value-type site.
+            if (isValueType(var->type)) {
+                out << indentStr(1) << var->type << " " << var->identifier << ";\n";
+            } else if (isClassType(var->type)) {
                 out << indentStr(1) << smartPointerType(var->type, var->identifier)
                     << "<" << var->type << "> " << var->identifier << ";\n";
             } else {
@@ -716,7 +820,9 @@ void AstEmitter::emitClassHeader(const ClassDeclaration& cls, std::ostringstream
 
     for (const auto& member : cls.members) {
         if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
-            if (isClassType(var->type)) {
+            if (isValueType(var->type)) {
+                out << indentStr(1) << var->type << " " << var->identifier << ";\n";
+            } else if (isClassType(var->type)) {
                 out << indentStr(1) << smartPointerType(var->type, var->identifier)
                     << "<" << var->type << "> " << var->identifier << ";\n";
             } else {
@@ -808,25 +914,52 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
     // to key by.
     currentMethodReturnsShared_ = !methodName.empty() &&
         analyzer_.getMethodReturnPointerType(ownerClass, methodName) == PointerType::SHARED;
+    currentMethodReturnsValueType_ = isValueType(returnType);
 
     // An object return type is lowered to a smart pointer so the body's owning local
     // (a smart pointer) can be returned directly (unique_ptr by default: the callee
     // constructs the object and hands sole ownership back to the caller; shared_ptr
     // only when an explicit @ptr hint says this method's return aliases rather than
     // transfers -- see the ReturnStatement branch in emitStatement for the matching
-    // copy-vs-move choice).
+    // copy-vs-move choice). A value-type class (Iterator etc.) return is a THIRD
+    // case, checked first: plain, unwrapped -- required for the C++ range-for
+    // protocol, which needs begin()/end() to return the iterator by bare value, not
+    // wrapped in a smart pointer (std::shared_ptr/unique_ptr have no operator++).
     std::string sig;
     if (isVirtual) sig += "virtual ";
     if (!returnType.empty()) {
-        sig += isClassType(returnType)
-            ? (currentMethodReturnsShared_ ? "std::shared_ptr<" : "std::unique_ptr<") + returnType + "> "
-            : cppTypeFor(returnType, "") + " ";
+        if (isOstreamType(returnType)) {
+            // std::ostream's copy constructor is deleted -- by-value is not just
+            // suboptimal here the way it is for a value-type class, it does not
+            // compile at all. Checked FIRST (before value-type/class-type), since
+            // "ostream" would otherwise fall into the generic non-class-type
+            // cppTypeFor(...) branch below, which emits the bare, unqualified,
+            // by-value type name -- invalid C++ for this specific type.
+            sig += "std::ostream& ";
+        } else if (currentMethodReturnsValueType_) {
+            sig += returnType + " ";
+        } else {
+            sig += isClassType(returnType)
+                ? (currentMethodReturnsShared_ ? "std::shared_ptr<" : "std::unique_ptr<") + returnType + "> "
+                : cppTypeFor(returnType, "") + " ";
+        }
     }
     sig += name + "(";
     for (size_t i = 0; i < params.size(); ++i) {
         if (i > 0) sig += ", ";
         const auto& [ptype, pname] = params[i];
-        if (isClassType(ptype)) {
+        if (isOstreamType(ptype)) {
+            // Same reasoning as the return-type branch above -- must be a
+            // reference, std::ostream cannot be passed by value at all.
+            sig += "std::ostream& " + pname;
+            noteVar(pname, VarKind::Value);
+        } else if (isValueType(ptype)) {
+            // Passed by value, like an ordinary primitive -- value types are meant
+            // to be cheap to copy (e.g. an iterator wrapping a single Node handle).
+            sig += ptype + " " + pname;
+            noteVar(pname, VarKind::Value);
+            varClass_[pname] = ptype;
+        } else if (isClassType(ptype)) {
             // A parameter's smart-pointer type is derived by SmartPointerAnalyzer
             // exactly like a local's (it registers parameters in its first pass now
             // -- see analyzeStatement), so it reflects real usage inside the body
@@ -866,6 +999,12 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     const std::string savedClass = currentClass_;
     currentClass_ = ownerClass;
     const bool savedReturnsShared = currentMethodReturnsShared_;
+    const bool savedReturnsValueType = currentMethodReturnsValueType_;
+    const std::string savedFunctionName = currentFunctionName_;
+    const std::set<std::string> savedParamNames = currentParamNames_;
+    currentFunctionName_ = methodName.empty() ? name : methodName;
+    currentParamNames_.clear();
+    for (const auto& [ptype, pname] : params) currentParamNames_.insert(pname);
 
     std::string sig = buildFunctionSignature(returnType, name, params, ownerClass, isConst,
                                              isVirtual, isOverride, methodName);
@@ -881,6 +1020,9 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
 
     currentClass_ = savedClass;
     currentMethodReturnsShared_ = savedReturnsShared;
+    currentMethodReturnsValueType_ = savedReturnsValueType;
+    currentFunctionName_ = savedFunctionName;
+    currentParamNames_ = savedParamNames;
 }
 
 std::string AstEmitter::emitMovedArg(const Expression* arg,
@@ -937,6 +1079,27 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
                 ? "nullptr"
                 : "(" + emitExpression(decl->expression.get()) + ").get()";
             out << pad << decl->type << "* " << decl->identifier << " = " << rhs << ";\n";
+        } else if (isValueType(decl->type)) {
+            // Value-type class (Iterator etc.): plain, unwrapped declaration, copied
+            // (not moved) -- matches an ordinary primitive local's own emission shape
+            // just below, except the declared type is a class name instead of a
+            // primitive. `new ClassName(...)` on the RHS becomes a plain constructor
+            // call (no make_unique/make_shared factory), since there's no smart
+            // pointer to construct into.
+            noteVar(decl->identifier, VarKind::Value);
+            varClass_[decl->identifier] = decl->type;
+            std::string rhs;
+            if (auto neww = dynamic_cast<const NewExpression*>(decl->expression.get())) {
+                rhs = neww->className + "(";
+                for (size_t i = 0; i < neww->arguments.size(); ++i) {
+                    if (i > 0) rhs += ", ";
+                    rhs += emitExpression(neww->arguments[i].get());
+                }
+                rhs += ")";
+            } else {
+                rhs = emitExpression(decl->expression.get());
+            }
+            out << pad << decl->type << " " << decl->identifier << " = " << rhs << ";\n";
         } else if (isClassType(decl->type)) {
             // A local initialized from a @ptr-shared-hinted method's return MUST
             // itself be shared_ptr -- the C++ initializer expression is already a
@@ -1009,11 +1172,59 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         if (!memberTarget && !subscriptTarget && !isCurrentField(assign->variable)) {
             Identifier lhsId(assign->variable);
             const std::string lhsClass = exprObjectClass(&lhsId);
-            if (!lhsClass.empty() && exprObjectClass(assign->expression.get()) != lhsClass) {
-                auto clsIt = classMethodParams_.find(lhsClass);
-                const bool hasOperatorAssign = clsIt != classMethodParams_.end() &&
-                    clsIt->second.count("operator=") > 0;
-                if (hasOperatorAssign) {
+            const std::string rhsClass = exprObjectClass(assign->expression.get());
+            // Looked up via operatorAssignParamTypes_ (every operator=
+            // overload's OWN parameter type, per class), not
+            // classMethodParams_["operator="] -- a class declaring both
+            // operator=(string) and operator=(SameClass) (RB18's yaml-cling
+            // Node) has two arity-1 overloads that collide under
+            // classMethodParams_'s arity-only overloadKey, so that map alone
+            // cannot tell whether EITHER overload exists once there's more
+            // than one (see operatorAssignParamTypes_'s header comment).
+            if (auto opIt = operatorAssignParamTypes_.find(lhsClass); opIt != operatorAssignParamTypes_.end()) {
+                // Same-class RHS (`n = otherNode;`) only routes through
+                // operator= when the class declares a HANDLE-REBIND overload
+                // whose OWN parameter type is the class itself (yaml-cpp's
+                // Node::operator=(const Node&) shape: mutate `n`'s pointee in
+                // place so every alias of `n` observes the change) AND `n`
+                // is itself a PARAMETER already classified read-only (mutated
+                // in place across calls, never stored/returned) -- otherwise
+                // it falls through to ordinary owner-reassignment below
+                // (ownership move, plain shared_ptr/unique_ptr repoint).
+                //
+                // This second condition is load-bearing, not a nicety: an
+                // ORDINARY LOCAL reassigned in a loop (`cur =
+                // cur.nextSibling();`, yaml_emitter.clg's tree walk) has the
+                // exact same "same-class RHS" AST shape as `parseValueInto`'s
+                // `target` handle-rebind, but needs the OPPOSITE semantics --
+                // a plain repoint, not an in-place payload mutation (routing
+                // it through operator= caused a real, confirmed segfault:
+                // `cur->operator=(cur->nextSibling())` mutates `cur`'s OWN
+                // payload using a value computed from `cur` itself, and
+                // breaks entirely once nextSibling() returns null at the end
+                // of a chain). CeeLing has no syntax to distinguish "rebind
+                // this shared alias" from "advance this loop variable" --
+                // both are spelled `x = y;` identically -- so the read-only-
+                // parameter classification (built for exactly this need,
+                // Step 29/33) is reused as the disambiguating signal: a
+                // parameter that's read-only is, by construction, meant to
+                // keep referring to "the same logical Node" across the
+                // method's whole body, which is exactly the handle-rebind
+                // contract; an ordinary local has no such guarantee and
+                // defaults to the ordinary move/repoint every other object
+                // local already gets. A non-same-class RHS (e.g. a string)
+                // still routes through operator= whenever ANY overload
+                // exists, unaffected by this gate (matches the pre-existing
+                // `operator=(string)` behavior, never ambiguous with a loop
+                // variable since a string can't need handle-rebind semantics
+                // at all).
+                const bool lhsIsReadOnlyParam = currentParamNames_.count(assign->variable) > 0 &&
+                    (analyzer_.isReadOnlyMethodParam(currentClass_, currentFunctionName_, assign->variable) ||
+                     analyzer_.isReadOnlyFreeFunctionParam(currentFunctionName_, assign->variable));
+                const bool hasMatchingOverload = (rhsClass == lhsClass)
+                    ? (opIt->second.count(lhsClass) > 0 && lhsIsReadOnlyParam)
+                    : !opIt->second.empty();
+                if (hasMatchingOverload) {
                     out << pad << lhs << "->operator=(" << emitExpression(assign->expression.get())
                         << ");\n";
                     return;
@@ -1035,8 +1246,19 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
             // declaration: `.get()` extracts the new address, or `nullptr` directly.
             rhs = rhsIsNullptr ? "nullptr" : "(" + emitExpression(assign->expression.get()) + ").get()";
         } else if (auto neww = dynamic_cast<const NewExpression*>(assign->expression.get())) {
-            // `target = new T(...)` -> make_*<T>(...) with the target field's ptr kind.
-            rhs = factoryFor(neww->className, ptrVar, neww->arguments);
+            if (isValueType(neww->className)) {
+                // `target = new T(...)` for a value-type class: plain constructor
+                // call, matching every other value-type construction site.
+                rhs = neww->className + "(";
+                for (size_t i = 0; i < neww->arguments.size(); ++i) {
+                    if (i > 0) rhs += ", ";
+                    rhs += emitExpression(neww->arguments[i].get());
+                }
+                rhs += ")";
+            } else {
+                // `target = new T(...)` -> make_*<T>(...) with the target field's ptr kind.
+                rhs = factoryFor(neww->className, ptrVar, neww->arguments);
+            }
         } else if (rhsIsNullptr && !ptrVar.empty() &&
                    analyzer_.getPointerTypeForVariable(ptrVar) == PointerType::WEAK) {
             // weak_ptr has no operator=(nullptr_t); default-construct instead (an empty
@@ -1044,6 +1266,11 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
             rhs = "{}";
         } else if (memberTarget) {
             // `a.b = obj;` links/shares into a field — it does not consume `obj`.
+            rhs = emitExpression(assign->expression.get());
+        } else if (!ptrVar.empty() && isValueType(varClass_.count(ptrVar) ? varClass_.at(ptrVar) : "")) {
+            // `x = a;` where `x` is a value-type class: a plain copy, like any
+            // other value-type site -- never moved (value types aren't smart
+            // pointers, there's nothing to move).
             rhs = emitExpression(assign->expression.get());
         } else {
             // `x = a;` transfers ownership of an object local.
@@ -1058,7 +1285,30 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         // `return a.value;`) fall through unchanged.
         std::string rhs;
         auto retId = dynamic_cast<const Identifier*>(ret->expression.get());
-        if (currentMethodReturnsShared_ && retId != nullptr && retId->name == "this") {
+        if (currentMethodReturnsValueType_) {
+            // Value-type return: plain, unwrapped, copied (never moved) -- matches
+            // the value-type VariableDeclaration branch's own RHS handling above.
+            if (auto neww = dynamic_cast<const NewExpression*>(ret->expression.get())) {
+                rhs = neww->className + "(";
+                for (size_t i = 0; i < neww->arguments.size(); ++i) {
+                    if (i > 0) rhs += ", ";
+                    rhs += emitExpression(neww->arguments[i].get());
+                }
+                rhs += ")";
+            } else if (retId != nullptr && retId->name == "this") {
+                // `this` is ALWAYS a raw pointer in C++ (Type*), regardless of
+                // value-type-ness -- `return this;` with a plain (non-pointer)
+                // return type does not compile (confirmed via direct probe:
+                // "invalid conversion from 'Foo*' to 'int'" against Foo's own
+                // constructor, since the compiler tries to construct a NEW Foo
+                // from the pointer). Dereference to get the actual object, which
+                // is then copy-constructed into the return value, same as any
+                // other value-type return.
+                rhs = "*this";
+            } else {
+                rhs = emitExpression(ret->expression.get());
+            }
+        } else if (currentMethodReturnsShared_ && retId != nullptr && retId->name == "this") {
             // `return this;` from a @ptr-shared-hinted method: shared_from_this()
             // aliases the object's OWN existing shared_ptr control block (set up by
             // enable_shared_from_this, wired in by emitClass/classNeedsSharedFromThis
@@ -1126,11 +1376,43 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         containerVarType_[cdecl->identifier] = cdecl->type;
         out << pad << cppTypeFor(cdecl->type, cdecl->identifier) << " " << cdecl->identifier << ";\n";
     } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+        // The CONTAINER expression itself needs a `*` dereference when it's a
+        // smart-pointer-wrapped CLASS instance with its own MEMBER begin()/end()
+        // (e.g. `for (Node x : range)` where `range` is shared_ptr<Range> and
+        // Range::begin()/end() are member methods) -- a smart pointer has no
+        // begin()/end() of its own, so real C++ range-for on the bare pointer
+        // fails to compile (confirmed via direct probe: "no matching function for
+        // call to 'begin(std::unique_ptr<Range>&)'"). std::vector<T>/
+        // std::map<K,V> containers are NEVER pointer-wrapped (ordinary
+        // value-typed locals), so this only ever fires for a CeeLing-class
+        // container -- and never for a value-type class (Iterator etc.), which
+        // is already unwrapped and needs no dereference either.
+        //
+        // Do NOT dereference when the container class has NO member begin() --
+        // this means iteration relies on ADL-found FREE functions instead (the
+        // standard C++ idiom for adding iteration to a type without adding
+        // member methods to it, used here specifically to break a circular
+        // class-ordering dependency CeeLing's lack of forward-declaration syntax
+        // can't otherwise resolve -- e.g. Node/Iterator, where Node can't
+        // reference Iterator as a member return type before Iterator exists, and
+        // Iterator can't reference Node before Node exists). CeeLing always
+        // generates a class-typed free-function PARAMETER as smart-pointer-
+        // wrapped, matching the UNDEREFERENCED container variable's own type --
+        // dereferencing here would break ADL lookup (confirmed via direct probe:
+        // dereferencing produced `begin(Node&)`, found no candidates, since the
+        // only declared `begin` took `shared_ptr<Node>`).
+        const std::string containerClass = exprObjectClass(fors->container.get());
+        const bool hasMemberBegin = [&] {
+            auto it = classMethodParams_.find(containerClass);
+            return it != classMethodParams_.end() && it->second.count("begin") > 0;
+        }();
+        const bool derefContainer = !containerClass.empty() && !isValueType(containerClass)
+            && hasMemberBegin;
+
         // Range-for matches native C++ syntax 1:1 -- no translation needed beyond
         // the class-typed-element type mapping (Node -> shared_ptr<Node> or
-        // unique_ptr<Node>, matching the CONTAINER's own decided element kind --
-        // see cppTypeFor/SmartPointerAnalyzer::containerElementIsShared -- so the
-        // loop variable's type actually matches what the container yields).
+        // unique_ptr<Node>, so the loop variable's type actually matches what
+        // the container yields).
         std::string elemCppType = fors->loopVarType;
         bool elementIsUnique = false;
         if (isClassType(fors->loopVarType)) {
@@ -1138,7 +1420,30 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
             if (auto id = dynamic_cast<const Identifier*>(fors->container.get())) {
                 containerName = id->name;
             }
-            elementIsUnique = !analyzer_.containerElementIsShared(containerName);
+            // Two genuinely different sources for the element's pointer kind,
+            // depending on iteration style: a std::vector<T>/std::map<K,V>
+            // container's element kind comes from SmartPointerAnalyzer::
+            // containerElementIsShared (decided across its own push_back call
+            // sites). An ADL-found free `begin()`'s element kind (only relevant
+            // when there's no MEMBER begin, i.e. the same condition
+            // derefContainer/hasMemberBegin already gates) instead comes from
+            // `*begin()`'s OWN declared return pointer kind (Iterator::
+            // operator*() -- confirmed via direct probe that these are
+            // independently decided and can disagree: containerElementIsShared
+            // has no signal at all for a non-vector container, silently
+            // defaulting to unique, while operator*() may have been inferred
+            // shared, producing a loop variable type that doesn't match what
+            // operator*() actually returns). Assumes at most one free `begin`
+            // in the program (narrowly scoped to yaml-cling's single-iterable-
+            // type use case, not a general multi-iterable-type lookup).
+            std::string beginReturnClass = (!hasMemberBegin && functionReturnType_.count("begin"))
+                ? functionReturnType_.at("begin") : "";
+            if (!beginReturnClass.empty() &&
+                analyzer_.getMethodReturnPointerType(beginReturnClass, "operator*") == PointerType::SHARED) {
+                elementIsUnique = false;
+            } else {
+                elementIsUnique = !analyzer_.containerElementIsShared(containerName);
+            }
             elemCppType = (elementIsUnique ? "std::unique_ptr<" : "std::shared_ptr<") +
                           fors->loopVarType + ">";
         }
@@ -1147,7 +1452,8 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         // stay by-value, matching how CeeLing's model treats a shared_ptr local
         // elsewhere.
         out << pad << "for (" << elemCppType << (elementIsUnique ? "& " : " ")
-            << fors->loopVarName << " : " << emitExpression(fors->container.get()) << ") {\n";
+            << fors->loopVarName << " : " << (derefContainer ? "*" : "")
+            << emitExpression(fors->container.get()) << ") {\n";
         if (isClassType(fors->loopVarType)) {
             // The loop variable is a shared_ptr<T> per iteration -- register it like
             // any other smart-pointer local so member access inside the body lowers
@@ -1221,15 +1527,92 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         if (bin->operator_str == "<<") {
             return emitExpression(bin->left.get()) + " << " + emitExpression(bin->right.get());
         }
+        // `a == b`/`a != b` where BOTH operands are the SAME smart-pointer-
+        // backed class AND that class declares its own operator==/!=: route
+        // through the user's overload explicitly (`a->operator==(*b)`), since
+        // `a`/`b` are shared_ptr<T> VARIABLES at the generated-C++ level, not
+        // T objects directly -- plain `a == b` would compare shared_ptr
+        // IDENTITY (which pointer object), never reaching T::operator== at
+        // all. This is different from the pre-existing "== already works
+        // with zero changes" case (RB16): that relied on shared_ptr's OWN
+        // built-in identity comparison matching yaml-cpp's is() semantics
+        // exactly, which was true ONLY because Node WAS its own payload one
+        // handle == one node. Once a class introduces its own handle/payload
+        // split (RB18's Node/NodeData: two DIFFERENT Node handles can wrap
+        // the SAME payload), shared_ptr identity stops matching "same node"
+        // and the class needs its own operator== reaching through to the
+        // payload -- confirmed as a real regression via yaml-cling's own
+        // `root["name"] == root["name"]` (two separate operator[] calls,
+        // same underlying entry) wrongly comparing false after RB18 without
+        // this routing. A value-type class (Iterator) is UNAFFECTED --
+        // its operands are never smart-pointer-wrapped, so plain `a == b`
+        // already resolves to its own operator== via ordinary C++ overload
+        // resolution, matching operator!='s existing (also un-routed)
+        // behavior for value types.
+        if (bin->operator_str == "==" || bin->operator_str == "!=") {
+            const std::string leftClass = exprObjectClass(bin->left.get());
+            const std::string rightClass = exprObjectClass(bin->right.get());
+            // Excludes comparing a bare FIELD of the CURRENT class (e.g.
+            // Iterator's own `current != other.current`, where `current`
+            // is `this->current`, a Node-typed field of Iterator itself):
+            // that comparison is checking HANDLE identity for iteration
+            // termination (needs to work when `current` is a genuinely null
+            // shared_ptr, i.e. the end() sentinel), not payload identity --
+            // routing it through the user's operator==/!= would call the
+            // method ON a possibly-null receiver (`this->current->operator!=
+            // (...)` when `current` is null), which is undefined behavior
+            // (confirmed as a real segfault via the range-for termination
+            // check crashing at the last element). A genuine EXTERNAL
+            // comparison (`root == other` in `main()`) is unaffected: `root`
+            // is not a field of any enclosing class there.
+            const auto leftId = dynamic_cast<const Identifier*>(bin->left.get());
+            const bool leftIsOwnField = leftId != nullptr && isCurrentField(leftId->name);
+            if (!leftClass.empty() && leftClass == rightClass && !leftIsOwnField &&
+                !analyzer_.isValueTypeClass(leftClass)) {
+                // Method names are stored WITH the "operator" prefix
+                // (classMethodParams_ keys by method->name verbatim, e.g.
+                // "operator==", never the bare symbol) -- confirmed via
+                // direct probe after this check first looked up the bare
+                // `bin->operator_str` ("==") and silently never matched.
+                const std::string methodName = "operator" + bin->operator_str;
+                auto clsIt = classMethodParams_.find(leftClass);
+                if (clsIt != classMethodParams_.end() && clsIt->second.count(methodName) > 0) {
+                    // The method parameter is `Node` (by value, like every
+                    // other CeeLing object parameter -- lowered to
+                    // shared_ptr<Node>), so the RHS is passed AS-IS (the
+                    // shared_ptr itself), not dereferenced -- `*b` would
+                    // yield `Node&`, not `shared_ptr<Node>`, a type mismatch.
+                    return emitExpression(bin->left.get()) + "->" + methodName + "("
+                           + emitExpression(bin->right.get()) + ")";
+                }
+            }
+        }
         return "(" + emitExpression(bin->left.get()) + " " + bin->operator_str + " "
                + emitExpression(bin->right.get()) + ")";
     }
     if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
-        // Prefix operator: `!x`, `-x`.
+        // Prefix operator: `!x`, `-x`, `*x`, `++x`. No rewriting needed for the
+        // latter two even on a value-type class operand (Iterator etc.): unlike
+        // operator[]/operator=, a value-type instance is never smart-pointer-
+        // wrapped, so literal `*it`/`++it` in the generated C++ already resolves
+        // to the user's own operator*/operator++ via ordinary C++ overload
+        // resolution -- nothing here needs to know or care that `it` has a
+        // user-defined operator at all.
         return un->operator_str + emitExpression(un->operand.get());
     }
     if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
-        // `new T(...)` outside a typed declaration: default to make_shared.
+        // `new T(...)` outside a typed declaration. A value-type class (Iterator
+        // etc.) becomes a plain constructor call, matching every other value-type
+        // construction site; everything else defaults to make_shared as before.
+        if (isValueType(neww->className)) {
+            std::string s = neww->className + "(";
+            for (size_t i = 0; i < neww->arguments.size(); ++i) {
+                if (i > 0) s += ", ";
+                s += emitExpression(neww->arguments[i].get());
+            }
+            s += ")";
+            return s;
+        }
         std::string s = "std::make_shared<" + neww->className + ">(";
         for (size_t i = 0; i < neww->arguments.size(); ++i) {
             if (i > 0) s += ", ";
@@ -1251,7 +1634,8 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             // isKnownCallable, resolveCallReturnAlias) are a separate, analysis-only
             // mechanism and must agree in spirit but not literally emit anything here.
             const std::string recv = emitExpression(m->object.get());
-            const std::string op = exprObjectClass(m->object.get()).empty() ? "." : "->";
+            const std::string mClass = exprObjectClass(m->object.get());
+            const std::string op = (mClass.empty() || isValueType(mClass)) ? "." : "->";
             prefix = recv + op + m->member;
             if (!call->templateArg.empty()) {
                 prefix += "<" + cppTypeFor(call->templateArg, "") + ">";
@@ -1316,9 +1700,10 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
     }
     if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
         // `->` if the object is a smart-pointer-to-object (including nested access and
-        // this-> fields); `.` for references and plain values.
+        // this-> fields); `.` for references, value types, and plain values.
         const std::string objStr = emitExpression(member->object.get());
-        const std::string op = exprObjectClass(member->object.get()).empty() ? "." : "->";
+        const std::string memberClass = exprObjectClass(member->object.get());
+        const std::string op = (memberClass.empty() || isValueType(memberClass)) ? "." : "->";
         return objStr + op + member->member;
     }
     if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {

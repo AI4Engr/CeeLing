@@ -10,6 +10,7 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
     classFields_.clear();
     knownFreeFunctions_.clear();
     classMethods_.clear();
+    classSpecializationArities_.clear();
     collectClasses(program);
     collectCallables(program);
 
@@ -105,6 +106,23 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
                 baseIt != classVirtualMethods_.end()) {
                 virtuals = baseIt->second;
             }
+            // Inherit the base's specialization arities too, re-keyed under
+            // THIS class's own name (classSpecializationArities_ is keyed by
+            // "Class::specKey", not flattened via a shared className->set map
+            // the way classMethods_ is, so a derived class needs its own
+            // explicit copy). Snapshotted into a separate vector first --
+            // inserting into classSpecializationArities_ while iterating it
+            // directly would invalidate the iteration.
+            const std::string basePrefix = cls->baseClass + "::";
+            std::vector<std::pair<std::string, std::set<size_t>>> inherited;
+            for (const auto& [key, arities] : classSpecializationArities_) {
+                if (key.compare(0, basePrefix.size(), basePrefix) == 0) {
+                    inherited.emplace_back(cls->name + "::" + key.substr(basePrefix.size()), arities);
+                }
+            }
+            for (auto& [key, arities] : inherited) {
+                classSpecializationArities_[key] = std::move(arities);
+            }
         }
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
@@ -122,6 +140,19 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
                 if (method->isVirtual || method->isOverride) {
                     virtuals.insert(key);
                 }
+                // Record this specialization's own declared arity, ALWAYS (not
+                // just when a same-type-argument sibling collides) -- see
+                // classSpecializationArities_'s own comment for why plain
+                // classMethods_ membership alone can't answer "was THIS call's
+                // arity ever actually declared" (yaml-cpp's `as<T>()` vs
+                // `as<T>(T fallback)` pair needs two real, differently-shaped
+                // C++ template primaries -- confirmed via probe that a call to
+                // a nonexistent arity, e.g. `as<int>(99)` when only `as<int>()`
+                // exists, produced generated C++ that fails to compile, yet
+                // isKnownCallable's plain membership check let it through).
+                if (!method->specializationArg.empty()) {
+                    classSpecializationArities_[cls->name + "::" + key].insert(method->parameters.size());
+                }
             }
         }
 
@@ -129,22 +160,55 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
             const std::string qualified = cls->namespaceName + "::" + cls->name;
             classMethods_[qualified] = methods;
             classVirtualMethods_[qualified] = virtuals;
+            const std::string ownPrefix = cls->name + "::";
+            std::vector<std::pair<std::string, std::set<size_t>>> requalified;
+            for (const auto& [key, arities] : classSpecializationArities_) {
+                if (key.compare(0, ownPrefix.size(), ownPrefix) == 0) {
+                    requalified.emplace_back(qualified + "::" + key.substr(ownPrefix.size()), arities);
+                }
+            }
+            for (auto& [key, arities] : requalified) {
+                classSpecializationArities_[key] = std::move(arities);
+            }
         }
     }
 }
 
 std::string EscapeHatchChecker::resolveDeclaredType(const Expression* expr) const {
-    auto id = dynamic_cast<const Identifier*>(expr);
-    if (id == nullptr) return {};
-    if (auto it = localType_.find(id->name); it != localType_.end()) {
-        return it->second;
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        if (auto it = localType_.find(id->name); it != localType_.end()) {
+            return it->second;
+        }
+        if (!currentClass_.empty()) {
+            if (auto clsIt = classFields_.find(currentClass_); clsIt != classFields_.end()) {
+                if (auto fIt = clsIt->second.find(id->name); fIt != clsIt->second.end()) {
+                    return fIt->second;
+                }
+            }
+        }
+        return {};
     }
-    if (!currentClass_.empty()) {
-        if (auto clsIt = classFields_.find(currentClass_); clsIt != classFields_.end()) {
-            if (auto fIt = clsIt->second.find(id->name); fIt != clsIt->second.end()) {
+    // A chained field access (`data.scalar.length()`, receiver is
+    // `data.scalar`, a MemberAccess, not a bare Identifier): resolve the
+    // OBJECT half (`data`) to its class via resolveObjectType (already walks
+    // arbitrary MemberAccess chains through classFields_), then look up the
+    // final member's OWN declared type in that class's field map. Needed for
+    // RB18 (Node::operator= alias-rebind): yaml_node.clg's fields now live one
+    // level down through a `NodeData data` indirection, so a receiver like
+    // `data.scalar` (a string-typed field of a class-typed field) must resolve
+    // to "string" for `.length()`/`.substr()` to pass the string-method
+    // allow-list below -- before this, only a bare identifier receiver
+    // resolved at all, so any method call through a chained field access was
+    // wrongly rejected as unknown (default-reject caught a legitimate call).
+    if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+        const std::string objClass = resolveObjectType(member->object.get());
+        if (objClass.empty()) return {};
+        if (auto clsIt = classFields_.find(objClass); clsIt != classFields_.end()) {
+            if (auto fIt = clsIt->second.find(member->member); fIt != clsIt->second.end()) {
                 return fIt->second;
             }
         }
+        return {};
     }
     return {};
 }
@@ -176,23 +240,47 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         // SPECIALIZATION's synthetic key, never the bare method name -- a
         // specialization must exist for the exact requested type, matching real
         // C++ (there is no implicit conversion between specializations).
-        const std::string key = call.templateArg.empty()
-            ? member->member
-            : specializationKey(member->member, call.templateArg);
-        return it->second.count(key) > 0;
+        if (call.templateArg.empty()) {
+            return it->second.count(member->member) > 0;
+        }
+        const std::string key = specializationKey(member->member, call.templateArg);
+        if (it->second.count(key) == 0) return false;
+        // A type-argument match alone isn't enough -- the call's own argument
+        // COUNT must match one of this specialization's actually-declared
+        // arities too (yaml-cpp's `as<T>()` vs `as<T>(T fallback)` are two
+        // separate C++ template primaries at different arities; a call to a
+        // nonexistent arity, e.g. `as<int>(99)` when only `as<int>()` was ever
+        // declared, must be rejected here -- confirmed via probe that the
+        // generated C++ for that case does not compile, yet a plain type-only
+        // membership check let it through).
+        auto arityIt = classSpecializationArities_.find(objClass + "::" + key);
+        return arityIt != classSpecializationArities_.end() &&
+               arityIt->second.count(call.arguments.size()) > 0;
     }
     // Plain call `f(args)`: either a free function, or -- inside a method body -- a
     // bare same-class method call with an implicit `this` receiver, or a qualified
     // library free function on the allow-list (`std::stoi(x)`).
     if (call.templateArg.empty() && knownFreeFunctions_.count(call.function_name) > 0) return true;
     if (call.templateArg.empty() && isKnownQualifiedFreeFunction(call.function_name)) return true;
+    if (call.templateArg.empty() && isKnownRuntimeHelper(call.function_name)) return true;
     if (!currentClass_.empty()) {
         auto it = classMethods_.find(currentClass_);
         if (it != classMethods_.end()) {
-            const std::string key = call.templateArg.empty()
-                ? call.function_name
-                : specializationKey(call.function_name, call.templateArg);
-            if (it->second.count(key) > 0) return true;
+            if (call.templateArg.empty()) {
+                if (it->second.count(call.function_name) > 0) return true;
+            } else {
+                // Same type-then-arity check as the receiver-qualified branch
+                // above, for a bare same-class call (`as<int>(99)` with an
+                // implicit `this`).
+                const std::string key = specializationKey(call.function_name, call.templateArg);
+                if (it->second.count(key) > 0) {
+                    auto arityIt = classSpecializationArities_.find(currentClass_ + "::" + key);
+                    if (arityIt != classSpecializationArities_.end() &&
+                        arityIt->second.count(call.arguments.size()) > 0) {
+                        return true;
+                    }
+                }
+            }
         }
     }
     return false;
