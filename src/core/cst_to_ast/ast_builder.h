@@ -14,6 +14,17 @@ public:
     ASTBuilder& operator=(const ASTBuilder&) = delete;
     ProgramPtr buildProgram(const std::string& source);
 
+    // Re-attempts splicing every entry in program.unresolvedExternalSpecializations
+    // into its target class's `members` (see Program::unresolvedExternalSpecializations'
+    // comment). buildProgram calls this once internally for the common same-file
+    // case; main.cpp must call it AGAIN after mergeExternalDeclarations, since only
+    // that later step can bring in a target class declared in a different .clg file
+    // reached via #include. Throws error[semantic/unknown-specialization-target] for
+    // any entry still unresolved after this call (the caller is expected to call this
+    // only once merging is fully done, so "still not found" here means genuinely
+    // unknown, not "not merged in yet"). No-op if the list is already empty.
+    static void spliceExternalSpecializations(Program& program);
+
 private:
     TSParser* parser;
 
@@ -40,6 +51,14 @@ private:
     std::vector<StatementPtr> buildNamespaceDeclaration(TSNode node, const std::string& source);
     StatementPtr buildConstructorDeclaration(TSNode node, const std::string& source);
     StatementPtr buildMethodDeclaration(TSNode node, const std::string& source);
+    // Not reachable from buildStatement's own dispatch -- called directly from
+    // buildProgram (mirrors buildNamespaceDeclaration's own reasoning: the
+    // result must be spliced into an EXISTING class's members elsewhere,
+    // which doesn't fit buildStatement's one-node-in/one-statement-out
+    // contract). `targetClass` is an out-parameter: the class name parsed
+    // from the `ClassName::` qualifier.
+    StatementPtr buildExternalMethodSpecialization(TSNode node, const std::string& source,
+                                                    std::string& targetClass);
     StatementPtr buildMainFunction(TSNode node, const std::string& source);
     StatementPtr buildReturnStatement(TSNode node, const std::string& source);
     StatementPtr buildIfStatement(TSNode node, const std::string& source);

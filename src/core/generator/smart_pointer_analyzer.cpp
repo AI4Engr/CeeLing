@@ -317,15 +317,17 @@ bool SmartPointerAnalyzer::classNeedsSharedFromThis(const std::string& className
 void SmartPointerAnalyzer::scanContainerElementKinds(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
-            for (const auto& inner : fn->body) scanContainerElementKindsInStatement(*inner);
+            for (const auto& inner : fn->body) scanContainerElementKindsInStatement(*inner, fn->name);
         } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
-            for (const auto& inner : mn->body) scanContainerElementKindsInStatement(*inner);
+            for (const auto& inner : mn->body) scanContainerElementKindsInStatement(*inner, "main");
         } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
             for (const auto& member : cls->members) {
                 if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                    for (const auto& inner : method->body) scanContainerElementKindsInStatement(*inner);
+                    const std::string scope = cls->name + "::" + method->name;
+                    for (const auto& inner : method->body) scanContainerElementKindsInStatement(*inner, scope);
                 } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
-                    for (const auto& inner : ctor->body) scanContainerElementKindsInStatement(*inner);
+                    const std::string scope = cls->name + "::" + ctor->name;
+                    for (const auto& inner : ctor->body) scanContainerElementKindsInStatement(*inner, scope);
                 }
             }
         }
@@ -342,11 +344,12 @@ const Identifier* asIdentifier(const Expression* expr) {
 }
 } // namespace
 
-void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement& stmt) {
+void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement& stmt,
+                                                                  const std::string& scopeName) {
     // Only need to find `<container>.push_back(<arg>)` call expressions, wherever
     // they appear (as a bare expression statement or nested in an initializer) --
     // recurse into every statement shape that can contain one.
-    auto visitExpr = [this](const Expression* expr) {
+    auto visitExpr = [this, &scopeName](const Expression* expr) {
         auto call = dynamic_cast<const FunctionCall*>(expr);
         if (call == nullptr || !call->callee) return;
         auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
@@ -357,7 +360,13 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
 
         // Resolve the argument's OWN already-decided pointer kind via its symbol
         // type (registered the same way locals/parameters/fields already are).
-        const auto typeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, arg->name));
+        // Precise scope first -- see scanContainerElementKindsInStatement's
+        // header comment for why the kGlobalScope fallback alone collides
+        // across unrelated functions/methods sharing a local's bare name.
+        auto typeIt = symbolTypesByScope.find(makeSymbolKey(scopeName, arg->name));
+        if (typeIt == symbolTypesByScope.end()) {
+            typeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, arg->name));
+        }
         if (typeIt == symbolTypesByScope.end()) return;
         if (getPointerType(typeIt->second, arg->name) == PointerType::SHARED) {
             containerElementShared_[recv->name] = true;
@@ -373,12 +382,12 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(&stmt)) {
         if (assign->expression) visitExpr(assign->expression.get());
     } else if (auto ifs = dynamic_cast<const IfStatement*>(&stmt)) {
-        for (const auto& inner : ifs->body) scanContainerElementKindsInStatement(*inner);
-        for (const auto& inner : ifs->elseBody) scanContainerElementKindsInStatement(*inner);
+        for (const auto& inner : ifs->body) scanContainerElementKindsInStatement(*inner, scopeName);
+        for (const auto& inner : ifs->elseBody) scanContainerElementKindsInStatement(*inner, scopeName);
     } else if (auto whiles = dynamic_cast<const WhileStatement*>(&stmt)) {
-        for (const auto& inner : whiles->body) scanContainerElementKindsInStatement(*inner);
+        for (const auto& inner : whiles->body) scanContainerElementKindsInStatement(*inner, scopeName);
     } else if (auto fors = dynamic_cast<const ForStatement*>(&stmt)) {
-        for (const auto& inner : fors->body) scanContainerElementKindsInStatement(*inner);
+        for (const auto& inner : fors->body) scanContainerElementKindsInStatement(*inner, scopeName);
     }
 }
 
@@ -530,6 +539,24 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
         std::vector<const MethodDeclaration*> methods;
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                // A specialization (in-class OR spliced in externally, see
+                // ASTBuilder's isExternalSpecialization) is excluded: every
+                // set/map in this whole function (aliasReturning,
+                // notAliasReturning, and the methodReturnKinds_ write at the
+                // bottom) is keyed by BARE method NAME, with no notion of
+                // specializationKey -- a specialization sharing a name with
+                // its primary (or another specialization) would silently
+                // corrupt the PRIMARY's own classification (confirmed as a
+                // real bug via probe: `Point Node::as<Point>() { Point out
+                // = ...; return out; }`, an external specialization, flipped
+                // `Node::as`'s registered kind, which in turn corrupted an
+                // unrelated call chain -- YAML::Load -> Parser::
+                // parseDocument -- reading that same bare key). A
+                // specialization's return lowering is a wholly separate,
+                // already-correct concern (AstEmitter::
+                // currentSpecializationValueType_), so this pass has
+                // nothing to contribute for one.
+                if (!method->specializationArg.empty()) continue;
                 methods.push_back(method);
             }
         }
@@ -818,7 +845,22 @@ void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& progr
                 auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
                 if (member == nullptr) { allAliasCalls = false; break; }
                 if (auto recvId = dynamic_cast<const Identifier*>(member->object.get())) {
-                    auto typeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, recvId->name));
+                    // Try THIS free function's own scope first (registerSymbolType
+                    // registers every local under its real, precise scope --
+                    // analyzeStatement already passes fn->name as that scope for
+                    // a free function's body -- in ADDITION to a same-name
+                    // kGlobalScope fallback entry). Two free functions each
+                    // declaring a local of the same NAME but different TYPES
+                    // (e.g. Load's `Parser p` vs main's `Point p`) collide in
+                    // the kGlobalScope fallback, since it is last-write-wins
+                    // with no scoping at all -- confirmed as a real bug via
+                    // probe (main's `Point p` silently corrupted Load's OWN
+                    // resolution of its own unrelated `p.parseDocument()`
+                    // call). The precise scope has no such collision.
+                    auto typeIt = symbolTypesByScope.find(makeSymbolKey(fn->name, recvId->name));
+                    if (typeIt == symbolTypesByScope.end()) {
+                        typeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, recvId->name));
+                    }
                     if (typeIt != symbolTypesByScope.end()) calledClass = typeIt->second;
                 }
                 calledName = member->member;
@@ -877,6 +919,27 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
         for (const auto& member : cls->members) {
             auto method = dynamic_cast<const MethodDeclaration*>(member.get());
             if (method == nullptr) continue;
+            // A specialization (in-class `int as<int>()` OR an external
+            // one spliced in via ASTBuilder, e.g. `Point Node::as<Point>()`)
+            // is skipped here -- this pass keys methodReturnKinds_ by BARE
+            // method name (makeMemberKey(cls->name, method->name)), with no
+            // notion of specializationKey at all, so a specialization whose
+            // return type happens to be a real class (`Point`, unlike the
+            // primary's literal `T`) would silently corrupt the PRIMARY's
+            // own "Node::as" classification -- confirmed as a real bug via
+            // probe: adding `Point Node::as<Point>() { Point out = ...;
+            // return out; }` flipped `Node::as`'s registered kind to SHARED
+            // (because `out`, a specialization-local never registered the
+            // way this pass's variable-scope lookup expects, fell through
+            // getPointerTypeForVariableInScope's own "not found -> SHARED"
+            // default quirk), which in turn corrupted an UNRELATED call
+            // chain (YAML::Load -> Parser::parseDocument) that happened to
+            // read the same "Node::as" key. A specialization's own return
+            // lowering is a completely separate, already-correct concern
+            // (AstEmitter::currentSpecializationValueType_), so this pass
+            // has nothing useful to contribute for one and must not run on
+            // it at all.
+            if (!method->specializationArg.empty()) continue;
             // Only meaningful for a CLASS-typed return -- getPointerTypeForVariable
             // defaults to SHARED for any name it can't match at all (a real,
             // separate quirk of that query, documented at its own definition),
@@ -1080,6 +1143,20 @@ CalleeParams collectCalleeParams(const Program& program) {
         } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
             for (const auto& member : cls->members) {
                 if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    // A specialization is excluded: out.methods is keyed by
+                    // BARE "Class::method", with no notion of
+                    // specializationKey, and is consulted for an ORDINARY
+                    // (non-templated) call's parameter list -- a plain call
+                    // can never actually resolve to a specialization's own
+                    // body anyway (that requires an explicit <Type> type
+                    // argument), so a specialization's parameter list has
+                    // nothing legitimate to contribute here, and would only
+                    // ever risk silently overwriting the PRIMARY's own
+                    // (possibly different-shaped) entry -- same bug class as
+                    // inferAliasReturningMethods/promoteReturnsOfSharedLocals's
+                    // identical exclusion, see their comments for the
+                    // confirmed real-world collision this guards against.
+                    if (!method->specializationArg.empty()) continue;
                     out.methods[cls->name + "::" + method->name] = method->parameters;
                 } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
                     out.constructors[cls->name] = ctor->parameters;
@@ -1093,6 +1170,20 @@ CalleeParams collectCalleeParams(const Program& program) {
 
 void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
     const CalleeParams calleeParams = collectCalleeParams(program);
+    // The precise scope (free function name, "main", or "Class::method") of
+    // whatever body visitStmt/visitExpr are currently walking -- set at each
+    // of the 4 outer entry points below, read by every symbolTypesByScope
+    // lookup in this function in PREFERENCE to the kGlobalScope fallback
+    // (see registerSymbolType: every local is ALSO registered under
+    // kGlobalScope as a last-write-wins fallback, which two unrelated
+    // functions declaring a same-named local of DIFFERENT types silently
+    // collide in -- confirmed as a real bug via probe: yaml_parser.clg's
+    // `Load`'s own `Parser p` was corrupted by an unrelated `Point p` in a
+    // consumer's main()). Trying the precise scope first eliminates that
+    // collision without touching registerSymbolType's fallback (other,
+    // lower-risk call sites may still legitimately rely on the fallback for
+    // a variable whose exact scope isn't threaded through to them).
+    std::string currentScope;
 
     // A free function literally named `begin`/`end` taking a single
     // class-typed parameter exists, BY CONSTRUCTION, to support ADL-found
@@ -1215,7 +1306,7 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
     // lightweight (bare identifier only, via symbolTypesByScope's global-scope
     // fallback), matching this codebase's existing "not full type inference"
     // conservatism elsewhere (e.g. DanglingChecker::asObjectLocalName).
-    auto promoteArgsAgainstParams = [this](
+    auto promoteArgsAgainstParams = [this, &currentScope](
         const std::vector<ExpressionPtr>& args,
         const std::vector<std::pair<std::string, std::string>>& params) {
         for (size_t i = 0; i < args.size() && i < params.size(); ++i) {
@@ -1225,7 +1316,11 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
 
             auto argId = dynamic_cast<const Identifier*>(args[i].get());
             if (argId == nullptr) continue;
-            const auto argTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, argId->name));
+            auto argTypeIt = currentScope.empty() ? symbolTypesByScope.end()
+                : symbolTypesByScope.find(makeSymbolKey(currentScope, argId->name));
+            if (argTypeIt == symbolTypesByScope.end()) {
+                argTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, argId->name));
+            }
             if (argTypeIt == symbolTypesByScope.end()) continue;
 
             for (auto& [key, ref] : variableReferences) {
@@ -1247,7 +1342,11 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
                 // method's parameter list.
                 if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
                     if (auto recvId = dynamic_cast<const Identifier*>(member->object.get())) {
-                        const auto recvTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, recvId->name));
+                        auto recvTypeIt = currentScope.empty() ? symbolTypesByScope.end()
+                            : symbolTypesByScope.find(makeSymbolKey(currentScope, recvId->name));
+                        if (recvTypeIt == symbolTypesByScope.end()) {
+                            recvTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, recvId->name));
+                        }
                         if (recvTypeIt != symbolTypesByScope.end()) {
                             const auto paramsIt = calleeParams.methods.find(
                                 recvTypeIt->second + "::" + member->member);
@@ -1298,7 +1397,11 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
 
                         auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
                         if (argId == nullptr) continue;
-                        const auto argTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, argId->name));
+                        auto argTypeIt = currentScope.empty() ? symbolTypesByScope.end()
+                            : symbolTypesByScope.find(makeSymbolKey(currentScope, argId->name));
+                        if (argTypeIt == symbolTypesByScope.end()) {
+                            argTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, argId->name));
+                        }
                         if (argTypeIt == symbolTypesByScope.end()) continue;
                         for (auto& [key, ref] : variableReferences) {
                             if (ref.className == argTypeIt->second && ref.variableName == argId->name) {
@@ -1342,7 +1445,11 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
                     if (classNames.find(paramType) != classNames.end() &&
                         isReadOnlyFreeFunctionParam("operator<<", paramName)) {
                         if (auto rhsId = dynamic_cast<const Identifier*>(bin->right.get())) {
-                            const auto rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, rhsId->name));
+                            auto rhsTypeIt = currentScope.empty() ? symbolTypesByScope.end()
+                                : symbolTypesByScope.find(makeSymbolKey(currentScope, rhsId->name));
+                            if (rhsTypeIt == symbolTypesByScope.end()) {
+                                rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, rhsId->name));
+                            }
                             // Strip a qualified rhs type ("YAML::Node", as a
                             // driver OUTSIDE the namespace spells it) down to
                             // its simple name before comparing against
@@ -1390,7 +1497,11 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
             // argument, `other` defaulted to unique_ptr.
             if ((bin->operator_str == "==" || bin->operator_str == "!=")) {
                 if (auto rhsId = dynamic_cast<const Identifier*>(bin->right.get())) {
-                    const auto rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, rhsId->name));
+                    auto rhsTypeIt = currentScope.empty() ? symbolTypesByScope.end()
+                        : symbolTypesByScope.find(makeSymbolKey(currentScope, rhsId->name));
+                    if (rhsTypeIt == symbolTypesByScope.end()) {
+                        rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, rhsId->name));
+                    }
                     if (rhsTypeIt != symbolTypesByScope.end() && classNames.count(rhsTypeIt->second) > 0) {
                         const size_t sepPos = rhsTypeIt->second.rfind("::");
                         const std::string rhsSimpleType =
@@ -1471,7 +1582,11 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
             // Mirrors promoteArgsAgainstParams's own bare-identifier-only
             // resolution (this pass's established conservatism).
             if (auto containerId = dynamic_cast<const Identifier*>(fors->container.get())) {
-                const auto classIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, containerId->name));
+                auto classIt = currentScope.empty() ? symbolTypesByScope.end()
+                    : symbolTypesByScope.find(makeSymbolKey(currentScope, containerId->name));
+                if (classIt == symbolTypesByScope.end()) {
+                    classIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, containerId->name));
+                }
                 if (classIt != symbolTypesByScope.end()) {
                     const std::string& containerClass = classIt->second;
                     // The container variable's declared type may be qualified
@@ -1525,14 +1640,18 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
 
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            currentScope = fn->name;
             for (const auto& inner : fn->body) visitStmt(inner.get());
         } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
+            currentScope = "main";
             for (const auto& inner : mn->body) visitStmt(inner.get());
         } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
             for (const auto& member : cls->members) {
                 if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    currentScope = cls->name + "::" + method->name;
                     for (const auto& inner : method->body) visitStmt(inner.get());
                 } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    currentScope = cls->name + "::" + ctor->name;
                     for (const auto& inner : ctor->body) visitStmt(inner.get());
                 }
             }
@@ -1665,8 +1784,24 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
                 if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
                     auto rhsId = dynamic_cast<const Identifier*>(assign->expression.get());
                     if (rhsId == nullptr) continue;
-                    const auto lhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, assign->variable));
-                    const auto rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, rhsId->name));
+                    // currentFunctionName is precisely scoped by the callers
+                    // below ("Class::method" for a method, bare name for a
+                    // free function -- matching registerSymbolType's own
+                    // registration format), so it must be tried BEFORE the
+                    // kGlobalScope fallback -- same collision class as every
+                    // other site fixed in this function (a same-named local
+                    // of a different type elsewhere in the program silently
+                    // wins the global fallback's last-write-wins entry).
+                    const std::string preciseScope = currentClass.empty()
+                        ? currentFunctionName : currentClass + "::" + currentFunctionName;
+                    auto lhsTypeIt = symbolTypesByScope.find(makeSymbolKey(preciseScope, assign->variable));
+                    if (lhsTypeIt == symbolTypesByScope.end()) {
+                        lhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, assign->variable));
+                    }
+                    auto rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(preciseScope, rhsId->name));
+                    if (rhsTypeIt == symbolTypesByScope.end()) {
+                        rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, rhsId->name));
+                    }
                     if (lhsTypeIt == symbolTypesByScope.end() || rhsTypeIt == symbolTypesByScope.end() ||
                         lhsTypeIt->second != rhsTypeIt->second ||
                         classNames.find(lhsTypeIt->second) == classNames.end()) {
@@ -2090,7 +2225,16 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
             } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
                 for (const auto& member : cls->members) {
                     auto method = dynamic_cast<const MethodDeclaration*>(member.get());
-                    if (method == nullptr) continue;
+                    // A specialization is excluded -- classifiedKey below is
+                    // keyed by BARE method name (no specializationKey), so a
+                    // specialization's own param-read pattern could
+                    // classify (or fail to classify) the SAME key as its
+                    // primary based on unrelated body content. The
+                    // specialization's out-parameter is already correctly
+                    // handled by its own dedicated mechanism (DanglingChecker/
+                    // AstEmitter's outParamIndex_), which this pass has no
+                    // role in.
+                    if (method == nullptr || !method->specializationArg.empty()) continue;
                     for (const auto& [ptype, pname] : method->parameters) {
                         const std::string classifiedKey = cls->name + "::" + method->name + "::" + pname;
                         if (classifiedMethods.count(classifiedKey) > 0) continue;  // already decided
@@ -2137,7 +2281,7 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
         if (cls == nullptr || cls->namespaceName.empty()) continue;
         for (const auto& member : cls->members) {
             auto method = dynamic_cast<const MethodDeclaration*>(member.get());
-            if (method == nullptr) continue;
+            if (method == nullptr || !method->specializationArg.empty()) continue;
             for (const auto& [ptype, pname] : method->parameters) {
                 if (classifiedMethods.count(cls->name + "::" + method->name + "::" + pname) > 0) {
                     readOnlyMethodParams_.insert(cls->namespaceName + "::" + cls->name + "::" + method->name +

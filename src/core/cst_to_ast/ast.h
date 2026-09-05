@@ -596,6 +596,21 @@ public:
     // (`specializationArg` set, e.g. "int" for `int as<int>()`). Never both set.
     std::string typeParameter;
     std::string specializationArg;
+    // True iff this MethodDeclaration was parsed from an
+    // external_method_specialization (yaml-cpp's convert<T> customization-
+    // point shape: `ReturnType ClassName::methodName<Type>(...) {...}` at
+    // TOP LEVEL, specializing a primary generic method already declared
+    // INSIDE ClassName's own class body, possibly in a different .clg file
+    // reached via #include). ASTBuilder splices this MethodDeclaration
+    // directly into its target ClassDeclaration's `members` vector right
+    // after parsing (see spliceExternalMethodSpecializations), so every
+    // downstream pass that already iterates `members` looking for
+    // MethodDeclarations sees it automatically, with NO changes needed --
+    // this flag exists only so AstEmitter knows to emit its definition at
+    // NAMESPACE scope (the real C++ rule for member-template
+    // specializations) instead of inside the class body, since that's the
+    // one place source position still matters after the splice.
+    bool isExternalSpecialization = false;
 
     MethodDeclaration(const std::string& retType,
                      const std::string& methodName,
@@ -623,9 +638,52 @@ public:
     }
 };
 
+// Emission-only placeholder for an external_method_specialization
+// (`ReturnType ClassName::method<Type>(...) {...}`, yaml-cpp's convert<T>
+// shape). The real MethodDeclaration is spliced into its target
+// ClassDeclaration's `members` (see ASTBuilder::buildProgram) so every
+// checker that walks `members` sees it for free -- but that splice ties the
+// method's AST *ownership* to the target class, which is wrong for
+// *emission* position: the specialization's body/signature can reference a
+// type declared AFTER the target class (or, in the #include case, the
+// target class is merged in first while the type the specialization needs
+// is declared later, in the consuming file's own statements). CeeLing has
+// no forward declarations, so the only source position guaranteed to be
+// safe is the specialization's own original top-level position -- ordinary
+// source-order rules already guarantee anything it references was declared
+// before it there. This marker is a non-owning placeholder (raw pointer,
+// the MethodDeclaration is owned by target->members) inserted into
+// Program::statements at that original position purely so AstEmitter's
+// top-level walk emits declaration+definition there instead of next to the
+// target class. Every other pass (checkers) does not recognize this type
+// and simply skips it, exactly as they already skip IncludeStatement etc.
+class ExternalSpecializationMarker : public Statement {
+public:
+    std::string targetClassName;
+    MethodDeclaration* method;  // non-owning; owned by targetClass->members
+
+    ExternalSpecializationMarker(std::string targetClass, MethodDeclaration* m)
+        : targetClassName(std::move(targetClass)), method(m) {}
+
+    std::string toString() const override {
+        return "external_specialization_marker(" + targetClassName + "::" + method->name + ")";
+    }
+};
+
 class Program : public ASTNode {
 public:
     std::vector<StatementPtr> statements;
+
+    // external_method_specialization entries (targetClassName, MethodDeclaration)
+    // whose target class was NOT found among this Program's OWN statements at
+    // build time -- only possible when the target arrives later via
+    // mergeExternalDeclarations (see main.cpp), which runs strictly AFTER
+    // ASTBuilder::buildProgram returns. ASTBuilder's own splice pass resolves
+    // everything it can immediately (the common, same-file case); anything
+    // left here must be re-attempted by the caller (main.cpp) after merging,
+    // via ASTBuilder::spliceExternalSpecializations, before giving up with
+    // the unknown-target error.
+    std::vector<std::pair<std::string, StatementPtr>> unresolvedExternalSpecializations;
 
     void addStatement(StatementPtr stmt) {
         statements.push_back(std::move(stmt));

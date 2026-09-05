@@ -251,6 +251,16 @@ int main(int argc, char* argv[]) {
         // merged declarations are marked external and skipped by AstEmitter.
         std::set<std::string> seenClgFiles{inputFile};
         mergeExternalDeclarations(*program, dirnameOf(inputFile), seenClgFiles);
+
+        // Re-attempt any external_method_specialization whose target class
+        // wasn't found in THIS file's own statements (buildProgram already
+        // resolved the same-file case) -- now that merging is done, a target
+        // declared in a #include'd sibling .clg is finally visible. See
+        // Program::unresolvedExternalSpecializations and
+        // ASTBuilder::spliceExternalSpecializations for why this can't
+        // happen any earlier (confirmed via probe: a target-class-in-another-
+        // file specialization is otherwise wrongly rejected as unknown).
+        ASTBuilder::spliceExternalSpecializations(*program);
 #else
         throw std::runtime_error("This build was configured without Tree-sitter support. Rebuild with -DWITH_TREE_SITTER=ON.");
 #endif

@@ -211,6 +211,27 @@ private:
     std::map<std::string, std::vector<std::pair<std::string, std::string>>> functionParams_;
     std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, std::string>>>> classMethodParams_;
 
+    // (className, methodName) -> index of the parameter that is a MUTABLE
+    // OUT-PARAMETER, not moved into the callee -- populated for a method
+    // whose PRIMARY generic uses its type parameter T as a parameter type
+    // (`<T> bool decodeInto(T out)`, see ASTBuilder::buildMethodDeclaration's
+    // T-in-param-position support and CLAUDE.md's convert<T> section). Every
+    // concrete specialization of such a primary (`bool decodeInto<Point>(Point
+    // out)`) shares the SAME out-parameter contract at the SAME index by
+    // construction -- an explicit specialization's parameter list must match
+    // the primary's shape, so there is exactly one out-parameter index per
+    // (class, method name), independent of which concrete specialization a
+    // given call resolves to. NOTE: this is unrelated to CLAUDE.md's
+    // roadmap `borrow<T>` item (a future, optional, general user-facing
+    // ownership annotation, not yet designed) -- this mechanism is a much
+    // narrower, mechanical special case that only ever arises from this one
+    // structural pattern (a generic's T used in parameter position), and is
+    // never exposed as an annotation a user can apply elsewhere.
+    std::map<std::string, size_t> outParamIndex_;
+    static std::string outParamKey(const std::string& ownerClass, const std::string& methodName) {
+        return ownerClass + "::" + methodName;
+    }
+
     std::string currentClass_;  // enclosing class of the body being checked ("" = free fn)
     std::set<std::string> objectLocals_;   // object-typed owners live in current body
     std::map<std::string, std::string> localType_;  // object-local/param name -> class name

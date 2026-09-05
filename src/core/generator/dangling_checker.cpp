@@ -250,6 +250,23 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                 params[key] = method->parameters;
                 summaries_[summaryKey(cls->name, key)] =
                     deriveSummaryForBody(method->body, method->parameters);
+                // The PRIMARY generic (typeParameter set) with T used as a
+                // parameter type, and ONLY when T is NOT ALSO the return
+                // type -- see buildMethodDeclaration's validation. When T
+                // IS the return type (`<T> T as(T fallback)`), a T-typed
+                // parameter is an ORDINARY by-value parameter (T isn't a
+                // real class type, so it already emits as a bare, verbatim
+                // value -- no out-parameter lowering needed or wanted; doing
+                // so anyway would wrongly turn `as(T fallback)`'s fallback
+                // into a raw pointer).
+                if (!method->typeParameter.empty() && method->returnType != method->typeParameter) {
+                    for (size_t i = 0; i < method->parameters.size(); ++i) {
+                        if (method->parameters[i].first == method->typeParameter) {
+                            outParamIndex_[outParamKey(cls->name, method->name)] = i;
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -265,6 +282,23 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                 if (auto it = summaries_.find(summaryKey(cls->name, methodName)); it != summaries_.end()) {
                     summaries_[summaryKey(qualified, methodName)] = it->second;
                 }
+            }
+            // Same reasoning, for outParamIndex_: applyCallArgMoves looks
+            // this up keyed by the RECEIVER's declared type string, which is
+            // "YAML::Node" for a `YAML::Node n;` local -- without this dual
+            // registration, an out-parameter call through a namespaced
+            // receiver falsely looked un-registered, so its argument was
+            // wrongly treated as moved (confirmed via probe: yaml-cling's
+            // real YAML::Node::decodeInto<T> case).
+            const std::string ownPrefix = cls->name + "::";
+            std::vector<std::pair<std::string, size_t>> requalified;
+            for (const auto& [key, idx] : outParamIndex_) {
+                if (key.compare(0, ownPrefix.size(), ownPrefix) == 0) {
+                    requalified.emplace_back(qualified + "::" + key.substr(ownPrefix.size()), idx);
+                }
+            }
+            for (auto& [key, idx] : requalified) {
+                outParamIndex_[key] = idx;
             }
         }
     }
@@ -405,8 +439,18 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
         }
     }
     const bool receiverIsVector = !receiverType.empty() && isVectorType(receiverType);
+    // A mutable out-parameter (see outParamIndex_) is never moved -- the
+    // callee writes through it but the caller's argument survives.
+    size_t outParamIdx = call->arguments.size();  // sentinel: no out-parameter
+    if (!receiverType.empty()) {
+        if (auto it = outParamIndex_.find(outParamKey(receiverType, methodName));
+            it != outParamIndex_.end()) {
+            outParamIdx = it->second;
+        }
+    }
 
     for (size_t i = 0; i < call->arguments.size(); ++i) {
+        if (i == outParamIdx) continue;
         if (receiverIsVector && vectorMethodSharesArg(methodName, i)) {
             // A container's element pointer kind is decided once, across every
             // push_back call site targeting it (SmartPointerAnalyzer::

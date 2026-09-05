@@ -66,6 +66,10 @@ std::string AstEmitter::emit(const Program& program) {
             stmtNamespace = enm->namespaceName;
         } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             stmtNamespace = fn->namespaceName;
+        } else if (auto marker = dynamic_cast<const ExternalSpecializationMarker*>(stmt.get())) {
+            if (auto it = classByName_.find(marker->targetClassName); it != classByName_.end()) {
+                stmtNamespace = it->second->namespaceName;
+            }
         }
         if (stmtNamespace != openNamespace) {
             if (!openNamespace.empty()) out << "}\n\n";
@@ -76,6 +80,34 @@ std::string AstEmitter::emit(const Program& program) {
     }
     if (!openNamespace.empty()) out << "}\n\n";
     return out.str();
+}
+
+void AstEmitter::emitExternalSpecializationMarker(const ExternalSpecializationMarker& marker,
+                                                    const ClassDeclaration& targetClass,
+                                                    std::ostringstream& out) {
+    const MethodDeclaration* method = marker.method;
+    varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+    // When this specialization's return type IS its own concrete
+    // specialized type (`Point Node::as<Point>()`, as opposed to e.g. `bool
+    // Node::decodeInto<Point>(Point out)`, whose return type is `bool`, not
+    // `Point`), real C++ requires the return -- and every local of that
+    // same type in the body -- to be bare/unwrapped, not smart-pointer
+    // wrapped (confirmed via probe: an explicit specialization's return
+    // must match the primary's T-substituted type exactly). See
+    // isValueType's comment for how this is scoped to ONLY this function's
+    // emission.
+    const bool returnIsSpecializedType = method->returnType == method->specializationArg;
+    if (returnIsSpecializedType) {
+        currentSpecializationValueType_ = method->specializationArg;
+    }
+    out << "template<>\n";
+    emitFunction(method->returnType,
+                 targetClass.name + "::" + method->name + "<" + cppTypeFor(method->specializationArg, "") + ">",
+                 method->parameters, method->body, out, targetClass.name, 0, method->isConst,
+                 false, false, method->name);
+    if (returnIsSpecializedType) {
+        currentSpecializationValueType_.clear();
+    }
 }
 
 std::string AstEmitter::emitHeader(const Program& program, const std::string& guardName) {
@@ -115,6 +147,11 @@ std::string AstEmitter::emitHeader(const Program& program, const std::string& gu
             stmtNamespace = enm->namespaceName;
         } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             stmtNamespace = fn->namespaceName;
+        } else if (dynamic_cast<const ExternalSpecializationMarker*>(stmt.get())) {
+            // Never emits anything in header mode (see emitTopLevelHeader) --
+            // stay in whatever namespace is already open instead of
+            // needlessly closing/reopening it around a no-op.
+            stmtNamespace = openNamespace;
         }
         if (stmtNamespace != openNamespace) {
             if (!openNamespace.empty()) out << "}\n\n";
@@ -153,6 +190,10 @@ void AstEmitter::collectClassNames(const Program& program) {
     // a rejection. Flattening here is what keeps that from happening.
     for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
         classNames_.insert(cls->name);
+        classByName_[cls->name] = cls;
+        if (!cls->namespaceName.empty()) {
+            classByName_[cls->namespaceName + "::" + cls->name] = cls;
+        }
         auto& fields = classFields_[cls->name];
         auto& methodParams = classMethodParams_[cls->name];
         auto& methodReturnTypes = classMethodReturnType_[cls->name];
@@ -210,6 +251,20 @@ void AstEmitter::collectClassNames(const Program& program) {
                 if (method->name == "operator=" && method->parameters.size() == 1) {
                     operatorAssignParamTypes_[cls->name].insert(method->parameters[0].first);
                 }
+                // The PRIMARY generic (typeParameter set) with T used as a
+                // parameter type, and ONLY when T is NOT ALSO the return
+                // type -- see outParamIndex_'s comment and DanglingChecker's
+                // identical guard for the full rationale (`<T> T as(T
+                // fallback)`'s fallback must stay an ordinary by-value
+                // parameter, not become a raw-pointer out-parameter).
+                if (!method->typeParameter.empty() && method->returnType != method->typeParameter) {
+                    for (size_t i = 0; i < method->parameters.size(); ++i) {
+                        if (method->parameters[i].first == method->typeParameter) {
+                            outParamIndex_[outParamKey(cls->name, method->name)] = i;
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -229,6 +284,22 @@ void AstEmitter::collectClassNames(const Program& program) {
             classMethodReturnType_[qualified] = methodReturnTypes;
             if (auto opIt = operatorAssignParamTypes_.find(cls->name); opIt != operatorAssignParamTypes_.end()) {
                 operatorAssignParamTypes_[qualified] = opIt->second;
+            }
+            // Same reasoning, for outParamIndex_ -- see DanglingChecker's
+            // identical dual-registration for the full rationale (a call
+            // through a namespaced receiver, e.g. `YAML::Node n; ...
+            // n.decodeInto(p);`, must resolve outParamIndex_ under the
+            // QUALIFIED key, since that's what receiverClass/localType_
+            // actually hold for such a receiver).
+            const std::string ownPrefix = cls->name + "::";
+            std::vector<std::pair<std::string, size_t>> requalified;
+            for (const auto& [key, idx] : outParamIndex_) {
+                if (key.compare(0, ownPrefix.size(), ownPrefix) == 0) {
+                    requalified.emplace_back(qualified + "::" + key.substr(ownPrefix.size()), idx);
+                }
+            }
+            for (auto& [key, idx] : requalified) {
+                outParamIndex_[key] = idx;
             }
         }
     }
@@ -363,10 +434,35 @@ std::string AstEmitter::fieldType(const std::string& cls, const std::string& nam
 
 std::string AstEmitter::exprObjectClass(const Expression* expr) const {
     if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        // A bare `this` used as an explicit expression (`this.field`, `this[key]`,
+        // `Node self = this;`) resolves to the enclosing class -- `this` is real
+        // C++ syntax inside a method body, always a pointer to the current
+        // object, so it needs the SAME `->` access every other smart-pointer/
+        // observer expression gets. Checked before the field/varClass_/
+        // observerClass_ lookups below since `this` is never itself a
+        // variable name recorded in any of those maps. Found as a real gap
+        // via yaml-cling's convert<T> customization point: a user-written
+        // decodeInto<T> specialization calling `this["key"]` or storing
+        // `this` into a local both need this to resolve correctly.
+        if (id->name == "this" && !currentClass_.empty()) {
+            return currentClass_;
+        }
         // A field of the current class (accessed via this->) that is object-typed.
         if (isCurrentField(id->name)) {
             const std::string ft = fieldType(currentClass_, id->name);
             return isClassType(ft) ? ft : "";
+        }
+        // A local/parameter explicitly classified Value (an ordinary
+        // globally-value-typed class like Iterator, OR a local declared
+        // from a bare-value-returning specialization call like `Point p =
+        // doc.as<Point>();` -- see isBareValueReturningSpecializationCall)
+        // is never smart-pointer/`->`-accessed, regardless of what
+        // varClass_ separately records for it (varClass_ only tracks the
+        // DECLARED TYPE NAME for field-type lookups on `.field` chains, not
+        // pointer-vs-value-ness). Checked before the varClass_ branch below
+        // so it takes priority.
+        if (kindOf(id->name) == VarKind::Value) {
+            return "";
         }
         // A smart-pointer local/parameter.
         if (auto it = varClass_.find(id->name); it != varClass_.end()) {
@@ -453,6 +549,20 @@ bool AstEmitter::isClassType(const std::string& type) const {
 }
 
 bool AstEmitter::isValueType(const std::string& type) const {
+    // currentSpecializationValueType_ is set only while emitting an external
+    // specialization's own signature+body whose return type is its own
+    // concrete specialized type (see emitExternalSpecializationMarker) --
+    // real C++ requires that specific function's return AND every local of
+    // that same type inside its body to be bare/unwrapped (an explicit
+    // specialization's return must match the primary's T-substituted type
+    // exactly, never a smart-pointer wrapping of it). This does NOT
+    // reclassify the type as a value type anywhere else -- ordinary code
+    // elsewhere (including this same class used as a field/parameter type
+    // in other functions) is completely unaffected, since the flag is
+    // cleared the moment this one function's emission finishes.
+    if (!currentSpecializationValueType_.empty() && type == currentSpecializationValueType_) {
+        return true;
+    }
     return analyzer_.isValueTypeClass(type);
 }
 
@@ -536,6 +646,36 @@ bool AstEmitter::isSharedReturningCall(const Expression* expr) const {
     return false;
 }
 
+// Is `expr` a call to a method specialization (`recv.method<Type>(...)`)
+// whose declared return type IS its own concrete specialized type -- e.g.
+// `doc.as<Point>()`, where the specialization is `Point Node::as<Point>()`
+// (as opposed to `bool`-returning decodeInto<T>)? Such a call's C++ result
+// is a bare value (see emitExternalSpecializationMarker/
+// currentSpecializationValueType_), never smart-pointer wrapped, so a local
+// declared from it (`Point p = doc.as<Point>();`) must be emitted bare too
+// -- the ordinary "class-typed method return -> smart pointer" rule does
+// not apply to this one, narrow case.
+bool AstEmitter::isBareValueReturningSpecializationCall(const Expression* expr) const {
+    auto call = dynamic_cast<const FunctionCall*>(expr);
+    if (call == nullptr || call->templateArg.empty()) return false;
+    std::string receiverClass;
+    if (call->callee) {
+        auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+        if (member == nullptr) return false;
+        receiverClass = exprObjectClass(member->object.get());
+    } else {
+        receiverClass = currentClass_;
+    }
+    if (receiverClass.empty()) return false;
+    auto clsIt = classMethodReturnType_.find(receiverClass);
+    if (clsIt == classMethodReturnType_.end()) return false;
+    const std::string key = specializationKey(
+        call->callee ? dynamic_cast<const MemberAccess*>(call->callee.get())->member : call->function_name,
+        call->templateArg);
+    auto retIt = clsIt->second.find(key);
+    return retIt != clsIt->second.end() && retIt->second == call->templateArg;
+}
+
 std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::string& varName) const {
     if (isStringType(ceelingType)) return "std::string";
     if (isMapType(ceelingType)) {
@@ -609,6 +749,16 @@ void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
     // only) are never re-emitted here -- their real definition already lives in that
     // sibling's own .cpp/.clh. See Statement::isExternalDeclaration.
     if (stmt->isExternalDeclaration) return;
+    if (auto marker = dynamic_cast<const ExternalSpecializationMarker*>(stmt)) {
+        if (auto it = classByName_.find(marker->targetClassName); it != classByName_.end()) {
+            emitExternalSpecializationMarker(*marker, *it->second, out);
+        }
+        // An unresolvable target here would already have been rejected as
+        // error[semantic/unknown-specialization-target] during AST building
+        // (see ASTBuilder::buildProgram's splice pass) -- this branch cannot
+        // be reached with a dangling targetClassName in practice.
+        return;
+    }
     if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt)) {
         emitClass(*cls, out);
     } else if (auto enm = dynamic_cast<const EnumDeclaration*>(stmt)) {
@@ -730,7 +880,35 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
             outOfLineCtors.push_back(ctor);
         } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
             if (!method->specializationArg.empty()) {
-                specializations.push_back(method);
+                if (method->isExternalSpecialization) {
+                    // An EXTERNAL specialization (yaml-cpp's convert<T>
+                    // shape, `ReturnType ClassName::method<Type>(...) {...}`
+                    // declared OUTSIDE the class) may reference a type
+                    // declared LATER in this program relative to the target
+                    // class (e.g. a consumer's own struct, defined after
+                    // #include "yaml_node.clh" but specializing Node::as<T>
+                    // for it -- and in the #include case, the target class
+                    // itself is merged in FIRST, before any of the
+                    // consumer's own statements, so "after the target
+                    // class's own body" is never a safe emission point).
+                    // Nothing is emitted here at all: both the declaration
+                    // and the definition are emitted by
+                    // flushExternalSpecializationMarker, at the
+                    // ExternalSpecializationMarker's OWN top-level source
+                    // position (see ast.h) -- the one position ordinary
+                    // source-order rules guarantee is after every type this
+                    // specialization's signature/body can reference, since
+                    // CeeLing has no forward declarations and the consumer
+                    // could not have named an undeclared type in their own
+                    // source.
+                } else {
+                    // An ORDINARY (in-class) specialization has no such
+                    // problem -- it can only ever have been written after
+                    // its own class's other members lexically, so nothing
+                    // later in program order could be needed by it that
+                    // isn't already needed by the class itself.
+                    specializations.push_back(method);
+                }
                 continue;
             }
             if (!method->typeParameter.empty()) {
@@ -945,9 +1123,31 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
         }
     }
     sig += name + "(";
+    size_t outParamIdx = params.size();  // sentinel: no out-parameter
+    if (!methodName.empty()) {
+        if (auto it = outParamIndex_.find(outParamKey(ownerClass, methodName));
+            it != outParamIndex_.end()) {
+            outParamIdx = it->second;
+        }
+    }
     for (size_t i = 0; i < params.size(); ++i) {
         if (i > 0) sig += ", ";
         const auto& [ptype, pname] = params[i];
+        if (i == outParamIdx) {
+            // Mutable out-parameter (see outParamIndex_): lowered exactly
+            // like a `ref` observer local (VarKind::Reference) -- a raw,
+            // non-owning pointer, `->` access in the body, the call site
+            // passes `.get()` instead of moving. Applies identically
+            // whether ptype is the primary's own literal `T` (emits `T*
+            // pname`, valid template-parameter syntax) or a specialization's
+            // concrete type (`Point* pname`) -- cppTypeFor returns a type
+            // string verbatim for either, so no isClassType branch is
+            // needed here.
+            sig += ptype + "* " + pname;
+            noteVar(pname, VarKind::Reference);
+            observerClass_[pname] = ptype;
+            continue;
+        }
         if (isOstreamType(ptype)) {
             // Same reasoning as the return-type branch above -- must be a
             // reference, std::ostream cannot be passed by value at all.
@@ -1100,6 +1300,17 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
                 rhs = emitExpression(decl->expression.get());
             }
             out << pad << decl->type << " " << decl->identifier << " = " << rhs << ";\n";
+        } else if (isClassType(decl->type) && isBareValueReturningSpecializationCall(decl->expression.get())) {
+            // `Point p = doc.as<Point>();` -- the call's C++ result is a bare
+            // value (see isBareValueReturningSpecializationCall), not a
+            // smart pointer, so `p` must be declared bare too. Checked
+            // BEFORE the ordinary isClassType smart-pointer branch below,
+            // which would otherwise unconditionally wrap `p` regardless of
+            // what the call actually returns.
+            noteVar(decl->identifier, VarKind::Value);
+            varClass_[decl->identifier] = decl->type;
+            out << pad << decl->type << " " << decl->identifier << " = "
+                << emitExpression(decl->expression.get()) << ";\n";
         } else if (isClassType(decl->type)) {
             // A local initialized from a @ptr-shared-hinted method's return MUST
             // itself be shared_ptr -- the C++ initializer expression is already a
@@ -1625,6 +1836,7 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         std::string prefix;
         std::string receiverContainerType;  // "" unless recv is a known container local
         std::string receiverName;
+        std::string receiverClass;
         std::string methodName;
         if (auto m = dynamic_cast<const MemberAccess*>(call->callee.get())) {
             // Method call `recv.method(args)` -> `recv (-> or .) method(args)`, or
@@ -1644,18 +1856,59 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             if (auto id = dynamic_cast<const Identifier*>(m->object.get())) {
                 receiverName = id->name;
             }
+            receiverClass = mClass;
             methodName = m->member;
         } else {
             prefix = call->function_name;
             if (!call->templateArg.empty()) {
                 prefix += "<" + cppTypeFor(call->templateArg, "") + ">";
             }
+            // Implicit-`this` call (bare `decodeInto(out)` inside a method
+            // body, no explicit receiver) -- the callee is still a method of
+            // the CURRENT class, so outParamIndex_ must be looked up under
+            // currentClass_ too, exactly like the explicit-receiver branch
+            // above does under mClass. Without this, an out-parameter call
+            // made via implicit `this` (as opposed to `this.decodeInto(out)`
+            // or `n.decodeInto(out)`) skipped the .get()/no-move handling
+            // entirely -- confirmed via probe (yaml-cling's own as<Point>()
+            // specialization calling decodeInto(out) with implicit this).
+            receiverClass = currentClass_;
+            methodName = call->function_name;
         }
         const bool receiverIsVector = isVectorType(receiverContainerType);
         const bool elementIsShared = receiverIsVector && analyzer_.containerElementIsShared(receiverName);
+        size_t argOutParamIdx = call->arguments.size();  // sentinel: no out-parameter
+        if (!receiverClass.empty()) {
+            if (auto it = outParamIndex_.find(outParamKey(receiverClass, methodName));
+                it != outParamIndex_.end()) {
+                argOutParamIdx = it->second;
+            }
+        }
         std::string s = prefix + "(";
         for (size_t i = 0; i < call->arguments.size(); ++i) {
             if (i > 0) s += ", ";
+            if (i == argOutParamIdx) {
+                // Mirrors the VariableDeclaration `ref` observer lowering
+                // (`(a).get()`) -- see buildFunctionSignature's matching
+                // outParamIdx branch. The argument is NOT moved: the
+                // dangling checker (DanglingChecker::applyCallArgMoves) has
+                // already been taught this same index is a mutable
+                // out-parameter, so the caller's own local/param stays alive
+                // for use after this call.
+                // A plain-value argument (e.g. `Point out` inside an
+                // as<Point>() wrapper forced bare by
+                // currentSpecializationValueType_ -- see its own comment)
+                // has no `.get()` to call; take its address directly. An
+                // ordinary smart-pointer argument still uses `.get()`
+                // exactly as before.
+                if (auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
+                    argId != nullptr && kindOf(argId->name) == VarKind::Value) {
+                    s += "&" + argId->name;
+                } else {
+                    s += "(" + emitExpression(call->arguments[i].get()) + ").get()";
+                }
+                continue;
+            }
             if (receiverIsVector && vectorMethodSharesArg(methodName, i)) {
                 // A container's element pointer kind is decided once across every
                 // push_back call site targeting it (see DanglingChecker::

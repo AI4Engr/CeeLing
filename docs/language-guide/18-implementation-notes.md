@@ -3382,3 +3382,252 @@ byte-identical to the expected file once line endings are normalized
 `tests/loadfile_smoke_main_rust_backend.clg`) needed a mechanical `.key` →
 `.Key()` rename to match `Node`'s new public accessor (the field itself
 moved under the internal `NodeData` payload).
+
+## Step 34 — `convert<T>` customization point: out-of-class method specializations, plus two real pre-existing analyzer bugs
+
+yaml-cling wanted yaml-cpp's `convert<T>` mechanism: a LIBRARY CONSUMER
+extends `Node::as<T>()` to their OWN type from OUTSIDE `yaml_node.clg`,
+without editing yaml-cling itself. This is a genuinely new grammar shape —
+`rust_backend` had no out-of-class method-definition syntax anywhere before
+this (every method body lives inside its `class_body`).
+
+### The grammar/AST shape
+
+New production `external_method_specialization`: `ReturnType
+[Namespace::]ClassName::methodName<Type>(params) { body }` at TOP LEVEL,
+specializing an EXISTING primary generic method (Step's return-type-generic
+mechanism, `<T> T methodName() {...}`) declared inside `ClassName`'s own
+class body — possibly in a DIFFERENT `.clg` file reached via `#include`.
+`ClassName` is `choice($.identifier, $.scoped_identifier)`, so a namespaced
+target (`YAML::Node::decodeInto<Point>(...)`) parses.
+
+The parsed `MethodDeclaration` (`isExternalSpecialization = true`) is
+SPLICED directly into its target `ClassDeclaration::members` — the same
+"flatten into an existing collection, leave ~40 downstream lookups
+unchanged" pattern namespace-flattening and inheritance already established.
+This is what let `EscapeHatchChecker`/`SmartPointerAnalyzer`'s ownership
+analysis/arity checking work with **zero changes**, confirmed via probe
+(arity-mismatch call correctly rejected; valid call correctly accepted and
+ran) before any emitter work began. Splice matching accepts either the
+target class's bare or namespace-qualified name (`classMatchesSpecializationTarget`).
+
+### The emission-ordering problem — the actual hard part
+
+The first, natural-seeming design — emit a specialization's
+declaration+definition immediately after its target class's own body — is
+wrong whenever the specialization references a type declared LATER in the
+program. Confirmed via probe: a same-file `class Node {...}` (with the
+primary) followed by `class Point {...}` followed by `Point
+Node::as<Point>() {...}` produced `'Point' was not declared in this scope`,
+because the specialization was emitted right after `Node`'s body, BEFORE
+`Point` existed in the generated file at all.
+
+Worse, this is not just a same-file ordering nuance — it is structurally
+impossible to fix by reordering in the `#include` case: `main.cpp`'s
+`mergeExternalDeclarations` always inserts merged/external statements at
+the FRONT of `program.statements` (confirmed by reading it directly), so a
+`#include`d target class is invariably positioned before the consumer's own
+code. Worse still, a merged class is `isExternalDeclaration = true` and is
+therefore **never re-emitted at all** in the consuming translation unit
+(`emitTopLevel` returns immediately for it) — so "emit right after the
+target class's body" has no meaningful position to even attach to.
+
+**Fix**: a new `ExternalSpecializationMarker` statement type (`ast.h`) — a
+non-owning placeholder (raw `MethodDeclaration*`, real ownership stays in
+`target->members`) inserted into `Program::statements` at the
+specialization's own ORIGINAL top-level source position. This is the ONE
+position ordinary source-order rules guarantee is safe: CeeLing has no
+forward declarations, so anything the specialization's signature/body
+references must already have been declared before it, in the consumer's
+own source, by construction. `AstEmitter::emitTopLevel` dispatches the
+marker to a new `emitExternalSpecializationMarker`, which emits BOTH
+declaration and definition together (`template<> ReturnType
+ClassName::method<Type>(...) {...}`) at that position; every other pass
+(checkers) doesn't recognize the marker type and simply skips it, the same
+way `IncludeStatement` is already invisible to them.
+
+### Cross-file resolution needed a two-phase splice
+
+`ASTBuilder::buildProgram`'s own splice pass runs BEFORE `main.cpp` calls
+`mergeExternalDeclarations` — so a same-file target resolves immediately,
+but a `#include`d one genuinely cannot yet (the class doesn't exist in
+`program->statements` at splice time). Fix: an unresolved specialization is
+deferred onto a new `Program::unresolvedExternalSpecializations` list
+instead of erroring immediately inside `buildProgram`; `main.cpp` calls a
+new `ASTBuilder::spliceExternalSpecializations` a SECOND time, right after
+`mergeExternalDeclarations` — at which point "still not found" really does
+mean unknown, and is the same hard
+`error[semantic/unknown-specialization-target]` as before.
+
+### `T` in parameter position — a new genericity slice
+
+yaml-cpp's real `convert<T>::decode(const Node&, T&)` shape needs an
+OUT-PARAM, not a return value. CeeLing's generics previously supported
+ONLY `<T> T method()` (T as the return type). Relaxed
+`ASTBuilder::buildMethodDeclaration`'s validation to also accept `<T>
+ReturnType method(T param)` — T in exactly one parameter, and NEVER both
+return type and a parameter (ambiguous, rejected) — while the pre-existing
+`<T> T as(T fallback)` shape keeps working unchanged, since there `T` is
+the return type and the parameter is an ordinary same-typed value, not the
+new out-param case (`method->returnType != method->typeParameter` gates
+which shape a given `T`-typed parameter means).
+
+### The mutable out-parameter mechanism (deliberately not called "borrow")
+
+The one parameter whose PRIMARY declares as literal `T` (in the
+param-position slice above) needs to be WRITTEN to by the callee but
+SURVIVE at the caller — the opposite of CeeLing's default move-in-by-value
+parameter semantics. Initially implemented and internally named around the
+word "borrow" before a mid-session correction: CLAUDE.md's roadmap lists a
+general, user-facing `borrow<T>` ownership annotation as a **future,
+optional** feature that has never been designed — this mechanism is NOT
+that. It is narrow and purely mechanical: it only ever fires for a
+generic's own `T` used in parameter position, is never exposed as an
+annotation a user can apply to an arbitrary parameter, and shares none of
+`borrow<T>`'s intended design space. Every identifier/comment was renamed
+`outParamIndex_`/`outParamKey` (an ordinary cross-language term for
+"parameter used to convey a result back to the caller") specifically to
+avoid implying the roadmap feature had been built.
+
+Mechanism: lowered exactly like an existing `ref` observer local — a raw,
+non-owning pointer (`T* pname` in the signature; `Point* pname` once `T` is
+substituted for a concrete specialization, since both share ONE index by
+construction), `.get()` at the call site (including an IMPLICIT-`this`
+call, e.g. `as<Point>()`'s own body calling `decodeInto(out)` with no
+explicit receiver — a real gap found via probe, since the emitter's
+receiver-class resolution for the borrow-index lookup originally only
+handled the explicit-`MemberAccess`-callee shape), `->` access in the body.
+`DanglingChecker::applyCallArgMoves` skips the move for this one argument
+index — `outParamIndex_` is a `(class, methodName) → paramIndex` map in
+both `DanglingChecker` and `AstEmitter`, dual-registered under the
+namespace-qualified class name (the same dual-registration pattern
+`classMethodParams_`/`classMethodReturnType_` already use).
+
+### The return-side mismatch: a specialization returning its own concrete type
+
+A specialization whose return type IS its own concrete specialized type
+(`Point Node::as<Point>()`, unlike `bool`-returning `decodeInto<T>`) hits
+the mirror-image of the out-param problem: real C++ requires an explicit
+specialization's return to match the primary's T-substituted type EXACTLY
+— bare `Point`, never `unique_ptr<Point>`/`shared_ptr<Point>`. Confirmed
+via probe (`g++` error: `template-id 'as<Point>' ... does not match any
+template declaration`, listing the primary's `T Node::as()` as the only
+candidate, when the specialization's return was smart-pointer-wrapped).
+
+Fix: `AstEmitter::currentSpecializationValueType_`, set only while emitting
+such a specialization's own signature+body (`emitExternalSpecializationMarker`
+detects `method->returnType == method->specializationArg`). `isValueType`
+treats that ONE concrete type as bare/unwrapped while the flag is set —
+governing the specialization's own return type, its own body's local
+declarations of that type (`Point out = Point(0, 0);`, not
+`std::make_shared<Point>`), and its own `return out;`. The flag is cleared
+the instant emission of that one function finishes, so the SAME class used
+elsewhere (a field, a different function's local) is completely
+unaffected — confirmed by re-running the FULL `ctest` safety-fixture suite
+after this change with zero regressions.
+
+This ripples one step further: a CALL SITE assigning such a specialization's
+result to a local (`Point p = doc.as<Point>();`) also needs bare emission,
+not the ordinary "class-typed method return → smart pointer" rule. New
+`AstEmitter::isBareValueReturningSpecializationCall` detects this via
+`classMethodReturnType_`'s existing specialization-keyed entries (`"as<Point>"
+→ "Point"`) — a call is bare-value-returning iff the registered return type
+equals the call's own `templateArg`. Gated `isClassType(decl->type) &&
+isBareValueReturningSpecializationCall(...)`, checked BEFORE the ordinary
+`isClassType` smart-pointer branch — the `isClassType(decl->type)` guard
+matters: without it, `int x = n.as<int>()`/`string s = n.as<string>()`
+(pre-existing, working fixtures) would ALSO match (since `"int" ==
+"int"`/`"string" == "string"` trivially satisfies the same condition,
+`classNames_` correctly excludes primitives), a real regression caught by
+re-running `template_as_basic_accepted.clg` before landing this fix.
+
+### `this` used as an explicit expression — a small, separate, real gap
+
+A specialization's body naturally wants `this["key"]` (subscript on the
+implicit receiver) or to store `this` into a local. `AstEmitter::
+exprObjectClass` had no case for a bare `this` `Identifier` used this way
+(only `return this;`, a different code path, was special-cased) — so
+`this["key"]` emitted as a literal, invalid C++ pointer-subscript instead
+of routing through `Node`'s own `operator[]`. Fixed with one new early
+branch: `id->name == "this"` resolves to `currentClass_` directly, before
+the field/`varClass_`/`observerClass_` checks — `this` is never itself a
+variable name recorded in any of those maps, so this cannot collide with
+anything.
+
+### No fallback to the unspecialized primary — a real, accepted API-surface limit
+
+Unlike real C++, CeeLing's specialization-call resolution
+(`EscapeHatchChecker::isKnownCallable`) requires an EXACT `as<Point>`
+specialization to exist for `doc.as<Point>()` to be callable at all — it
+does not fall back to the unspecialized primary the way real template
+resolution does (`isKnownCallable`'s own comment already documented this
+as intentional, predating this feature: "a specialization must exist for
+the exact requested type... there is no implicit conversion between
+specializations"). Consequence: `decodeInto<Point>` alone is NOT enough to
+make `.as<Point>()` callable — a consumer must ALSO write a thin
+`as<Point>` wrapper (`Point out = new Point(...); if (!decodeInto(out))
+throw ...; return out;`). Documented as the required two-specialization
+pattern rather than a gap to close: closing it would mean teaching the
+checker real C++ template-partial-ordering/fallback rules, a materially
+bigger change than this feature needed.
+
+### Two real, PRE-EXISTING analyzer bugs, found only because this feature exercised paths nothing else had
+
+**Bug 1 — bare-method-name key collisions in `SmartPointerAnalyzer`.**
+Several passes (`promoteReturnsOfSharedLocals`, `inferAliasReturningMethods`,
+`collectCalleeParams`, `classifyReadOnlyFreeFunctionParams`) key
+`methodReturnKinds_`/equivalent maps by BARE method name
+(`makeMemberKey(cls->name, method->name)`), with no notion of
+`specializationKey` at all. Confirmed via bisection: adding `Point
+Node::as<Point>() { Point out = ...; return out; }` alone flipped
+`Node::as`'s registered return-kind to SHARED (the specialization's own
+`out` local, analyzed by `promoteReturnsOfSharedLocals` as if it belonged to
+the PRIMARY `as`, fell through `getPointerTypeForVariableInScope`'s
+not-found-defaults-to-SHARED quirk) — which in turn corrupted an entirely
+UNRELATED call chain (`YAML::Load` → `Parser::parseDocument`) that happened
+to read the same bare `"Node::as"` key. Fixed by excluding
+`!method->specializationArg.empty()` members from every one of these
+passes — a specialization's own return/param lowering is already handled
+by the narrower, correct mechanisms described above, so these bare-name
+passes have nothing legitimate to contribute for one anyway.
+
+**Bug 2 — `symbolTypesByScope`'s `kGlobalScope` fallback has no real
+scoping, and roughly a dozen read sites relied on it exclusively.**
+`registerSymbolType` writes every local under BOTH its precise scope
+(free-function name / `"main"` / `"Class::method"`) AND, unconditionally,
+a `kGlobalScope` fallback entry keyed by BARE VARIABLE NAME ALONE — a
+deliberate best-effort fallback, but one that is last-write-wins with zero
+scoping. `inferAliasReturningFreeFunctions`, `promoteSharedCallArguments`
+(and its several nested closures), and `scanContainerElementKindsInStatement`
+all queried ONLY that fallback. Confirmed via direct bisection and a debug
+trace (`getMethodReturnPointerType`'s query logged): a consumer's own
+`main()` declaring `Point p = doc.as<Point>();` silently corrupted
+yaml_parser.clg's `Load`'s UNRELATED `Parser p = new Parser(text); return
+p.parseDocument();` — `Load`'s resolution of its own `p.parseDocument()`
+call picked up `main`'s `p: Point` instead of its own `p: Parser`, purely
+because both got registered under the SAME global, unscoped fallback key
+and `main`'s registration happened to run later. This is a genuinely
+pre-existing bug (predates `convert<T>` entirely — any two functions
+anywhere sharing a locally-scoped variable name of different types could
+collide), just never previously triggered. Fixed by threading the precise
+scope through every one of these call sites (a new `currentScope`/
+`scopeName` variable, set at each function/method/`main` entry point) and
+trying it BEFORE the `kGlobalScope` fallback everywhere — `registerSymbolType`
+itself and its precise-scope write path were already correct; only the
+read sites needed the fix.
+
+### Status: COMPLETE, full pipeline green
+
+Verified end-to-end with real separate compilation: `yaml-cling/tests/
+convert_smoke_main_rust_backend.clg` declares `class Point`, both
+`YAML::Node::decodeInto<Point>`/`YAML::Node::as<Point>` external
+specializations, and calls `YAML::Load("x: 3\ny: 4\n").as<Point>()` — each
+of `yaml_node.clg`/`yaml_scanner.clg`/`yaml_parser.clg`/the driver
+transpiles to its own `.cpp`, compiles independently, links, and RUNS,
+printing `x=3 y=4` (`run_convert_smoke_rust_backend.sh`).
+
+**Final regression**: CeeLing's `ctest` (13 tests including the
+safety-fixture baseline) green after every fix, re-run after each change.
+yaml-cling's full 13-script bash smoke suite green (the pre-existing
+`run_node_smoke.sh` CRLF-only artifact, documented in Step 33, is the sole,
+unrelated, already-known exception).

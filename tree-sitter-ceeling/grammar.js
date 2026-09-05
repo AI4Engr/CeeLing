@@ -43,6 +43,7 @@ module.exports = grammar({
       $.return_statement,
       $.main_function,
       $.class_declaration,
+      $.external_method_specialization,
       $.enum_declaration,
       $.namespace_declaration,
       $.include_statement,
@@ -52,6 +53,36 @@ module.exports = grammar({
       $.throw_statement,
       $.try_statement,
       $.expression_statement
+    ),
+
+    // Declares a SPECIALIZATION of an EXISTING primary generic method (a
+    // `<T> T methodName()`/`<T> T methodName(T x)`-shaped method already
+    // declared inside `ClassName`'s own class body, possibly in a
+    // DIFFERENT .clg file reached via `#include "foo.clh"`) from OUTSIDE
+    // that class -- yaml-cpp's `convert<T>` customization-point shape
+    // (a library consumer specializing `Node::as<MyType>()` for their own
+    // type, without editing yaml_node.clg itself). Mirrors ordinary C++
+    // out-of-line member syntax (`ReturnType Class::method(...) {...}`),
+    // the one shape rust_backend otherwise has NO equivalent of at all
+    // (no out-of-line method definitions exist anywhere else in this
+    // grammar -- every ordinary method body lives inside its class_body).
+    // `method_specialization` (below) still supplies the `<Type>` type
+    // argument, exactly as it does for an IN-class specialization; the
+    // only new surface here is the `ClassName::` qualifier making the
+    // TARGET class explicit at the declaration site, since there is no
+    // enclosing class_body to infer it from.
+    external_method_specialization: $ => seq(
+      $.type,
+      choice($.identifier, $.scoped_identifier),  // target class name, optionally Namespace::ClassName
+      '::',
+      $.identifier,       // method name being specialized
+      $.method_specialization,
+      '(',
+      optional($.parameter_list),
+      ')',
+      '{',
+      repeat($.statement),
+      '}'
     ),
 
     // An unscoped C++ enum: `enum Name { A, B, C };`. Deliberately unscoped (not

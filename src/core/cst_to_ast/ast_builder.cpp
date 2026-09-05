@@ -100,6 +100,25 @@ std::string ASTBuilder::getNodeText(TSNode node, const std::string& source) {
     return source.substr(start, end - start);
 }
 
+// Stamp a node's source position from its originating CST node (1-based).
+static void stampLoc(ASTNode* astNode, TSNode tsNode) {
+    if (astNode == nullptr) return;
+    const TSPoint p = ts_node_start_point(tsNode);
+    astNode->loc.line = static_cast<int>(p.row) + 1;
+    astNode->loc.column = static_cast<int>(p.column) + 1;
+}
+
+// Does `cls` match an external_method_specialization's target class name,
+// which may be spelled bare (`Node`) or namespace-qualified
+// (`YAML::Node`)? Mirrors how every other pass in this codebase (e.g.
+// AstEmitter::collectClassNames) dual-registers a namespaced class under
+// both spellings, rather than requiring the specialization to be written
+// with the SAME qualification the class declaration happened to use.
+static bool classMatchesSpecializationTarget(const ClassDeclaration& cls, const std::string& targetClass) {
+    if (cls.name == targetClass) return true;
+    return !cls.namespaceName.empty() && (cls.namespaceName + "::" + cls.name) == targetClass;
+}
+
 ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
     auto program = std::make_unique<Program>();
 
@@ -112,6 +131,12 @@ ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
     bool hasStructuralAnchor = false;
     bool hasUnresolvedTopLevel = false;
     TSNode firstUnresolvedNode{};
+    // (targetClassName, parsedMethodDeclaration) for every top-level
+    // external_method_specialization seen this pass -- spliced into their
+    // target ClassDeclaration's `members` AFTER every top-level statement
+    // has been built (see the splice loop after this function's main loop),
+    // so declaration order relative to the target class never matters.
+    std::vector<std::pair<std::string, StatementPtr>> pendingExternalSpecializations;
 
     uint32_t child_count = ts_node_child_count(root_node);
     for (uint32_t i = 0; i < child_count; i++) {
@@ -170,6 +195,37 @@ ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
             continue;
         }
 
+        // `ReturnType ClassName::methodName<Type>(...) {...}` at top level
+        // (yaml-cpp's convert<T> customization-point shape) doesn't fit
+        // buildStatement's one-node-in/one-statement-out contract either --
+        // it produces a MethodDeclaration that must be SPLICED into an
+        // EXISTING class's own `members` vector (possibly declared earlier
+        // OR later in this same file, or merged in from a separate .clg via
+        // #include -- see mergeExternalDeclarations in main.cpp, which runs
+        // BEFORE this builder never sees it; the splice here only needs to
+        // handle same-file ordering, since an external class's
+        // ClassDeclaration is already a real top-level statement by the
+        // time ITS .clg is built standalone). Collected here and spliced in
+        // a second pass below (after every top-level statement, including
+        // every ClassDeclaration, has been built) so declaration ORDER
+        // relative to the target class never matters.
+        if (strcmp(ts_node_type(inner), "external_method_specialization") == 0) {
+            std::string targetClass;
+            auto methodDecl = buildExternalMethodSpecialization(inner, source, targetClass);
+            stampLoc(methodDecl.get(), inner);
+            // Raw pointer captured BEFORE ownership moves into
+            // pendingExternalSpecializations (and from there into the target
+            // class's `members` in the splice pass below) -- the marker
+            // below is what AstEmitter actually walks for emission position;
+            // the splice destination only matters to the checkers.
+            auto* methodDeclRaw = static_cast<MethodDeclaration*>(methodDecl.get());
+            auto marker = std::make_unique<ExternalSpecializationMarker>(targetClass, methodDeclRaw);
+            stampLoc(marker.get(), inner);
+            program->addStatement(std::move(marker));
+            pendingExternalSpecializations.emplace_back(targetClass, std::move(methodDecl));
+            continue;
+        }
+
         auto stmt = buildStatement(child, source);
         if (stmt) {
             if (dynamic_cast<ClassDeclaration*>(stmt.get()) || dynamic_cast<MainFunction*>(stmt.get())) {
@@ -182,6 +238,42 @@ ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
             }
             hasUnresolvedTopLevel = true;
         }
+    }
+
+    // Splice every external_method_specialization into its target class's
+    // OWN members vector now, after every top-level statement (including
+    // every ClassDeclaration) has been built -- this is what lets every
+    // downstream pass (EscapeHatchChecker, SmartPointerAnalyzer, AstEmitter,
+    // DanglingChecker) see it via their EXISTING "walk cls->members looking
+    // for MethodDeclaration" logic, with zero changes to any of them beyond
+    // whatever needs to specifically branch on isExternalSpecialization
+    // (AstEmitter, to emit it at namespace scope -- see that flag's own
+    // comment in ast.h). A target NOT found among THIS file's own statements
+    // is deferred to program->unresolvedExternalSpecializations rather than
+    // treated as an error here -- it may still be a real, known class
+    // declared in a DIFFERENT .clg file reached via #include, which
+    // mergeExternalDeclarations (main.cpp) only resolves AFTER this function
+    // returns (confirmed via probe: the cross-file case genuinely can't be
+    // resolved at this point in the pipeline). main.cpp calls
+    // spliceExternalSpecializations again post-merge, where "still not
+    // found" really does mean unknown and is a hard error (CLAUDE.md's
+    // "default-reject, never default-allow", same as validateInheritance's
+    // unknown-base-class rule below) -- a specialization that silently
+    // vanished would be far more confusing than a clear error.
+    for (auto& [targetClass, methodDecl] : pendingExternalSpecializations) {
+        ClassDeclaration* target = nullptr;
+        for (auto& stmt : program->statements) {
+            if (auto cls = dynamic_cast<ClassDeclaration*>(stmt.get());
+                cls != nullptr && classMatchesSpecializationTarget(*cls, targetClass)) {
+                target = cls;
+                break;
+            }
+        }
+        if (target == nullptr) {
+            program->unresolvedExternalSpecializations.emplace_back(targetClass, std::move(methodDecl));
+            continue;
+        }
+        target->members.push_back(std::move(methodDecl));
     }
 
     if (program->statements.empty()) {
@@ -251,13 +343,6 @@ void ASTBuilder::validateInheritance(const Program& program) {
     }
 }
 
-// Stamp a node's source position from its originating CST node (1-based).
-static void stampLoc(ASTNode* astNode, TSNode tsNode) {
-    if (astNode == nullptr) return;
-    const TSPoint p = ts_node_start_point(tsNode);
-    astNode->loc.line = static_cast<int>(p.row) + 1;
-    astNode->loc.column = static_cast<int>(p.column) + 1;
-}
 
 // Observers (`ref`) are local-only: they may not appear as function parameters.
 // A `ref` in a parameter list is a hard error (the language subset forbids passing
@@ -1307,24 +1392,55 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
         }
     }
 
-    // A primary generic method's return type must be EXACTLY its own type
-    // parameter (`<T> T as()`), matching CeeLing's narrowly-scoped support for
-    // return-type genericity only. A primary that returns something else (`<T> int
-    // as()`, or a `T`-typed PARAMETER, which this slice does not support at all)
-    // has no way to be checked as a real generic body -- rejected per CLAUDE.md's
-    // "ambiguous -> conservative reject" rule rather than silently accepted and
-    // mishandled.
-    if (!typeParameter.empty() && returnType != typeParameter) {
-        std::ostringstream oss;
-        const TSPoint p = ts_node_start_point(node);
-        oss << "error[semantic/unsupported-generic]: generic method `" << methodName
-            << "` declares type parameter `" << typeParameter << "` but returns `"
-            << returnType << "`, not `" << typeParameter << "` (line " << (p.row + 1)
-            << ", column " << (p.column + 1) << "). CeeLing supports only "
-               "return-type genericity (`<T> T " << methodName << "() {...}`) -- "
-               "a generic parameter type, or a return type other than the type "
-               "parameter itself, is not supported.";
-        throw std::runtime_error(oss.str());
+    // A primary generic method's type parameter T must appear in the return
+    // type (`<T> T as()`, CeeLing's original return-type-genericity slice --
+    // T MAY also appear in a parameter here, e.g. the pre-existing `<T> T
+    // as(T fallback) {...}` pattern: an ordinary by-value parameter, no
+    // special lowering needed, since T isn't a real class type and already
+    // falls through to a bare, verbatim emission), OR, when T is NOT the
+    // return type, in exactly one parameter's type (`<T> bool decodeInto(T
+    // out)`, added for yaml-cpp's convert<T>::decode out-param shape -- see
+    // CLAUDE.md/TODO.md; that one parameter becomes a mutable out-parameter,
+    // see DanglingChecker::outParamIndex_/AstEmitter::outParamIndex_). T is
+    // never checked as a real generic type anywhere else in the pipeline
+    // (EscapeHatchChecker only tracks callable names/arities, never param
+    // types; SmartPointerAnalyzer/AstEmitter never inspect a PRIMARY's body
+    // deeply since it's always a trivial stub -- only a concrete
+    // SPECIALIZATION's body, with a real concrete type substituted for T, is
+    // ever emitted/analyzed for real), so both positions are equally
+    // supportable with no further core changes -- but T appearing in
+    // NEITHER the return type nor any parameter, or in more than one
+    // parameter when it's not also the return type, has no single,
+    // unambiguous meaning and is rejected per CLAUDE.md's "ambiguous ->
+    // conservative reject" rule.
+    if (!typeParameter.empty()) {
+        size_t paramTCount = 0;
+        for (const auto& [ptype, pname] : parameters) {
+            if (ptype == typeParameter) ++paramTCount;
+        }
+        const bool returnIsT = (returnType == typeParameter);
+        if (!returnIsT && paramTCount == 0) {
+            std::ostringstream oss;
+            const TSPoint p = ts_node_start_point(node);
+            oss << "error[semantic/unsupported-generic]: generic method `" << methodName
+                << "` declares type parameter `" << typeParameter << "` but it appears in "
+                   "neither the return type (`" << returnType << "`) nor any parameter (line "
+                << (p.row + 1) << ", column " << (p.column + 1) << "). CeeLing supports only "
+                   "return-type genericity (`<T> T " << methodName << "() {...}`) or a single "
+                   "T-typed parameter (`<T> ReturnType " << methodName
+                << "(T param) {...}`) -- a type parameter that appears nowhere checkable "
+                   "is not supported.";
+            throw std::runtime_error(oss.str());
+        }
+        if (paramTCount > 1) {
+            std::ostringstream oss;
+            const TSPoint p = ts_node_start_point(node);
+            oss << "error[semantic/unsupported-generic]: generic method `" << methodName
+                << "` uses its type parameter `" << typeParameter << "` for " << paramTCount
+                << " different parameters (line " << (p.row + 1) << ", column "
+                << (p.column + 1) << "). CeeLing supports at most one T-typed parameter.";
+            throw std::runtime_error(oss.str());
+        }
     }
 
     auto result = std::make_unique<MethodDeclaration>(returnType, methodName, std::move(parameters), std::move(body));
@@ -1334,6 +1450,118 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
     result->typeParameter = typeParameter;
     result->specializationArg = specializationArg;
     return result;
+}
+
+// external_method_specialization: type identifier "::" identifier
+//                                  method_specialization "(" optional(parameter_list) ")"
+//                                  "{" repeat(statement) "}"
+//
+// yaml-cpp's convert<T> customization-point shape: a library consumer
+// specializes an EXISTING primary generic method (`<T> T as()`, declared
+// inside `targetClass`'s own class body, possibly in a different .clg
+// file) for their own type, from OUTSIDE that class. Returns an ordinary
+// MethodDeclaration (isExternalSpecialization=true) plus the parsed
+// target class name via the out-parameter `targetClass` -- the caller
+// (buildProgram) splices it into that class's ClassDeclaration::members,
+// so every downstream pass that already walks `members` looking for
+// MethodDeclarations picks it up automatically (see ast.h's
+// isExternalSpecialization comment for the full rationale).
+StatementPtr ASTBuilder::buildExternalMethodSpecialization(TSNode node, const std::string& source,
+                                                            std::string& targetClass) {
+    TSNode returnTypeNode = ts_node_child(node, 0);
+    TSNode targetClassNode = ts_node_child(node, 1);
+    // child(2) is the literal "::" token.
+    TSNode methodNameNode = ts_node_child(node, 3);
+    std::string returnType = getNodeText(returnTypeNode, source);
+    targetClass = getNodeText(targetClassNode, source);
+    std::string methodName = getNodeText(methodNameNode, source);
+
+    std::vector<std::pair<std::string, std::string>> parameters;
+    std::vector<StatementPtr> body;
+    std::string specializationArg;
+
+    uint32_t childCount = ts_node_child_count(node);
+    for (uint32_t i = 4; i < childCount; i++) {
+        TSNode child = ts_node_child(node, i);
+        const char* childType = ts_node_type(child);
+
+        if (strcmp(childType, "method_specialization") == 0) {
+            if (ts_node_named_child_count(child) > 0) {
+                specializationArg = getNodeText(ts_node_named_child(child, 0), source);
+            }
+        } else if (strcmp(childType, "parameter_list") == 0) {
+            rejectObserverParams(child);
+            uint32_t paramCount = ts_node_child_count(child);
+            std::string pendingType;
+            for (uint32_t j = 0; j < paramCount; j++) {
+                TSNode paramNode = ts_node_child(child, j);
+                const char* pt = ts_node_type(paramNode);
+                if (strcmp(pt, "type") == 0) {
+                    pendingType = getNodeText(paramNode, source);
+                } else if (strcmp(pt, "identifier") == 0 && !pendingType.empty()) {
+                    parameters.push_back({pendingType, getNodeText(paramNode, source)});
+                    pendingType.clear();
+                }
+            }
+        } else if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        } else if (strcmp(childType, "statement") == 0) {
+            auto stmt = buildStatement(child, source);
+            if (stmt) {
+                body.push_back(std::move(stmt));
+            } else {
+                rejectUnbuildableChild(child, source);
+            }
+        }
+    }
+
+    if (specializationArg.empty()) {
+        std::ostringstream oss;
+        const TSPoint p = ts_node_start_point(node);
+        oss << "error[semantic/unsupported-generic]: `" << targetClass << "::" << methodName
+            << "` at line " << (p.row + 1) << ", column " << (p.column + 1)
+            << " declares an external method specialization with no `<Type>` type "
+               "argument -- external_method_specialization exists only to specialize an "
+               "existing primary generic method for a concrete type (yaml-cpp's "
+               "convert<T> customization-point shape), never to add an ordinary "
+               "out-of-class method definition (rust_backend has no such syntax at all).";
+        throw std::runtime_error(oss.str());
+    }
+
+    auto result = std::make_unique<MethodDeclaration>(returnType, methodName, std::move(parameters), std::move(body));
+    result->specializationArg = specializationArg;
+    result->isExternalSpecialization = true;
+    return result;
+}
+
+void ASTBuilder::spliceExternalSpecializations(Program& program) {
+    if (program.unresolvedExternalSpecializations.empty()) return;
+    auto pending = std::move(program.unresolvedExternalSpecializations);
+    program.unresolvedExternalSpecializations.clear();
+    for (auto& [targetClass, methodDecl] : pending) {
+        ClassDeclaration* target = nullptr;
+        for (auto& stmt : program.statements) {
+            if (auto cls = dynamic_cast<ClassDeclaration*>(stmt.get());
+                cls != nullptr && classMatchesSpecializationTarget(*cls, targetClass)) {
+                target = cls;
+                break;
+            }
+        }
+        if (target == nullptr) {
+            std::ostringstream oss;
+            oss << "error[semantic/unknown-specialization-target]: `" << targetClass << "::"
+                << static_cast<MethodDeclaration*>(methodDecl.get())->name << "<"
+                << static_cast<MethodDeclaration*>(methodDecl.get())->specializationArg
+                << ">` at line " << methodDecl->loc.line << " specializes a method on `"
+                << targetClass << "`, which is not a class declared in this program (or "
+                   "merged in via #include). CeeLing cannot specialize a method on a class "
+                   "it did not compile itself -- an external_method_specialization's target "
+                   "must be a real, known class, the same rule validateInheritance applies "
+                   "to an unknown base class.";
+            throw std::runtime_error(oss.str());
+        }
+        target->members.push_back(std::move(methodDecl));
+    }
 }
 
 } // namespace cling

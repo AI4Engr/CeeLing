@@ -158,6 +158,12 @@ private:
     // VariableDeclaration branch in emitStatement, the one call site that needs
     // this alongside the ordinary smartPointerType(decl->type, ...) lookup.
     bool isSharedReturningCall(const Expression* expr) const;
+    // True for a call to a method specialization whose return type is its
+    // own concrete specialized type (e.g. `doc.as<Point>()` when `Point
+    // Node::as<Point>()` is an external specialization) -- such a call's
+    // C++ result is a bare value, not smart-pointer wrapped. See
+    // currentSpecializationValueType_'s comment for the full rationale.
+    bool isBareValueReturningSpecializationCall(const Expression* expr) const;
 
     // Expression emission.
     std::string emitExpression(const Expression* expr);
@@ -192,8 +198,34 @@ private:
     void noteVar(const std::string& name, VarKind kind) { varKinds_[name] = kind; }
     VarKind kindOf(const std::string& name) const;
 
+    // Set only while emitting an external specialization whose return type
+    // equals its own concrete specialized type (e.g. `Point
+    // Node::as<Point>()`) -- see isValueType's comment for the full
+    // rationale. Empty ("") the rest of the time, so isValueType's ordinary
+    // behavior for every other type/function is unaffected.
+    std::string currentSpecializationValueType_;
+
     const SmartPointerAnalyzer& analyzer_;
     std::set<std::string> classNames_;
+    // Populated alongside classNames_ in collectClassNames -- lets
+    // emitExternalSpecializationMarker resolve an ExternalSpecializationMarker's
+    // targetClassName back to the real ClassDeclaration (needed for its
+    // namespaceName) without threading the whole Program through emitTopLevel.
+    std::map<std::string, const ClassDeclaration*> classByName_;
+    // Mirrors DanglingChecker::outParamIndex_ (see its own comment for the
+    // full rationale) -- (className, methodName) -> index of the parameter
+    // whose PRIMARY declares it as the type-parameter T (`<T> bool
+    // decodeInto(T out)`). Lowered like a `ref` observer (VarKind::Reference:
+    // raw pointer, `.get()` at the call site, `->` access in the body) rather
+    // than moved/smart-pointer-wrapped -- both the primary's own `T out` and
+    // every concrete specialization's `Point out` share this SAME index and
+    // SAME non-owning lowering, since a specialization's parameter list must
+    // structurally match its primary. NOTE: unrelated to CLAUDE.md's roadmap
+    // `borrow<T>` item -- see outParamIndex_'s own comment in dangling_checker.h.
+    std::map<std::string, size_t> outParamIndex_;
+    static std::string outParamKey(const std::string& ownerClass, const std::string& methodName) {
+        return ownerClass + "::" + methodName;
+    }
     // Runtime helpers (see library_summary.h's isKnownRuntimeHelper) actually
     // called anywhere in this program -- computed once up front by
     // collectUsedRuntimeHelpers so emit()/emitHeader() know which shim
@@ -201,6 +233,13 @@ private:
     // buffer-then-decide-preamble shape.
     std::set<std::string> usedRuntimeHelpers_;
     void collectUsedRuntimeHelpers(const Program& program);
+    // Emits an ExternalSpecializationMarker's declaration+definition at its
+    // own top-level source position -- see the marker's comment in ast.h for
+    // why this position (not "after the target class") is the only one
+    // that's always safe.
+    void emitExternalSpecializationMarker(const ExternalSpecializationMarker& marker,
+                                           const ClassDeclaration& targetClass,
+                                           std::ostringstream& out);
     // Classes that some other class inherits from. Any such class gets an
     // auto-generated `virtual ~Base() = default;` -- destroying a derived object
     // through a base-typed owner is undefined behavior without one, and CeeLing has

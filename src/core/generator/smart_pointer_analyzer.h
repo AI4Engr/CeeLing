@@ -154,7 +154,13 @@ private:
     // data, own recursive statement walk) to decide each container variable's
     // element pointer kind. Runs once per analyzeProgram call.
     void scanContainerElementKinds(const Program& program);
-    void scanContainerElementKindsInStatement(const Statement& stmt);
+    // `scopeName` is the precise scope (free function name, "main", or
+    // "Class::method") this statement's own body belongs to -- tried before
+    // symbolTypesByScope's kGlobalScope fallback when resolving a bare
+    // identifier's type, to avoid two unrelated functions' same-named
+    // locals colliding in that fallback (see scanContainerElementKinds's
+    // callers, which now pass this precisely).
+    void scanContainerElementKindsInStatement(const Statement& stmt, const std::string& scopeName);
 
     // A parameter that a method/constructor body stores into an already-SHARED
     // field must itself be SHARED (a `shared_ptr` field can't hold a moved-in
