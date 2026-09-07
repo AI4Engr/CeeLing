@@ -4,6 +4,47 @@ Modern C++'s newest dangling hotspots are **non-owning views** — objects that 
 like values* but actually reference someone else's storage. Eigen's expression
 templates are the same trap in numeric code.
 
+## Implementation status (honest, read this before the rest of the chapter)
+
+This chapter was written as a **design target** before any of it existed, and most
+of it still is one: `string_view`/`span` dangling tracking is **not implemented**,
+and CeeLing has **no `auto` keyword at all** (confirmed —
+`tree-sitter-ceeling/grammar.js`'s `variable_declaration` requires an explicit
+type; no type-inference production exists anywhere in the grammar). Every `auto e
+= A + B;` example below is therefore describing a danger CeeLing **cannot express**,
+not one it resolves at runtime — the entire "declared type flips the meaning"
+mechanism below (`auto` vs. concrete type) is real for hand-written C++ and for
+`cppfront`/Circle, but for CeeLing it is a non-issue by construction, not a caught
+error. This is a *favorable* finding, not a gap: the single hardest part of this
+chapter's original design (provenance through `auto`) turned out to be moot.
+
+What **is real and shipped**, as a narrow first slice of this chapter's `.block()`/
+`.row()` idea (not the full design below — see the honest scope limits at the end
+of this note before relying on it):
+- `Eigen::MatrixXd` participates in ordinary move/copy tracking exactly like any
+  CeeLing `class` — `sink(a); use(a);` is a real, caught use-after-move; declaring
+  `MatrixXd b = a;` is a real, accepted copy.
+- Eight view-returning methods — `.block()`, `.row()`, `.col()`, `.transpose()`,
+  `.segment()`, `.head()`, `.tail()`, `.diagonal()` — are recognized as borrowing
+  their receiver: `MatrixXd b = a.block(...);` registers `b` as an observer of `a`,
+  and the SAME dangling machinery Chapter 11 describes for `ref` (provenance +
+  death events + use-site check) catches a later reassignment or move of `a` before
+  `b` is used. See `tests/safety/`'s sibling directory `eigen-cling-spike/` for the
+  four fixtures proving both directions (dangling caught, and the source usable
+  again afterward when it's *not* reassigned/moved).
+- This does **not** yet come from reading Eigen's own header source automatically
+  (the "one summary line" idea below, `Eigen::MatrixXd::block(&self, ...) -> borrows
+  self`, is accurate in spirit but is currently a small hand-maintained allow-list of
+  8 method names, not a general per-library declaration mechanism or an
+  auto-extracted one). Any Eigen view method NOT in that list of 8 (`topRows()`,
+  `array()`, chained views like `a.block(...).transpose()`, ...) is rejected by the
+  ordinary default-reject-unknown-call rule — the safe failure mode, not a silent
+  hole. Full design and exact implementation in `PLAN_eigen_views.md` (repo root)
+  and `TODO.md`'s "Eigen view/borrow tracking" entry.
+
+Read the rest of this chapter as: **the target design**, with the two paragraphs
+above telling you exactly which piece of it is real today.
+
 ## The problem in raw C++
 
 ### `string_view` / `span` over a temporary
@@ -152,3 +193,9 @@ default-reject rule — safe, but temporarily unusable. So the guarantee is *saf
 usable as the summary table grows* (see [Chapter 5](05-how-analysis-works.md) and the
 roadmap in [Chapter 9](09-status-and-roadmap.md)). Eigen is not magically fully covered
 — it is covered exactly as far as its allow-list reaches, and no further.
+
+Concretely, today that allow-list has exactly 8 entries (see the implementation-status
+note at the top of this chapter) — real tracking, verified end-to-end against real
+Eigen headers, but a small, hand-maintained slice of Eigen's full view-returning
+surface, not the fully general "any borrow summary" mechanism this chapter otherwise
+describes.

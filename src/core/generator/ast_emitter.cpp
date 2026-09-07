@@ -689,6 +689,18 @@ std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::st
     const std::string elem = vectorElementType(ceelingType);
     if (elem.empty()) return ceelingType;
     std::string elemCpp = elem;
+    // A `struct`-declared (or Iterator-shaped) value-type element is stored
+    // BARE -- `std::vector<Vertex>`, not `std::vector<unique_ptr<Vertex>>` --
+    // matching how a value-type LOCAL/field is already unwrapped elsewhere in
+    // this file. Checked BEFORE the ordinary class-type smart-pointer wrap
+    // below, which would otherwise apply unconditionally to any class-typed
+    // element regardless of value-type-ness (confirmed as a real bug via
+    // probe: a plain-data Vertex struct was forced into
+    // vector<unique_ptr<Vertex>>, scattered heap allocations physically
+    // unusable as a contiguous vertex/index buffer).
+    if (analyzer_.isValueTypeClass(elem)) {
+        return "std::vector<" + elem + ">";
+    }
     if (isClassType(elem)) {
         const std::string ptr = analyzer_.containerElementIsShared(varName)
             ? "std::shared_ptr<" : "std::unique_ptr<";
@@ -930,7 +942,8 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
     out << "};\n\n";
 
     for (const auto* ctor : outOfLineCtors) {
-        emitFunction("", cls.name + "::" + ctor->name, ctor->parameters, ctor->body, out, cls.name, 0);
+        emitFunction("", cls.name + "::" + ctor->name, ctor->parameters, ctor->body, out, cls.name, 0,
+                     false, false, false, "", /*isConstructor=*/true);
     }
     for (const auto* method : outOfLineMethods) {
         // `isVirtual`/`isOverride` are NOT repeated out-of-line -- both are class-body-
@@ -1189,7 +1202,8 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
                               const std::vector<std::pair<std::string, std::string>>& params,
                               const std::vector<StatementPtr>& body, std::ostringstream& out,
                               const std::string& ownerClass, int baseIndent, bool isConst,
-                              bool isVirtual, bool isOverride, const std::string& methodName) {
+                              bool isVirtual, bool isOverride, const std::string& methodName,
+                              bool isConstructor) {
     // Each function has its own local variable scope; `currentClass_` enables `this->`
     // for field access inside a method/constructor.
     varKinds_.clear();
@@ -1209,11 +1223,54 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     std::string sig = buildFunctionSignature(returnType, name, params, ownerClass, isConst,
                                              isVirtual, isOverride, methodName);
 
+    // Member-initializer-list hoisting (constructors only -- see this function's
+    // header comment and selectAssignmentRhs's for the full rationale). Walk the
+    // body from the start, hoisting a LEADING RUN of plain assignments to this
+    // class's own fields; stop at the first statement that doesn't qualify (a
+    // non-assignment, a member/subscript-target assignment, an assignment to a
+    // field this constructor already hoisted, or a field NOT declared directly
+    // in this class -- e.g. an inherited field, which cannot legally appear in
+    // this class's own initializer list). Everything from that point on stays an
+    // ordinary body statement, in original order, exactly as before this change.
+    std::set<size_t> hoistedIndices;
+    std::string initList;
+    if (isConstructor) {
+        // Own-field names only (NOT classFields_/isCurrentField, which are
+        // flattened with inherited fields merged in -- using them here would
+        // wrongly try to hoist an inherited field's assignment into a
+        // derived-class initializer list, which does not compile). Walking
+        // cls->members directly mirrors the exact pattern emitClass/
+        // emitClassHeader already use for field declarations.
+        std::set<std::string> ownFieldNames;
+        if (auto clsIt = classByName_.find(ownerClass); clsIt != classByName_.end()) {
+            for (const auto& member : clsIt->second->members) {
+                if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                    ownFieldNames.insert(field->identifier);
+                }
+            }
+        }
+        std::set<std::string> hoistedFields;
+        for (size_t i = 0; i < body.size(); ++i) {
+            auto assign = dynamic_cast<const AssignmentStatement*>(body[i].get());
+            if (assign == nullptr || assign->target != nullptr) break;  // non-assignment, or member/subscript target
+            if (ownFieldNames.count(assign->variable) == 0) break;      // not this class's own field
+            if (hoistedFields.count(assign->variable) > 0) break;       // already hoisted once
+            hoistedFields.insert(assign->variable);
+            hoistedIndices.insert(i);
+            const std::string rhs = selectAssignmentRhs(assign, assign->variable, false, false);
+            if (!initList.empty()) initList += ", ";
+            initList += assign->variable + "(" + rhs + ")";
+        }
+    }
+
     // Class members are indented one level; free functions sit at column 0.
     const std::string pad = indentStr(baseIndent);
-    out << pad << sig << " {\n";
-    for (const auto& stmt : body) {
-        emitStatement(stmt.get(), out, baseIndent + 1);
+    out << pad << sig;
+    if (!initList.empty()) out << " : " << initList;
+    out << " {\n";
+    for (size_t i = 0; i < body.size(); ++i) {
+        if (hoistedIndices.count(i) > 0) continue;
+        emitStatement(body[i].get(), out, baseIndent + 1);
     }
     out << pad << "}\n";
     if (baseIndent == 0) out << "\n";  // blank line only between top-level definitions
@@ -1259,6 +1316,71 @@ std::string AstEmitter::emitMovedArg(const Expression* arg,
 }
 
 // ---- statements ----------------------------------------------------------
+
+// Extracted from emitStatement's own AssignmentStatement branch (which used to
+// hand-inline this whole decision tree) so a hoisted member-initializer-list
+// entry (emitFunction, constructor-only) computes its RHS text through the
+// EXACT same logic an ordinary body assignment does -- the two paths must
+// never independently decide "what does `field = expr;` lower to," or a
+// future bugfix to one would silently miss the other. See emitFunction's own
+// comment for what motivated hoisting in the first place: a value-type field
+// (`isValueType`) assigned via ordinary body assignment still requires C++ to
+// default-construct it first (before the constructor body runs), which fails
+// outright for any value type with no zero-arg constructor -- confirmed via a
+// real g++ error building imgui-cling's `Color` (nested inside
+// `ColorEditResult`'s own field). A member-initializer entry (`field(rhs)`)
+// constructs the field FROM rhs directly and never default-constructs it,
+// making that failure mode structurally impossible regardless of the field
+// type's own constructors.
+std::string AstEmitter::selectAssignmentRhs(const AssignmentStatement* assign, const std::string& ptrVar,
+                                            bool memberTarget, bool subscriptTarget) {
+    std::string rhs;
+    const bool rhsIsNullptr = isNullptrLiteral(assign->expression.get());
+    if (subscriptTarget) {
+        // `m[key] = value;` (std::map insert-or-update, Phase 2.6 map slice): the
+        // value is always a primitive this slice (enforced at parse time), so it's
+        // a plain copy -- no move/factory/weak_ptr logic applies, the same reason
+        // a member-target store doesn't consume its RHS.
+        rhs = emitExpression(assign->expression.get());
+    } else if (!memberTarget && kindOf(assign->variable) == VarKind::Reference) {
+        // `obs = b;` REBINDS the observer to a different object -- it does not
+        // move/consume `b` (matches DanglingChecker's model: rebinding an
+        // observer never marks the RHS moved-from). Lowered the same way as the
+        // declaration: `.get()` extracts the new address, or `nullptr` directly.
+        rhs = rhsIsNullptr ? "nullptr" : "(" + emitExpression(assign->expression.get()) + ").get()";
+    } else if (auto neww = dynamic_cast<const NewExpression*>(assign->expression.get())) {
+        if (isValueType(neww->className)) {
+            // `target = new T(...)` for a value-type class: plain constructor
+            // call, matching every other value-type construction site.
+            rhs = neww->className + "(";
+            for (size_t i = 0; i < neww->arguments.size(); ++i) {
+                if (i > 0) rhs += ", ";
+                rhs += emitExpression(neww->arguments[i].get());
+            }
+            rhs += ")";
+        } else {
+            // `target = new T(...)` -> make_*<T>(...) with the target field's ptr kind.
+            rhs = factoryFor(neww->className, ptrVar, neww->arguments);
+        }
+    } else if (rhsIsNullptr && !ptrVar.empty() &&
+               analyzer_.getPointerTypeForVariable(ptrVar) == PointerType::WEAK) {
+        // weak_ptr has no operator=(nullptr_t); default-construct instead (an empty
+        // weak_ptr, the same meaning as "nullptr" for the other smart-pointer kinds).
+        rhs = "{}";
+    } else if (memberTarget) {
+        // `a.b = obj;` links/shares into a field — it does not consume `obj`.
+        rhs = emitExpression(assign->expression.get());
+    } else if (!ptrVar.empty() && isValueType(varClass_.count(ptrVar) ? varClass_.at(ptrVar) : "")) {
+        // `x = a;` where `x` is a value-type class: a plain copy, like any
+        // other value-type site -- never moved (value types aren't smart
+        // pointers, there's nothing to move).
+        rhs = emitExpression(assign->expression.get());
+    } else {
+        // `x = a;` transfers ownership of an object local.
+        rhs = emitMovedArg(assign->expression.get());
+    }
+    return rhs;
+}
 
 void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, int indent) {
     const std::string pad = indentStr(indent);
@@ -1442,51 +1564,7 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
                 }
             }
         }
-        std::string rhs;
-        const bool rhsIsNullptr = isNullptrLiteral(assign->expression.get());
-        if (subscriptTarget) {
-            // `m[key] = value;` (std::map insert-or-update, Phase 2.6 map slice): the
-            // value is always a primitive this slice (enforced at parse time), so it's
-            // a plain copy -- no move/factory/weak_ptr logic applies, the same reason
-            // a member-target store doesn't consume its RHS.
-            rhs = emitExpression(assign->expression.get());
-        } else if (!memberTarget && kindOf(assign->variable) == VarKind::Reference) {
-            // `obs = b;` REBINDS the observer to a different object -- it does not
-            // move/consume `b` (matches DanglingChecker's model: rebinding an
-            // observer never marks the RHS moved-from). Lowered the same way as the
-            // declaration: `.get()` extracts the new address, or `nullptr` directly.
-            rhs = rhsIsNullptr ? "nullptr" : "(" + emitExpression(assign->expression.get()) + ").get()";
-        } else if (auto neww = dynamic_cast<const NewExpression*>(assign->expression.get())) {
-            if (isValueType(neww->className)) {
-                // `target = new T(...)` for a value-type class: plain constructor
-                // call, matching every other value-type construction site.
-                rhs = neww->className + "(";
-                for (size_t i = 0; i < neww->arguments.size(); ++i) {
-                    if (i > 0) rhs += ", ";
-                    rhs += emitExpression(neww->arguments[i].get());
-                }
-                rhs += ")";
-            } else {
-                // `target = new T(...)` -> make_*<T>(...) with the target field's ptr kind.
-                rhs = factoryFor(neww->className, ptrVar, neww->arguments);
-            }
-        } else if (rhsIsNullptr && !ptrVar.empty() &&
-                   analyzer_.getPointerTypeForVariable(ptrVar) == PointerType::WEAK) {
-            // weak_ptr has no operator=(nullptr_t); default-construct instead (an empty
-            // weak_ptr, the same meaning as "nullptr" for the other smart-pointer kinds).
-            rhs = "{}";
-        } else if (memberTarget) {
-            // `a.b = obj;` links/shares into a field — it does not consume `obj`.
-            rhs = emitExpression(assign->expression.get());
-        } else if (!ptrVar.empty() && isValueType(varClass_.count(ptrVar) ? varClass_.at(ptrVar) : "")) {
-            // `x = a;` where `x` is a value-type class: a plain copy, like any
-            // other value-type site -- never moved (value types aren't smart
-            // pointers, there's nothing to move).
-            rhs = emitExpression(assign->expression.get());
-        } else {
-            // `x = a;` transfers ownership of an object local.
-            rhs = emitMovedArg(assign->expression.get());
-        }
+        std::string rhs = selectAssignmentRhs(assign, ptrVar, memberTarget, subscriptTarget);
         out << pad << lhs << " = " << rhs << ";\n";
     } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
         // Returning an object hands ownership back to the caller. A `new T(...)`
@@ -1623,10 +1701,15 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         // Range-for matches native C++ syntax 1:1 -- no translation needed beyond
         // the class-typed-element type mapping (Node -> shared_ptr<Node> or
         // unique_ptr<Node>, so the loop variable's type actually matches what
-        // the container yields).
+        // the container yields). A value-type element (`struct`/Iterator-
+        // shaped) is excluded from this smart-pointer mapping -- it's ALREADY
+        // stored bare in the container (see cppTypeFor's matching guard), so
+        // the loop variable stays the bare type too, falling through to the
+        // `else` branch below (VarKind::Value, `.` access) exactly like an
+        // ordinary value-type local elsewhere in this file.
         std::string elemCppType = fors->loopVarType;
         bool elementIsUnique = false;
-        if (isClassType(fors->loopVarType)) {
+        if (isClassType(fors->loopVarType) && !isValueType(fors->loopVarType)) {
             std::string containerName;
             if (auto id = dynamic_cast<const Identifier*>(fors->container.get())) {
                 containerName = id->name;
@@ -1665,13 +1748,16 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         out << pad << "for (" << elemCppType << (elementIsUnique ? "& " : " ")
             << fors->loopVarName << " : " << (derefContainer ? "*" : "")
             << emitExpression(fors->container.get()) << ") {\n";
-        if (isClassType(fors->loopVarType)) {
+        if (isClassType(fors->loopVarType) && !isValueType(fors->loopVarType)) {
             // The loop variable is a shared_ptr<T> per iteration -- register it like
             // any other smart-pointer local so member access inside the body lowers
             // `.` to `->` via the existing exprObjectClass machinery.
             noteVar(fors->loopVarName, VarKind::SmartPtr);
             varClass_[fors->loopVarName] = fors->loopVarType;
         } else {
+            // Also covers a value-type element (`struct`/Iterator-shaped): no
+            // smart-pointer wrapping, `.` access via VarKind::Value, matching
+            // an ordinary value-type local elsewhere in this file.
             noteVar(fors->loopVarName, VarKind::Value);
         }
         for (const auto& inner : fors->body) {
@@ -1910,6 +1996,37 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
                 continue;
             }
             if (receiverIsVector && vectorMethodSharesArg(methodName, i)) {
+                // A value-type element (`struct`/Iterator-shaped) is stored
+                // BARE in the container (see cppTypeFor's matching guard) --
+                // no smart-pointer construction/move/share logic applies at
+                // all, matching how a bare value-type local is already
+                // constructed/copied elsewhere in this file. Checked FIRST,
+                // before any of the make_shared/make_unique/move/share
+                // branches below, all of which assume a class-typed element
+                // needs SOME pointer kind.
+                const std::string vectorElemType = vectorElementType(receiverContainerType);
+                if (!vectorElemType.empty() && analyzer_.isValueTypeClass(vectorElemType)) {
+                    if (auto neww = dynamic_cast<const NewExpression*>(call->arguments[i].get())) {
+                        // `push_back(new Vertex(1.0, 2.0))` -> plain constructor
+                        // call, mirroring how a bare `new T(...)` outside a
+                        // container already becomes a plain constructor call
+                        // for a value-type class (see the NewExpression
+                        // handling elsewhere in this file).
+                        std::string arg = neww->className + "(";
+                        for (size_t j = 0; j < neww->arguments.size(); ++j) {
+                            if (j > 0) arg += ", ";
+                            arg += emitExpression(neww->arguments[j].get());
+                        }
+                        arg += ")";
+                        s += arg;
+                    } else {
+                        // An existing-variable argument: plain copy, never
+                        // moved -- a small POD struct copies cheaply, and it
+                        // has no ownership to transfer in the first place.
+                        s += emitExpression(call->arguments[i].get());
+                    }
+                    continue;
+                }
                 // A container's element pointer kind is decided once across every
                 // push_back call site targeting it (see DanglingChecker::
                 // applyCallArgMoves, which this must produce matching results

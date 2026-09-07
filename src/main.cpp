@@ -2,6 +2,7 @@
 #include "core/generator/cpp_generator.h"
 #include "core/generator/dangling_checker.h"
 #include "core/generator/escape_hatch_checker.h"
+#include "core/generator/pairing_checker.h"
 #include "core/generator/ast_emitter.h"
 #include "core/generator/smart_pointer_analyzer.h"
 #include <iostream>
@@ -39,6 +40,34 @@ std::string readFile(const std::string& filename) {
 std::string dirnameOf(const std::string& path) {
     size_t slash = path.find_last_of("/\\");
     return slash == std::string::npos ? "" : path.substr(0, slash + 1);
+}
+
+// Reads a project-local `.ceeling_pairs` declaration file (if present -- its
+// total absence is not an error, just means zero Begin/End-style pairs are
+// registered this compile) so PairingChecker's rules come from the PROJECT,
+// never hardcoded into CeeLing's own source. Format: one `beginName endName`
+// pair per line (whitespace-separated), `#`-prefixed comments and blank
+// lines skipped. This mirrors the same "don't hardcode a third-party
+// library's facts into the compiler" lesson already applied to library_summary.cpp's
+// allow-lists -- a project imitating a DIFFERENT library's Begin/End naming
+// convention (not ImGui's) just ships its own `.ceeling_pairs` file, no
+// CeeLing source change or rebuild needed.
+std::vector<std::pair<std::string, std::string>> readPairingDeclarations(const std::string& path) {
+    std::vector<std::pair<std::string, std::string>> pairs;
+    std::ifstream file(path);
+    if (!file.is_open()) return pairs;  // absent file -- not an error, just no pairs
+
+    std::string line;
+    while (std::getline(file, line)) {
+        size_t start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos || line[start] == '#') continue;
+        std::istringstream iss(line);
+        std::string beginName, endName;
+        if (iss >> beginName >> endName) {
+            pairs.emplace_back(beginName, endName);
+        }
+    }
+    return pairs;
 }
 
 // `#include "yaml_node.clh"` extracts the quoted target ("yaml_node.clh"). Returns ""
@@ -307,6 +336,33 @@ int main(int argc, char* argv[]) {
             }
             pauseIfNeeded();
             return 1;
+        }
+
+        // Advisory-only Begin/End-style call-pairing check. NEVER affects the exit
+        // code or blocks codegen -- CeeLing's ownership model already guarantees
+        // safety regardless of whether a Begin call's matching End was made (see
+        // pairing_checker.h's doc comment for the full rationale: this is a
+        // source-compatibility/style convenience for projects imitating ANY
+        // library's Begin/End-style call-pair naming -- ImGui's or otherwise --
+        // not a safety mechanism, and not specific to ImGui). Pairs to watch come
+        // from a project-local `.ceeling_pairs` file (see readPairingDeclarations),
+        // never hardcoded here -- a project using a different library's naming
+        // convention (open/close, push/pop, acquire/release, ...) just ships its
+        // own declaration file, no CeeLing source change or rebuild needed.
+        PairingChecker pairingChecker;
+        for (const auto& [beginName, endName] :
+             readPairingDeclarations(dirnameOf(inputFile) + ".ceeling_pairs")) {
+            pairingChecker.registerPair(beginName, endName);
+        }
+        std::vector<PairingWarning> pairingWarnings = pairingChecker.check(*program);
+        for (const auto& warn : pairingWarnings) {
+            std::cerr << "warning[style/unpaired-call]: " << warn.message << "\n";
+            if (warn.line > 0) {
+                std::cerr << "  --> " << inputFile << ":" << warn.line << ":" << warn.column << "\n";
+            }
+            if (!warn.help.empty()) {
+                std::cerr << "  help: " << warn.help << "\n";
+            }
         }
 
         // Generate C++ code. Output extension `.h` requests a declaration-only header

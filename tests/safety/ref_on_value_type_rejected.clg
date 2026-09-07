@@ -1,0 +1,21 @@
+//@ expect: reject
+//@ reason: `ref` observes an OWNER (a smart-pointer-backed object); a value type
+//@ (`struct`) is copied, not smart-pointer-backed, so it has no owner to observe.
+//@ AstEmitter's observer lowering (`T* b = (a).get();`) unconditionally assumes a
+//@ smart-pointer-backed `T` and does not even compile for a value type (`.get()`
+//@ doesn't exist on it) -- rejected at the dangling-check stage instead of surfacing
+//@ as a g++ compile error, and instead of silently registering unprovable observer
+//@ state, per CLAUDE.md's default-reject rule.
+
+struct Point {
+public:
+    int v;
+    Point(int x) { v = x; }
+};
+
+int main() {
+    Point a = new Point(1);
+    ref Point b = a;   // ERROR: value type has no owner for `ref` to observe
+    std::cout << b.v << std::endl;
+    return 0;
+}

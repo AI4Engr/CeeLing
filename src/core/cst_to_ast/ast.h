@@ -505,6 +505,16 @@ public:
     // this field, to re-wrap the class in `namespace X { ... }` on output.
     std::string namespaceName;
     std::vector<StatementPtr> members;
+    // True iff declared with `struct` instead of `class` -- an explicit,
+    // user-opted-in plain VALUE type: stored bare/unwrapped everywhere
+    // (locals, fields, parameters, vector<T> elements), never smart-pointer-
+    // wrapped. See SmartPointerAnalyzer::classifyValueTypeClasses, which folds
+    // this into the SAME valueTypeClasses_ set the pre-existing
+    // operator*/operator++/operator!= (Iterator-shaped) structural inference
+    // already populates -- every existing isValueTypeClass-gated call site
+    // picks up a `struct` class for free. Deliberately NOT inferred
+    // structurally (see class_declaration's own grammar.js comment for why).
+    bool isValueType = false;
 
     ClassDeclaration(const std::string& className, std::vector<StatementPtr> classMembers)
         : name(className), members(std::move(classMembers)) {}

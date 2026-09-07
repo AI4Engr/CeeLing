@@ -281,8 +281,21 @@ module.exports = grammar({
     // default. Multiple inheritance (including the pure-interface form) is a separate,
     // later increment; the grammar deliberately admits exactly one base so that
     // "which base?" is never ambiguous for the member-flattening pass downstream.
+    //
+    // `struct` is an EXPLICIT opt-in alternative to `class`, marking the
+    // declared type as a plain VALUE type -- stored bare/unwrapped everywhere
+    // (locals, fields, parameters, and critically, vector<T> elements), never
+    // smart-pointer-wrapped. Reuses 100% of class_declaration's own grammar
+    // (member/method/constructor productions); only the leading keyword
+    // differs, read back in ASTBuilder::buildClassDeclaration to set
+    // ClassDeclaration::isValueType. Deliberately NOT inferred structurally
+    // (e.g. "all fields are primitives") -- a class with only primitive
+    // fields could still be intentionally shared/mutable-reference (e.g. a
+    // Counter incremented from multiple call sites), so CLAUDE.md's
+    // "ambiguous -> conservative reject, never guess" rule means this needs
+    // an explicit keyword, not inference.
     class_declaration: $ => seq(
-      'class',
+      choice('class', 'struct'),
       $.identifier,
       optional(seq(':', 'public', $.identifier)),
       '{',
@@ -441,13 +454,26 @@ module.exports = grammar({
     binary_expression: $ => choice(
       // Multiplicative `* /`: highest of the arithmetic group, left-associative,
       // matching C++ precedence (tighter than `+ -`).
-      prec.left(6, seq($.expression, choice('*', '/'), $.expression)),
+      prec.left(8, seq($.expression, choice('*', '/'), $.expression)),
       // Arithmetic `+ -`: left-associative, so `a + b + c` chains. Operands are
       // full expressions (not just primaries), enabling nesting like `(a + b) - c`.
-      prec.left(5, seq($.expression, choice('+', '-'), $.expression)),
+      prec.left(7, seq($.expression, choice('+', '-'), $.expression)),
       // Comparison/equality: below arithmetic (so `a + b == c` groups as `(a+b) == c`).
-      prec.left(4, seq($.expression, choice('==', '!=', '<', '>', '<=', '>='), $.expression)),
-      // Logical AND: below comparison (so `a == b && c == d` groups as `(a==b)&&(c==d)`),
+      prec.left(6, seq($.expression, choice('==', '!=', '<', '>', '<=', '>='), $.expression)),
+      // Bitwise AND: below comparison, above bitwise OR -- matching real C++
+      // precedence exactly (`flags & Foo == 0` must group as `flags & (Foo ==
+      // 0)` in CeeLing the same way it does in the C++ it transpiles to, or
+      // generated code silently means something different than the source).
+      // Scope deliberately narrow: only `&`/`|` (GUI-style flag combination/
+      // testing) -- no `^`/`~`/`<<`/`>>` (bitwise shift would collide with
+      // `<<`'s existing stream-output meaning below, with no mechanism today
+      // to disambiguate by operand type; not needed for the narrow use case
+      // this was added for).
+      prec.left(5, seq($.expression, '&', $.expression)),
+      // Bitwise OR: below bitwise AND (matching C++: `a & b | c` groups as
+      // `(a & b) | c`), above logical &&/||.
+      prec.left(4, seq($.expression, '|', $.expression)),
+      // Logical AND: below bitwise OR (so `a | b && c` groups as `(a|b) && c`),
       // matching C++ precedence (&& binds tighter than ||).
       prec.left(3, seq($.expression, '&&', $.expression)),
       // Logical OR: loosest of the boolean/comparison group.
@@ -462,10 +488,14 @@ module.exports = grammar({
     // `operator*`), `++x` (prefix increment ONLY -- no postfix `x++`, unneeded by
     // range-for's `++it` desugaring and would need a disambiguating dummy-`int`
     // parameter shape nothing here requires). Higher precedence than any binary
-    // operator. `*` here is unambiguous against binary_expression's multiplication
-    // rule (`a * b`) -- a leading `*` can only be prefix since binary `*` requires
-    // an already-parsed left operand first.
-    unary_expression: $ => prec(7, seq(
+    // operator -- kept one tier above binary_expression's own highest tier
+    // (currently `* /` at 8; bumped from 6 when bitwise `&`/`|` were inserted
+    // below comparison, so this had to move from 7 to 9 to preserve the
+    // invariant, not just get left behind at the old number). `*` here is
+    // unambiguous against binary_expression's multiplication rule (`a * b`)
+    // -- a leading `*` can only be prefix since binary `*` requires an
+    // already-parsed left operand first.
+    unary_expression: $ => prec(9, seq(
       choice('!', '-', '*', '++'),
       $.expression
     )),
@@ -558,7 +588,7 @@ module.exports = grammar({
     // specialization of a same-named primary generic method (method_type_parameter/
     // method_specialization, above). This is the ONE genuinely risky grammar
     // addition in this slice: `<` after ANY expression is otherwise consumed only
-    // by binary_expression's comparison rule (prec.left(4, ... '<' ...)), and BOTH
+    // by binary_expression's comparison rule (prec.left(6, ... '<' ...)), and BOTH
     // interpretations are legal at the exact same $.expression position -- unlike
     // generic_type's `scoped_identifier '<'` (which only ever appears in $.type
     // position and so could be resolved with a plain numeric prec()), this is a

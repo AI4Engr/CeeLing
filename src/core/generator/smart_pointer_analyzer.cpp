@@ -1,6 +1,7 @@
 #include "smart_pointer_analyzer.h"
 
 #include "class_hierarchy.h"
+#include "library_summary.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1857,6 +1858,17 @@ void SmartPointerAnalyzer::classifyValueTypeClasses(const Program& program) {
     for (const auto& stmt : program.statements) {
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
         if (!cls) continue;
+        // Two independent routes into the SAME valueTypeClasses_ set: the
+        // pre-existing structural inference (a class declaring the full
+        // operator*/operator++/operator!= iterator protocol -- the Iterator
+        // case) OR an explicit `struct` declaration (ClassDeclaration::
+        // isValueType, set at parse time -- see class_declaration's grammar.js
+        // comment for why this needs to be an explicit opt-in, not inferred
+        // from "all fields are primitives"). Every existing isValueTypeClass-
+        // gated call site (local/field declarations, parameter passing, and
+        // now also AstEmitter's vector-element codegen) picks up a `struct`
+        // class for free via this one shared set -- no other change needed
+        // for those existing sites.
         bool hasStar = false, hasIncrement = false, hasNotEqual = false;
         for (const auto& member : cls->members) {
             auto method = dynamic_cast<const MethodDeclaration*>(member.get());
@@ -1865,9 +1877,19 @@ void SmartPointerAnalyzer::classifyValueTypeClasses(const Program& program) {
             else if (method->name == "operator++") hasIncrement = true;
             else if (method->name == "operator!=") hasNotEqual = true;
         }
-        if (hasStar && hasIncrement && hasNotEqual) {
+        if (cls->isValueType || (hasStar && hasIncrement && hasNotEqual)) {
             valueTypeClasses_.insert(cls->name);
         }
+    }
+    // EXPLORATORY Eigen spike (see library_summary.h's isKnownExternalClassType --
+    // same narrow, hardcoded allow-list, not the general third-party mechanism):
+    // a known-external class has no ClassDeclaration for the loop above to see at
+    // all, so it needs its own explicit route into the SAME valueTypeClasses_ set.
+    // This is what makes `new Eigen::MatrixXd(...)` emit as a bare, unwrapped
+    // constructor call (matching real Eigen's own by-value usage) instead of
+    // being wrapped in a smart pointer meant for CeeLing-owned heap objects.
+    if (isKnownExternalClassType("Eigen::MatrixXd")) {
+        valueTypeClasses_.insert("Eigen::MatrixXd");
     }
 }
 

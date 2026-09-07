@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: ok
+//@ reason: an empty constructor body must stay a plain `{ }` -- no member-
+//@ reason: initializer list, no crash/malformed syntax from the hoisting pass
+//@ reason: finding zero hoistable statements. Regression guard for
+//@ reason: AstEmitter's new constructor-body member-initializer-list emission
+//@ reason: (see TODO.md's "value-type nested as a field" entry): a
+//@ reason: zero-statement body must be a genuinely empty prefix scan, not an
+//@ reason: off-by-one that emits `: {` or similar.
+
+class Empty {
+public:
+    Empty() { }
+};
+
+int main() {
+    Empty e = new Empty();
+    std::cout << "ok" << std::endl;
+    return 0;
+}

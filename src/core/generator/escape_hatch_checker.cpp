@@ -231,6 +231,14 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         if (isStringType(declaredType)) {
             return isKnownStringMethod(member->member);
         }
+        // A known-external class (e.g. Eigen::MatrixXd) calling one of its
+        // allow-listed borrowing methods (`.block()`, `.row()`, ...) -- see
+        // library_summary.h's isKnownBorrowingMethod doc comment. Checked
+        // before the CeeLing-own-class path below since a known-external type
+        // never has a classMethods_ entry (nothing parses its declaration).
+        if (!declaredType.empty() && isKnownExternalClassType(declaredType)) {
+            return isKnownBorrowingMethod(declaredType, member->member);
+        }
 
         const std::string objClass = resolveObjectType(member->object.get());
         if (objClass.empty()) return false;
@@ -489,6 +497,32 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                 e.help = "pointers have no legal path through CeeLing (CLAUDE.md hatch "
                          "#15); declare a plain object variable and let the compiler "
                          "choose the smart-pointer type.";
+                errors_.push_back(e);
+            }
+        }
+        // An operator between two OBJECT-typed operands (e.g. `a * b` where both are
+        // Eigen::MatrixXd) is really an implicit third-party operator-overload CALL --
+        // the exact same "did CeeLing compile this itself" question isKnownCallable
+        // already asks for an explicit `.method()` call, just spelled as an operator
+        // instead. Without this check, a binary operator on any unrecognized foreign
+        // type silently passed through unchecked (confirmed via probe) -- a real gap
+        // in the default-reject boundary. Only fires when BOTH operands resolve to a
+        // known-external class type (leaves ordinary primitive arithmetic, and
+        // operators on CeeLing's own classes -- which already have their own
+        // operator== / operator<< routing elsewhere -- completely untouched).
+        const std::string leftType = resolveDeclaredType(bin->left.get());
+        const std::string rightType = resolveDeclaredType(bin->right.get());
+        if (!leftType.empty() && isKnownExternalClassType(leftType) &&
+            !rightType.empty() && isKnownExternalClassType(rightType)) {
+            if (!isKnownExternalOperator(leftType, bin->operator_str)) {
+                EscapeHatchError e;
+                e.line = expr->loc.line;
+                e.column = expr->loc.column;
+                e.message = "call to unknown operator `" + leftType + "::operator" +
+                            bin->operator_str + "`";
+                e.help = "CeeLing has no borrow/ownership summary for anything it did "
+                         "not compile itself, so an operator between two " + leftType +
+                         " values is rejected unless explicitly allow-listed.";
                 errors_.push_back(e);
             }
         }

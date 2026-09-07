@@ -136,8 +136,63 @@ bool isCharType(const std::string& type) {
 }
 
 bool isKnownQualifiedFreeFunction(const std::string& qualifiedName) {
-    static const std::set<std::string> kKnown = {"std::stoi", "std::stod"};
+    static const std::set<std::string> kKnown = {
+        "std::stoi", "std::stod",
+        // imgui-cling Phase 0 feasibility spike (see imgui-cling/CLAUDE.md's
+        // "On Third-Party Library Calls" section): a hand-written, UNCHECKED
+        // C++ glue shim (imgui-cling/shim/gfx_shim.{h,cpp}) wraps GLFW+OpenGL
+        // behind a handful of plain-primitives-only free functions (no
+        // pointers, no callbacks, no object types cross the boundary), so no
+        // ownership/borrow question ever reaches CeeLing's safety analysis.
+        // Despite the name "isKnownQualifiedFreeFunction", the check here is
+        // a bare string match on call.function_name regardless of whether a
+        // namespace qualifier is present (confirmed by reading
+        // EscapeHatchChecker::isKnownCallable's call site) -- these are
+        // called bare (`gfx_init(...)`, not `something::gfx_init(...)`), and
+        // that already works correctly through this same allow-list.
+        "gfx_init", "gfx_should_close", "gfx_begin_frame",
+        "gfx_draw_triangle", "gfx_end_frame", "gfx_shutdown",
+        // Phase 1: rectangle drawing + mouse input, for the first clickable-
+        // widget spike. gfx_get_mouse_pos itself is NOT here -- it still
+        // takes float* out-params, so it stays C++-internal only; CeeLing
+        // calls the two single-return wrappers instead.
+        "gfx_draw_rect", "gfx_mouse_x", "gfx_mouse_y", "gfx_mouse_down",
+        // Phase 1: bitmap-font text rendering (see gfx_shim.h -- deliberately
+        // not real TTF rendering). Both take/return only primitives
+        // (std::string by const&, like gfx_init's title parameter).
+        "gfx_draw_text", "gfx_text_width",
+        // EXPLORATORY Eigen spike (see isKnownExternalClassType's doc comment):
+        // Eigen::MatrixXd::Identity(rows, cols) is a static factory returning a
+        // fresh, non-aliasing matrix -- unlike this allow-list's other entries,
+        // its return is NOT a primitive, but it needs no borrow summary for the
+        // same reason `operator*` doesn't (see isKnownExternalOperator): the
+        // result is always fresh/owned, never a view into anything.
+        "Eigen::MatrixXd::Identity"};
     return kKnown.count(qualifiedName) > 0;
+}
+
+bool isKnownExternalClassType(const std::string& type) {
+    static const std::set<std::string> kKnown = {"Eigen::MatrixXd"};
+    return kKnown.count(type) > 0;
+}
+
+bool isKnownExternalOperator(const std::string& type, const std::string& operatorStr) {
+    static const std::set<std::string> kKnown = {"Eigen::MatrixXd|*"};
+    return kKnown.count(type + "|" + operatorStr) > 0;
+}
+
+bool isKnownBorrowingMethod(const std::string& className, const std::string& methodName) {
+    // Not exhaustive -- extend by consulting Eigen's own Block/Transpose/Ref/
+    // Map/Diagonal/Reverse expression-template family (see this function's
+    // header doc comment), never by guessing. Each entry here gets REAL
+    // dangling tracking (DanglingChecker::resolveBorrowingMethodReceiver),
+    // unlike isKnownExternalOperator's set above.
+    static const std::set<std::string> kKnown = {
+        "Eigen::MatrixXd::block",    "Eigen::MatrixXd::row",
+        "Eigen::MatrixXd::col",      "Eigen::MatrixXd::transpose",
+        "Eigen::MatrixXd::segment",  "Eigen::MatrixXd::head",
+        "Eigen::MatrixXd::tail",     "Eigen::MatrixXd::diagonal"};
+    return kKnown.count(className + "::" + methodName) > 0;
 }
 
 bool isKnownRuntimeHelper(const std::string& qualifiedName) {

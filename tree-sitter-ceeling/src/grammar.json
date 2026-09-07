@@ -698,8 +698,17 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "STRING",
-          "value": "class"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "class"
+            },
+            {
+              "type": "STRING",
+              "value": "struct"
+            }
+          ]
         },
         {
           "type": "SYMBOL",
@@ -1295,7 +1304,7 @@
       "members": [
         {
           "type": "PREC_LEFT",
-          "value": 6,
+          "value": 8,
           "content": {
             "type": "SEQ",
             "members": [
@@ -1325,7 +1334,7 @@
         },
         {
           "type": "PREC_LEFT",
-          "value": 5,
+          "value": 7,
           "content": {
             "type": "SEQ",
             "members": [
@@ -1355,7 +1364,7 @@
         },
         {
           "type": "PREC_LEFT",
-          "value": 4,
+          "value": 6,
           "content": {
             "type": "SEQ",
             "members": [
@@ -1391,6 +1400,48 @@
                     "value": ">="
                   }
                 ]
+              },
+              {
+                "type": "SYMBOL",
+                "name": "expression"
+              }
+            ]
+          }
+        },
+        {
+          "type": "PREC_LEFT",
+          "value": 5,
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "expression"
+              },
+              {
+                "type": "STRING",
+                "value": "&"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "expression"
+              }
+            ]
+          }
+        },
+        {
+          "type": "PREC_LEFT",
+          "value": 4,
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "expression"
+              },
+              {
+                "type": "STRING",
+                "value": "|"
               },
               {
                 "type": "SYMBOL",
@@ -1469,7 +1520,7 @@
     },
     "unary_expression": {
       "type": "PREC",
-      "value": 7,
+      "value": 9,
       "content": {
         "type": "SEQ",
         "members": [

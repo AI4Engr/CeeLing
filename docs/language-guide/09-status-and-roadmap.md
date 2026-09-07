@@ -242,13 +242,44 @@ real.
   workaround every prior end-to-end proof (including the parser above) had
   relied on. See `yaml-cling/transpiled/` and Chapter 18 Step 25 for the
   header/out-of-line-definition/ODR mechanics this forced.
+- **Eigen: move/copy tracking + a narrow view-borrow allow-list (Chapter 16, v1
+  slice)** — `Eigen::MatrixXd` participates in the same move/observer tracking as
+  any CeeLing `class` (`sink(a); use(a);` is a real, caught use-after-move; a
+  declaration-copy `MatrixXd b = a;` is a real, accepted copy — this also fixed a
+  latent bug in `struct`/value-type tracking generally, not Eigen-specific, see
+  Chapter 12). Eight view-returning methods (`.block()`, `.row()`, `.col()`,
+  `.transpose()`, `.segment()`, `.head()`, `.tail()`, `.diagonal()`) are recognized
+  as borrowing their receiver via a hand-maintained allow-list
+  (`library_summary.h`'s `isKnownBorrowingMethod`) — `MatrixXd b = a.block(...);`
+  registers `b` as an observer of `a`, and the existing `ref`-observer machinery
+  (Chapter 11) catches a later reassignment/move of `a` before `b` is used, while
+  correctly leaving `a` itself fully usable if it's never reassigned/moved.
+  Confirmed via direct read of Eigen's own source that this is legible from
+  return-type NAMES (`Block`/`Transpose`/`Ref`/`Map`/... all store a reference to
+  their source) without parsing Eigen's real (macro-laden, `.inc`-file, CRTP)
+  signatures. Also confirmed: CeeLing's total absence of `auto` means Chapter 16's
+  hardest original design problem (`auto`-vs-concrete-type provenance) is moot,
+  not just deferred — every CeeLing local already forces the "concrete type
+  evaluates" safe idiom Eigen's own docs recommend. See Chapter 16's
+  implementation-status note, `PLAN_eigen_views.md` (repo root), and the four
+  `eigen-cling-spike/block_*.clg` fixtures (2 reject, 2 accept, all compiled +
+  run against real Eigen). **Still a narrow slice**: only these 8 method names are
+  covered (any other Eigen view method falls through to ordinary default-reject —
+  safe, not silent), chained views (`a.block(...).transpose()`) are not specially
+  handled, and the list is still hand-maintained rather than auto-extracted from
+  Eigen's own headers.
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**
   (`unique_ptr`/`shared_ptr`/`weak_ptr`), not yet unified onto the new engine.
-- **Library/std/Eigen summaries** — only `std::vector<T>`/`std::string`'s methods
-  are on the allow-list; every other external call is still rejected
-  unconditionally (the correct conservative default).
+- **Library/std/Eigen summaries** — `std::vector<T>`/`std::string`'s methods, plus
+  (see the Eigen entry above) 8 hand-picked `Eigen::MatrixXd` view-returning
+  methods, are on the allow-list; every other external call is still rejected
+  unconditionally (the correct conservative default). Still missing: a GENERAL
+  per-library declaration mechanism (the allow-list entries are individually
+  hand-added to CeeLing's own source today, not declared in a project-local file
+  — see `PLAN_eigen_views.md`'s "out of scope for v1" section and TODO.md's Part
+  A/B plan for the un-implemented general version).
 - `insert`/`erase`/`resize` as additional invalidating mutators, class-typed map
   keys/values, container-held observers precise tracking (currently just banned),
   map iteration (needs C++ structured-binding support, unshipped),
@@ -297,12 +328,17 @@ return-value aliasing, since parameters are always-moved by construction),
 return-local-reference (#2), reference-stored-in-field escape (#3, sealed by
 construction — no `ref`-qualified field production exists), branch-merge
 precision, and `std::vector<T>` iterator/reference invalidation for `push_back`
-(#4, Phase 2.6 slice 2 — see "Working today" above). Still open: broader library
-summaries, `insert`/`erase`/`resize` invalidation, `string_view`/`span` (#5),
-`auto`-vs-concrete provenance (#6), lambda `[&]` escape (#7), dangling temporaries
-(#8), Eigen summaries — all gated on language features (`map`/`string`, `auto`,
-lambdas) or a library-summary allow-list that don't exist yet (Phase 2.6+). The
-legacy `borrow_*.clg` (`owned<>/borrowed<>`) fixtures are superseded by the new
+(#4, Phase 2.6 slice 2 — see "Working today" above). A narrow, real slice of Eigen
+summaries also now exists (8 hand-picked `Eigen::MatrixXd` view methods, see
+"Working today" above) — but broader library summaries (a general per-library
+declaration mechanism, not individual hand-added entries), `insert`/`erase`/
+`resize` invalidation, `string_view`/`span` (#5), and lambda `[&]` escape (#7),
+dangling temporaries (#8) are still open, gated on language features (`map`/
+`string`, lambdas) or the general library-summary mechanism that doesn't exist
+yet (Phase 2.6+). `auto`-vs-concrete provenance (#6) is now a CLOSED non-issue
+rather than an open item — confirmed CeeLing has no `auto` keyword at all, so the
+danger this threat describes cannot be expressed in the language (see Chapter 16).
+The legacy `borrow_*.clg` (`owned<>/borrowed<>`) fixtures are superseded by the new
 syntax and kept only for regression.
 
 Found but not fixed during this phase (a separate, pre-existing emitter gap, not a

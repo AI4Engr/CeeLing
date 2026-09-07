@@ -1,0 +1,41 @@
+//@ expect: accept
+//@ run: 1 2
+//@ reason: direct minimal reproduction of the bug found building imgui-cling's
+//@ reason: colorEdit3 widget (see TODO.md's "value-type nested as a field"
+//@ reason: entry): a value-type class (`Point`) with ONLY a multi-arg
+//@ reason: constructor (no zero-arg constructor at all), used as a FIELD
+//@ reason: inside another value-type class (`Wrapper`). Before AstEmitter
+//@ reason: learned to emit real C++ member-initializer lists, the generated
+//@ reason: `Wrapper::Wrapper(...) { point = p; }` failed to compile with a
+//@ reason: real g++ error ("no matching function for call to 'Point::Point()'")
+//@ reason: -- ordinary body-assignment still requires the field to be
+//@ reason: default-constructed first, which `Point` cannot do. The fix emits
+//@ reason: `Wrapper::Wrapper(...) : point(p) { }` instead, which constructs
+//@ reason: `point` directly from `p` and never default-constructs it, making
+//@ reason: this compile regardless of whether `Point` has a default
+//@ reason: constructor.
+
+struct Point {
+public:
+    int x;
+    int y;
+    Point(int px, int py) {
+        x = px;
+        y = py;
+    }
+};
+
+struct Wrapper {
+public:
+    Point point;
+    Wrapper(Point p) {
+        point = p;
+    }
+};
+
+int main() {
+    Point p = new Point(1, 2);
+    Wrapper w = new Wrapper(p);
+    std::cout << w.point.x << " " << w.point.y << std::endl;
+    return 0;
+}

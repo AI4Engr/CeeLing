@@ -110,16 +110,24 @@ bool DanglingChecker::isObjectType(const std::string& type) const {
     // local is a plain C++ value type with cheap real copies everywhere, not a
     // container whose "old" and "new" handles could diverge.
     //
-    // A value-type class (Iterator etc. -- see SmartPointerAnalyzer::
-    // isValueTypeClass) is excluded for the SAME reason `string` is: it's never
-    // smart-pointer-backed, so it's copyable, not move-only -- confirmed via
-    // direct probe that without this exclusion, `Foo b = a; Foo c = a;` (two
-    // ordinary, legal copies of the same value-type local) was wrongly flagged
-    // "use of moved-from value `a`" on the second copy.
-    if (analyzer_ != nullptr && analyzer_->isValueTypeClass(type)) {
-        return false;
-    }
-    return classNames_.find(type) != classNames_.end() || isVectorType(type) || isMapType(type);
+    // A value-type class (struct keyword, Iterator-shaped structural case, or a
+    // known-external value type like Eigen::MatrixXd -- see SmartPointerAnalyzer::
+    // isValueTypeClass) DOES still participate in move/observer tracking -- it is
+    // move-CONSTRUCTED into a callee exactly like a class-typed local
+    // (AstEmitter emits `sink(std::move(a));` for a value-type argument same as
+    // any other object type), so a real use-after-move is possible for any value
+    // type owning heap storage (confirmed via probe: Eigen::MatrixXd, which has
+    // genuine move semantics, silently accepted `sink(a); use(a);` with zero
+    // errors before this fix -- a live use-after-move gap, not a false-positive
+    // guard). What must NOT be tracked as a move is a plain declaration-copy from
+    // another value-type local (`Foo b = a; Foo c = a;` are both ordinary, legal
+    // COPIES, not moves) -- that distinction is handled at the one call site that
+    // registers a copy-declaration as a move (see the VariableDeclaration
+    // else-branch in processStatement), not here by excluding value types from
+    // tracking altogether the way the previous version of this function did.
+    return classNames_.find(type) != classNames_.end() || isVectorType(type) ||
+           isMapType(type) ||
+           (analyzer_ != nullptr && analyzer_->isValueTypeClass(type));
 }
 
 bool DanglingChecker::isStringValuedExpr(const Expression* expr) const {
@@ -407,6 +415,20 @@ std::string DanglingChecker::resolveCallReturnAlias(const Expression* expr) cons
     const size_t idx = static_cast<size_t>(summary->returnBorrowsParam);
     if (idx >= call->arguments.size() || idx >= params->size()) return {};
     return asObjectLocalName(call->arguments[idx].get());
+}
+
+std::string DanglingChecker::resolveBorrowingMethodReceiver(const Expression* expr) const {
+    auto call = dynamic_cast<const FunctionCall*>(expr);
+    if (call == nullptr || !call->callee) return {};
+    auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+    if (member == nullptr) return {};
+    auto recvId = dynamic_cast<const Identifier*>(member->object.get());
+    if (recvId == nullptr) return {};
+    auto typeIt = localType_.find(recvId->name);
+    if (typeIt == localType_.end()) return {};
+    if (!isKnownExternalClassType(typeIt->second)) return {};
+    if (!isKnownBorrowingMethod(typeIt->second, member->member)) return {};
+    return recvId->name;
 }
 
 void DanglingChecker::applyCallArgMoves(const Expression* expr) {
@@ -776,6 +798,27 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             // `ref Node b = ...;` — b observes its RHS (if an object local); it does
             // NOT move it. `ref Node b = nullptr;` records b as an observer with no
             // owner yet (bound later by assignment).
+            //
+            // A value type has no owner to observe (it's copied, not smart-pointer-
+            // backed) -- AstEmitter::emitStatement's isObserver branch unconditionally
+            // emits the smart-pointer-style `T* b = (a).get();` lowering regardless of
+            // decl->type, which does not even compile for a value type (`.get()`
+            // doesn't exist on it). Reject outright rather than silently registering
+            // observer state that has no corresponding safe codegen -- matches
+            // CLAUDE.md's default-reject rule (unprovable safety is rejected, not
+            // passed through).
+            if (analyzer_ != nullptr && analyzer_->isValueTypeClass(decl->type)) {
+                DanglingError e;
+                e.line = decl->loc.line;
+                e.column = decl->loc.column;
+                e.message = "`ref` on value type `" + decl->type + "` (`" +
+                            decl->identifier + "`) has no owner to observe";
+                e.help = "`" + decl->type + "` is a value type (copied, not "
+                         "smart-pointer-backed); CeeLing cannot form an observer of "
+                         "it. Use a plain copy instead: `" + decl->type + " " +
+                         decl->identifier + " = ...;`";
+                errors_.push_back(e);
+            }
             observerNames_.insert(decl->identifier);
             danglingObservers_.erase(decl->identifier);
             if (isObjectType(decl->type)) {
@@ -790,13 +833,26 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             }
         } else {
             // `Node b = a;` — assigning one object local from another moves the source.
-            if (isObjectType(decl->type) && decl->expression) {
+            // EXCEPT for a value type (struct/Iterator-shaped/known-external -- see
+            // isObjectType's own comment): `Foo b = a;` there is an ordinary COPY, not
+            // a move (confirmed by AstEmitter::emitStatement's own isValueType branch,
+            // which emits a plain, non-`std::move`-wrapped copy for exactly this shape)
+            // -- so `a` must stay live. Only a value type passed as a CALL ARGUMENT is
+            // move-constructed (applyCallArgMoves below still applies to it), since
+            // that is a genuinely different codegen shape (`sink(std::move(a))`).
+            const bool srcIsValueTypeCopy = analyzer_ != nullptr &&
+                analyzer_->isValueTypeClass(decl->type);
+            if (isObjectType(decl->type) && decl->expression && !srcIsValueTypeCopy) {
                 if (std::string src = asObjectLocalName(decl->expression.get()); !src.empty()) {
                     movedFrom_.insert(src);
                 }
             }
             // `Node b = f(a);` — a call RHS moves its own object-typed arguments into
-            // the callee, same as any other call (see applyCallArgMoves).
+            // the callee, same as any other call (see applyCallArgMoves). Note this
+            // is a no-op for a borrowing-method-call RHS like `a.block(...)`: its
+            // "arguments" are the block's own int coordinates, not `a` itself -- `a`
+            // (the receiver) is untouched by this, exactly as it must be (see the
+            // borrowing-receiver branch below).
             applyCallArgMoves(decl->expression.get());
             // `Node b = f(a);` where f's summary says its return value aliases the
             // parameter that `a` was passed to: `a` is still moved into `f` as usual
@@ -808,11 +864,31 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             if (isObjectType(decl->type) && decl->expression) {
                 aliasedOwner = resolveCallReturnAlias(decl->expression.get());
             }
+            // `Node b = a.block(...);` (a known-external class's allow-listed
+            // borrowing method): `b` observes RECEIVER `a`, not a moved argument --
+            // `a` stays fully live and usable. Checked as a separate fallback (not
+            // folded into aliasedOwner above) because it must NOT be added to
+            // aliasObservers_ below: aliasObservers_ exists to suppress the "owner
+            // moved" check for an alias whose owner was ALREADY moved into the
+            // aliasing call by construction (an ordinary call argument) -- that does
+            // not apply here, since `a.block(...)` does not consume `a`. Only a
+            // genuinely later reassignment/move of `a` should kill `b` (handled by
+            // the pre-existing AssignmentStatement/applyCallArgMoves paths, which
+            // walk observerOf_ regardless of aliasObservers_ membership).
+            std::string borrowedOwner;
+            if (aliasedOwner.empty() && isObjectType(decl->type) && decl->expression) {
+                borrowedOwner = resolveBorrowingMethodReceiver(decl->expression.get());
+            }
             if (!aliasedOwner.empty()) {
                 observerNames_.insert(decl->identifier);
                 danglingObservers_.erase(decl->identifier);
                 observerOf_[decl->identifier] = aliasedOwner;
                 aliasObservers_.insert(decl->identifier);
+                localType_[decl->identifier] = decl->type;
+            } else if (!borrowedOwner.empty()) {
+                observerNames_.insert(decl->identifier);
+                danglingObservers_.erase(decl->identifier);
+                observerOf_[decl->identifier] = borrowedOwner;
                 localType_[decl->identifier] = decl->type;
             } else if (isObjectType(decl->type)) {
                 // Register the new object-typed owner; a fresh declaration revives

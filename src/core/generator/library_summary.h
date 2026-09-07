@@ -109,6 +109,43 @@ bool isKnownQualifiedFreeFunction(const std::string& qualifiedName);
 // readFileToString's own return value alone cannot, since both cases return "").
 bool isKnownRuntimeHelper(const std::string& qualifiedName);
 
+// EXPLORATORY Eigen spike (see CeeLing/TODO.md's Eigen entry) -- a narrow,
+// hardcoded allow-list proving Eigen::MatrixXd can be CALLED from CeeLing at
+// all, taken as the "whitelist first" step before the real, general
+// third-party-borrow-summary mechanism (Part B, still just a plan) exists.
+// Deliberately provides ZERO dangling/borrow safety: a call accepted here has
+// NO FunctionSummary, so DanglingChecker's resolveCallReturnAlias never finds
+// one and treats the result as an ordinary fresh value with no aliasing --
+// correct for `Eigen::MatrixXd c = a * b;` (a real, safe, non-borrowing
+// pattern, confirmed safe specifically because CeeLing's grammar has no
+// `auto`, so every local is already the "concrete type forces evaluation"
+// case Eigen's own docs call the safe idiom).
+bool isKnownExternalClassType(const std::string& type);
+bool isKnownExternalOperator(const std::string& type, const std::string& operatorStr);
+
+// Eigen methods known to return a VIEW that BORROWS `self` (the receiver),
+// e.g. `a.block(...)`/`a.row(i)`/`a.transpose()` -- NOT a fresh owned value.
+// See PLAN_eigen_views.md for the full justification; summary: Eigen's own
+// return-type naming convention makes this legible WITHOUT parsing the real
+// (macro-laden, CRTP, `.inc`-file) signatures that produce it --
+// `col()`/`row()`/`block()` etc. all return a type aliasing Eigen's `Block`/
+// `Transpose`/`Ref`/`Map`/`Diagonal`/`Reverse` family, whose own constructors
+// take a reference to their source and STORE it (confirmed by reading
+// `eigen/Eigen/src/Core/Block.h`/`eigen/Eigen/src/plugins/BlockMethods.inc`
+// directly). Unlike `isKnownExternalOperator` above, a call accepted via this
+// list DOES get real borrow tracking -- DanglingChecker registers its result
+// as an observer of the receiver (see
+// DanglingChecker::resolveBorrowingMethodReceiver), so reassigning/moving the
+// receiver afterward and then using the borrowed result is a real, caught
+// dangling error, not silently accepted. Deliberately narrow (v1): only the
+// single-receiver, no-multi-operand-borrow shape (`receiver.method(args) ->
+// borrows self`); does not cover `operator+(a, b)`-style multi-operand
+// borrows (moot for CeeLing -- see the `auto` finding in
+// PLAN_eigen_views.md) or chained views (`a.block(...).transpose()`, which
+// are conservatively rejected as unresolvable receivers, not specially
+// handled).
+bool isKnownBorrowingMethod(const std::string& className, const std::string& methodName);
+
 // The C++ source text of the runtime helper(s) actually called in this program
 // (only the ones in `used`, so a program that never calls one gets no injected
 // code). Each definition is self-contained and requires only <fstream>/<sstream>/

@@ -133,13 +133,38 @@ private:
     // the method's own BARE name, used ONLY to look up a `@ptr shared` return
     // hint (analyzer_.getMethodReturnPointerType) -- empty for constructors/free
     // functions/main, where no such hint is meaningful.
+    // `isConstructor` enables member-initializer-list emission: a leading run of
+    // this constructor's body statements that are plain assignments to THIS
+    // class's own fields (not inherited ones -- see emitFunction's own comment)
+    // is hoisted into a real C++ ` : field1(rhs1), ...` list instead of staying
+    // as body assignments. This is what makes a value-type field with no
+    // default constructor legal as another class's field (see
+    // selectAssignmentRhs's doc comment for the bug this fixes). False for
+    // every non-constructor call site; only emitClass's constructor loop passes
+    // true.
     void emitFunction(const std::string& returnType, const std::string& name,
                       const std::vector<std::pair<std::string, std::string>>& params,
                       const std::vector<StatementPtr>& body, std::ostringstream& out,
                       const std::string& ownerClass = "", int baseIndent = 0,
                       bool isConst = false, bool isVirtual = false,
-                      bool isOverride = false, const std::string& methodName = "");
+                      bool isOverride = false, const std::string& methodName = "",
+                      bool isConstructor = false);
     void emitStatement(const Statement* stmt, std::ostringstream& out, int indent);
+
+    // Shared RHS-selection logic for `target = expr;` (used by BOTH an ordinary
+    // body assignment in emitStatement AND a hoisted member-initializer-list
+    // entry in emitFunction) -- extracted so the two paths can never silently
+    // drift apart (a future bugfix to one would otherwise need to be
+    // remembered for the other). `ptrVar` is the name used to look up the
+    // target's own pointer/value-type kind (the field/variable being
+    // assigned); `memberTarget`/`subscriptTarget` mirror emitStatement's own
+    // AssignmentStatement branch (a hoisted initializer-list entry always
+    // passes false/false, since hoisting is scoped to plain own-field
+    // targets). Returns the C++ text for the right-hand side only (no
+    // `lhs = `/`;` or `field(...)` wrapper -- callers add whichever their
+    // context needs).
+    std::string selectAssignmentRhs(const AssignmentStatement* assign, const std::string& ptrVar,
+                                    bool memberTarget, bool subscriptTarget);
 
     // Is `name` a field of the class we are currently emitting a method for?
     bool isCurrentField(const std::string& name) const;

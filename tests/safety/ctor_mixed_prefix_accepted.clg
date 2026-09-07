@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ run: ready 5
+//@ reason: a constructor body with a LEADING RUN of plain field assignments
+//@ reason: followed by a non-assignment statement (a safe, non-virtual call)
+//@ reason: must only hoist the leading run into the member-initializer list --
+//@ reason: the trailing call stays an ordinary body statement, in original
+//@ reason: order, running AFTER the (now-implicit) field initializations.
+//@ reason: Mirrors the shape of tests/safety/
+//@ reason: inherit_virtual_call_in_constructor_rejected.clg's own constructor
+//@ reason: body (`age = a; speak();`) but with a non-virtual call, since that
+//@ reason: fixture is an intentional reject-case for an unrelated rule (virtual
+//@ reason: dispatch from a constructor) and must not be confused with this
+//@ reason: one, which tests the hoisting boundary itself.
+
+class Box {
+public:
+    int size;
+    Box(int s) {
+        size = s;
+        announce();
+    }
+    void announce() {
+        std::cout << "ready ";
+    }
+};
+
+int main() {
+    Box b = new Box(5);
+    std::cout << b.size << std::endl;
+    return 0;
+}

@@ -1,0 +1,27 @@
+//@ expect: reject
+//@ reason: `a` is a value-type (`struct`) local; passing it to sink() move-constructs
+//@ it into the callee (AstEmitter emits `sink(std::move(a));`), so using `a` afterward
+//@ is a real use-after-move -- identical in kind to the `class` case
+//@ (move_then_use.clg), just on a value type instead of a smart-pointer-backed one.
+//
+// This is the struct/value-type analog of the classic case (B) in
+// docs/language-guide/11-dangling-references.md. A value type being copyable (not
+// smart-pointer-backed) does NOT mean it is immune to use-after-move: it is still
+// move-constructed into a call argument, and for any value type owning real heap
+// storage (e.g. Eigen::MatrixXd) using it after that move reads emptied-out data.
+
+struct Point {
+public:
+    int v;
+    Point(int x) { v = x; }
+};
+
+void sink(Point n) {
+}
+
+int main() {
+    Point a = new Point(1);
+    sink(a);                       // a is move-constructed into sink()
+    std::cout << a.v << std::endl; // ERROR: use of moved-from value `a`
+    return 0;
+}

@@ -930,6 +930,10 @@
     "named": false
   },
   {
+    "type": "&",
+    "named": false
+  },
+  {
     "type": "&&",
     "named": false
   },
@@ -1151,6 +1155,10 @@
     "named": true
   },
   {
+    "type": "struct",
+    "named": false
+  },
+  {
     "type": "throw",
     "named": false
   },
@@ -1172,6 +1180,10 @@
   },
   {
     "type": "{",
+    "named": false
+  },
+  {
+    "type": "|",
     "named": false
   },
   {

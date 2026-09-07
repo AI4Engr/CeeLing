@@ -982,9 +982,15 @@ StatementPtr ASTBuilder::buildIncludeStatement(TSNode node, const std::string& s
 }
 
 StatementPtr ASTBuilder::buildClassDeclaration(TSNode node, const std::string& source) {
-    // class_declaration: "class" identifier optional(":" "public" identifier)
+    // class_declaration: choice("class", "struct") identifier
+    //                    optional(":" "public" identifier)
     //                    "{" "public" ":" repeat(member) "}" optional(";")
-    TSNode name_node = ts_node_child(node, 1); // Skip "class"
+    // `choice('class', 'struct')` still occupies exactly one child slot at
+    // index 0 regardless of which keyword matched, so the existing "skip
+    // child 0, name is child 1" indexing below is UNCHANGED -- only the new
+    // isValueType read (child 0's own text) is added.
+    bool isValueType = getNodeText(ts_node_child(node, 0), source) == "struct";
+    TSNode name_node = ts_node_child(node, 1); // Skip "class"/"struct"
     std::string className = getNodeText(name_node, source);
 
     // With a base clause, the base name is a SECOND `identifier` child sitting
@@ -1024,6 +1030,7 @@ StatementPtr ASTBuilder::buildClassDeclaration(TSNode node, const std::string& s
 
     auto result = std::make_unique<ClassDeclaration>(className, std::move(members));
     result->baseClass = baseClass;
+    result->isValueType = isValueType;
     return result;
 }
 

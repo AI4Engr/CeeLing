@@ -184,6 +184,24 @@ private:
     // summary says "fresh", or the aliased argument isn't a bare object local).
     std::string resolveCallReturnAlias(const Expression* expr) const;
 
+    // If `expr` is `receiver.method(args)` where `receiver`'s declared type is a
+    // known-external class (e.g. Eigen::MatrixXd) and `method` is an allow-listed
+    // BORROWING method (isKnownBorrowingMethod -- `.block()`, `.row()`, ...),
+    // return `receiver`'s bare identifier name (empty otherwise). Distinct from
+    // resolveCallReturnAlias: that resolves borrow-by-PARAMETER for CeeLing's own
+    // functions (populated via classMethodParams_/summaries_, which only exist for
+    // a real parsed ClassDeclaration); a known-external class has no such
+    // declaration for anything to populate those maps from, so this is a separate,
+    // parallel path keyed directly off library_summary.h's allow-list. Also
+    // semantically different: the receiver here is NOT moved/consumed by the call
+    // (`a.block(...)` leaves `a` fully usable -- only a LATER reassignment/move of
+    // `a` should kill the borrowed result), unlike an aliased call ARGUMENT, which
+    // the existing alias-observer machinery assumes was already moved into the
+    // callee by construction. Callers must NOT add the resulting observer to
+    // aliasObservers_ for this reason -- see processStatement's use of this
+    // function for how that distinction is preserved.
+    std::string resolveBorrowingMethodReceiver(const Expression* expr) const;
+
     // If `expr` is a call, every object-typed-local argument is moved into the
     // callee (CeeLing bans `ref` parameters, so a call always consumes its object
     // arguments). No-op for non-call expressions.

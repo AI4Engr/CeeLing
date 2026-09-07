@@ -1,0 +1,29 @@
+//@ expect: accept
+//@ run: 7
+//@ reason: `Dog(int a) { age = a; }` assigns an INHERITED field (age belongs to
+//@ reason: Animal, not Dog) -- this must stay an ordinary body assignment, NOT
+//@ reason: be hoisted into Dog's own member-initializer list. A C++ member-
+//@ reason: initializer list can only name a class's own members (and direct
+//@ reason: base classes, which CeeLing constructors have no syntax to invoke),
+//@ reason: so hoisting `age` into `: age(a)` on Dog::Dog would be a hard
+//@ reason: compile error. Regression guard for AstEmitter's constructor-body
+//@ reason: member-initializer-list emission: the hoisting pass must walk the
+//@ reason: CLASS'S OWN declared members (Dog has none here), not the
+//@ reason: flattened/inherited field table isCurrentField uses elsewhere.
+
+class Animal {
+public:
+    int age;
+    Animal(int a) { age = a; }
+};
+
+class Dog : public Animal {
+public:
+    Dog(int a) { age = a; }
+};
+
+int main() {
+    Dog d = new Dog(7);
+    std::cout << d.age << std::endl;
+    return 0;
+}

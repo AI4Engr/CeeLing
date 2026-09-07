@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: 1 1
+//@ reason: `Point b = a; Point c = a;` are both ordinary, legal COPIES of a value-type
+//@ local, not moves -- `a` must stay live after each. This is the positive control for
+//@ struct_moved_then_used_rejected.clg's move-tracking fix: without it, tracking value
+//@ types at all would wrongly flag the second copy as "use of moved-from value `a`"
+//@ (the original false-positive this project's isObjectType exclusion was built to
+//@ avoid -- see dangling_checker.cpp's isObjectType comment). A checker that rejects
+//@ valid code is a bug too.
+
+struct Point {
+public:
+    int v;
+    Point(int x) { v = x; }
+};
+
+int main() {
+    Point a = new Point(1);
+    Point b = a;
+    Point c = a;
+    std::cout << b.v << " " << c.v << std::endl;
+    return 0;
+}
