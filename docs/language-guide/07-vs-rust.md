@@ -44,10 +44,14 @@ shared, mutable, single-threaded data structures stay easy to write.
 ### 3. Maturity / soundness — an engineering gap, but real
 
 `rustc`'s borrow checker is *trusted*: rarely unsound, validated over a decade
-(Polonius / RustBelt formalization). CeeLing's self-built analyzer — lambda escape
-(#7), temporary binding (#8), cross-file summary correctness — **each may contain
-implementation holes, and one hole is one UB escape route.** For a long time CeeLing's
-"99.99%" is **a goal we work toward, not a verified fact.**
+(Polonius / RustBelt formalization). CeeLing's self-built analyzer — temporary
+binding (#8), cross-file summary correctness — **each may contain implementation
+holes, and one hole is one UB escape route.** For a long time CeeLing's
+"99.99%" is **a goal we work toward, not a verified fact.** Lambda escape (#7) no
+longer belongs on this list of "self-built analysis that could contain a hole" —
+closures close it by construction (by-value-only capture, `[&]` unrepresentable
+in the grammar), not by an analysis that could be wrong. That is one fewer
+place CeeLing has to be trusted rather than merely a stated goal.
 
 ### 4. Ecosystem safety — C++ libraries were not built for it
 

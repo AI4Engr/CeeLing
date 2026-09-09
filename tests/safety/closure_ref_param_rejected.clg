@@ -1,0 +1,33 @@
+//@ expect: reject
+//@ reason: `ref` in a CLOSURE'S OWN parameter list is exactly as forbidden as
+//@ reason: in any other parameter list in the language (observer_param_rejected.clg
+//@ reason: covers the ordinary-function case) -- this is the 5th call site of
+//@ reason: ASTBuilder's existing rejectObserverParams helper (the other four are
+//@ reason: free functions, constructors, methods, and one more declaration
+//@ reason: form), added specifically for buildClosureExpression's own
+//@ reason: parameter_list child, proving the closure grammar addition didn't
+//@ reason: quietly open a 5th path around this rule.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (ref Node n) {
+        std::cout << total << std::endl;
+    });
+    return 0;
+}

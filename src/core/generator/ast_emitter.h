@@ -65,6 +65,10 @@ private:
     // BEFORE the ordinary isClassType/smartPointerType wrapping path at every
     // site that currently assumes "class-typed means pointer-backed".
     bool isValueType(const std::string& type) const;
+    // True if `cls` already declares its own zero-arg constructor -- guards the
+    // base-class synthesized `T() = default;` injection (emitClass/
+    // emitClassHeader) against duplicating one the user wrote themselves.
+    bool hasUserDefinedDefaultConstructor(const ClassDeclaration& cls) const;
     // "std::vector<Node>" -> "std::vector<std::shared_ptr<Node>>" or
     // "std::vector<std::unique_ptr<Node>>", depending on `varName`'s scanned
     // element kind (SmartPointerAnalyzer::containerElementIsShared -- decided once

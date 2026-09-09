@@ -566,6 +566,24 @@ bool AstEmitter::isValueType(const std::string& type) const {
     return analyzer_.isValueTypeClass(type);
 }
 
+// A class used as a base needs a callable no-arg constructor for a derived
+// class's implicit base-init to find (CeeLing has no base-initializer-list
+// syntax -- see the base-injection block in emitClass/emitClassHeader). If the
+// user already wrote one (`Animal() { ... }` or a defaulted-by-having-zero-
+// params ctor), synthesizing ANOTHER `Animal() = default;` is a duplicate
+// declaration -- a real g++ error ("cannot be overloaded with"), confirmed via
+// probe: any base class with an explicit `T() { }` constructor failed to
+// compile before this check existed. Only synthesize when the user declared
+// NO zero-arg constructor of their own.
+bool AstEmitter::hasUserDefinedDefaultConstructor(const ClassDeclaration& cls) const {
+    for (const auto& member : cls.members) {
+        if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+            if (ctor->parameters.empty()) return true;
+        }
+    }
+    return false;
+}
+
 std::string AstEmitter::containerVarType(const Expression* expr) const {
     if (auto id = dynamic_cast<const Identifier*>(expr)) {
         auto it = containerVarType_.find(id->name);
@@ -688,7 +706,6 @@ std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::st
     }
     const std::string elem = vectorElementType(ceelingType);
     if (elem.empty()) return ceelingType;
-    std::string elemCpp = elem;
     // A `struct`-declared (or Iterator-shaped) value-type element is stored
     // BARE -- `std::vector<Vertex>`, not `std::vector<unique_ptr<Vertex>>` --
     // matching how a value-type LOCAL/field is already unwrapped elsewhere in
@@ -704,9 +721,16 @@ std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::st
     if (isClassType(elem)) {
         const std::string ptr = analyzer_.containerElementIsShared(varName)
             ? "std::shared_ptr<" : "std::unique_ptr<";
-        elemCpp = ptr + elem + ">";
+        return "std::vector<" + ptr + elem + ">>";
     }
-    return "std::vector<" + elemCpp + ">";
+    // Non-class element (string, a primitive, or a nested map/vector type) --
+    // recurse so e.g. `vector<string>` normalizes its element to `std::string`
+    // the same way the map branch above already normalizes key/value types.
+    // Confirmed as a real bug via probe: `std::vector<string>` (element left
+    // as the BARE CeeLing spelling) doesn't compile -- `string` unqualified
+    // is not `std::string` outside a `using namespace std;`, which this
+    // generator's output never has.
+    return "std::vector<" + cppTypeFor(elem, "") + ">";
 }
 
 AstEmitter::VarKind AstEmitter::kindOf(const std::string& name) const {
@@ -844,11 +868,16 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
     //    body (`age = a;` already lowers to `this->age = a;` thanks to member
     //    flattening). `protected` keeps it an implementation detail -- it exists for
     //    derived classes to chain through, not for users to call.
+    //    Only synthesized when the user did NOT already write their own zero-arg
+    //    constructor -- see hasUserDefinedDefaultConstructor's own comment for the
+    //    real "cannot be overloaded with" compile error this guards against.
     if (baseClasses_.count(cls.name) > 0) {
         out << indentStr(1) << "virtual ~" << cls.name << "() = default;\n";
-        out << "protected:\n";
-        out << indentStr(1) << cls.name << "() = default;\n";
-        out << "public:\n";
+        if (!hasUserDefinedDefaultConstructor(cls)) {
+            out << "protected:\n";
+            out << indentStr(1) << cls.name << "() = default;\n";
+            out << "public:\n";
+        }
     }
 
     // Every constructor/method/specialization is DECLARED here (signature only) and
@@ -993,9 +1022,11 @@ void AstEmitter::emitClassHeader(const ClassDeclaration& cls, std::ostringstream
 
     if (baseClasses_.count(cls.name) > 0) {
         out << indentStr(1) << "virtual ~" << cls.name << "() = default;\n";
-        out << "protected:\n";
-        out << indentStr(1) << cls.name << "() = default;\n";
-        out << "public:\n";
+        if (!hasUserDefinedDefaultConstructor(cls)) {
+            out << "protected:\n";
+            out << indentStr(1) << cls.name << "() = default;\n";
+            out << "public:\n";
+        }
     }
 
     // Specializations (`int as<int>() {...}`), like in emitClass, are listed OUTSIDE
@@ -1307,9 +1338,21 @@ std::string AstEmitter::emitMovedArg(const Expression* arg,
             // A bare `new T(...)` argument has no variable of its own to key its
             // pointer type off (unlike `Node x = new Node(1);`, which uses x's
             // analyzer decision) -- use the receiving parameter's own (class, name)
-            // instead of emitExpression's context-free make_shared default, so the
-            // constructed object matches what the callee's signature expects.
-            return factoryFor(targetParam.first, targetParam.second, neww->arguments);
+            // to decide the smart-pointer KIND, exactly like factoryFor's own
+            // declared-vs-constructed split (see its doc comment). Bug found via
+            // probe: this used to pass targetParam.first as factoryFor's
+            // CONSTRUCTED-type argument instead of its declared-type argument,
+            // so `useIt(new Dog())` into `void useIt(Animal a)` silently built
+            // `std::make_shared<Animal>(...)` -- constructing the WRONG CLASS
+            // entirely (compiles, links, runs, and silently does something other
+            // than what the source says -- the same class of bug
+            // inherit_virtual_dispatch_accepted.clg's own reason block warns
+            // about). neww->className (the type actually being constructed) must
+            // stay the factory's className; targetParam.first (the callee's
+            // DECLARED parameter type) is the declaredType that picks the
+            // pointer KIND, matching exactly how `Animal a = new Dog();` already
+            // works for a named local.
+            return factoryFor(neww->className, targetParam.second, neww->arguments, targetParam.first);
         }
     }
     return emitExpression(arg);

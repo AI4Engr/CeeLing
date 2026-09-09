@@ -1,0 +1,64 @@
+//@ expect: accept
+//@ reason: a field populated purely from a stored constructor parameter (no
+//@ reason: other ownership signal -- no explicit @ptr hint, no back-reference,
+//@ reason: no bidirectional assignment) must end up the SAME pointer kind as
+//@ reason: whatever a fresh, unnamed `new T(...)` argument at a real call site
+//@ reason: already defaults to. Found as a real, general, pre-existing bug
+//@ reason: while developing closures (the same underlying gap as
+//@ reason: inherit_inline_new_arg_constructs_declared_type_accepted.clg, but a
+//@ reason: DIFFERENT symptom): SmartPointerAnalyzer::getPointerType's own
+//@ reason: "not found" fallback is UNCONDITIONALLY SHARED (both its own
+//@ reason: internal branches return PointerType::SHARED), so
+//@ reason: `new Holder(new Dog())` always emits `std::make_shared<Dog>(...)`
+//@ reason: for the argument -- but `secondPassDeterminePointerTypes`' own
+//@ reason: base case for the FIELD that argument gets stored into is
+//@ reason: `PointerType::UNIQUE` ("default unique ownership"), a completely
+//@ reason: independent decision that was never reasoning about how instances
+//@ reason: of this class get constructed at call sites at all. Left alone,
+//@ reason: `Holder`'s constructor becomes `Holder(std::unique_ptr<Animal> c)`
+//@ reason: while every real caller passes a `std::shared_ptr` -- a genuine
+//@ reason: compile error (`no known conversion from shared_ptr<Dog> to
+//@ reason: unique_ptr<Animal>`), not a safety hole, but exactly the "compiles
+//@ reason: this pass, fails the next" gap the safety suite's own compile-gate
+//@ reason: exists to catch. Fixed in
+//@ reason: SmartPointerAnalyzer::promoteParamsInBody: when a field has NO
+//@ reason: real signal of its own (checked via the reason string literally
+//@ reason: being "default unique ownership", since pointerDecisions has an
+//@ reason: entry for EVERY variable unconditionally and so cannot be used by
+//@ reason: itself to detect "nothing decided this") and it's populated from a
+//@ reason: stored parameter, the field is promoted SHARED to match. Must be
+//@ reason: RUN, matching the same "compiles but does the wrong thing" concern
+//@ reason: as the sibling fixture above (this one additionally confirms
+//@ reason: correct virtual dispatch survives the promotion).
+//@ run: woof
+
+class Animal {
+public:
+    Animal() { }
+    virtual void speak() {
+        std::cout << "generic" << std::endl;
+    }
+};
+
+class Dog : public Animal {
+public:
+    Dog() { }
+    void speak() override {
+        std::cout << "woof" << std::endl;
+    }
+};
+
+class Holder {
+public:
+    Animal stored;
+    Holder(Animal c) { stored = c; }
+    void run() {
+        stored.speak();
+    }
+};
+
+int main() {
+    Holder h = new Holder(new Dog());
+    h.run();
+    return 0;
+}

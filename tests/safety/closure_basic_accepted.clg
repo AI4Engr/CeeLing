@@ -1,0 +1,36 @@
+//@ expect: accept
+//@ reason: the simplest possible closure -- one primitive capture, passed
+//@ reason: directly to a function taking the interface, dispatches to the
+//@ reason: closure's own overriding body. Must be RUN, not just compiled:
+//@ reason: virtual dispatch is a runtime property (see
+//@ reason: inherit_virtual_dispatch_accepted.clg's own reason block for why
+//@ reason: -fsyntax-only cannot tell "dispatches to override" from "silently
+//@ reason: calls the base" -- the exact same class of bug applies here,
+//@ reason: since a closure IS a synthesized derived class).
+//@ run: 103
+//
+// Exercises the full desugaring path: `closure Callback [total] (int index)
+// {...}` becomes an anonymous class deriving from Callback, with `total` as
+// a field initialized from a constructor parameter, and the closure body as
+// an overriding `call` method. `each(...)` receives it through the ordinary
+// base-typed-parameter path (see inherit_base_param_accepts_derived_accepted.clg).
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) {
+        std::cout << "base" << std::endl;
+    }
+};
+
+void each(Callback cb, int n) {
+    cb.call(n);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (int index) {
+        std::cout << (total + index) << std::endl;
+    }, 3);
+    return 0;
+}

@@ -129,3 +129,17 @@ checks / exclusivity / function coloring / lifetime annotations, it walks straig
 Circle's wall — Eigen stops being usable in safe code, and the Java-like ergonomics
 evaporate. **Holding the line at "liveness only, no aliasing" is what keeps the niche.**
 That line is more important to defend than any single safety metric.
+
+**Closures (Chapter 9's Phase 3.5) do not cross this line.** They could have: a
+capture-provenance-vs-lambda-lifetime analysis (the originally planned
+approach for threat #7) would have been exactly the kind of new aliasing
+machinery this section warns against. Instead, closures ship with by-value
+capture ONLY — `[&]` capture is unrepresentable in the grammar, not analyzed
+— which is why Chapter 5's "one exception" section can say closures are
+eliminated by a desugaring pass *before* the provenance/lifetime analysis
+ever runs, rather than becoming a fourth thing that analysis has to reason
+about. The scorecard's "Familiar C++ syntax / Java-like" column stays ✓ for
+the same reason it already was: closures added real expressiveness (a value
+that carries code + data, replacing a whole class of Begin/End API
+workaround — see `../imgui-cling`'s `GuiWindow.group()`) without adding a new
+kind of thing the liveness-only analysis has to track.

@@ -1,0 +1,43 @@
+//@ expect: accept
+//@ reason: nested closures work when the inner closure captures its
+//@ reason: IMMEDIATELY ENCLOSING closure's own PARAMETER (`x`, from the
+//@ reason: outer's `(int x)` parameter list) rather than the outer's OWN
+//@ reason: capture (`total`) -- see closure_nested_rejected.clg for the
+//@ reason: negative control proving the latter is still, correctly,
+//@ reason: rejected. A parameter is an ordinary local already in the outer
+//@ reason: closure's method body, not reached through `this` at all, so
+//@ reason: capturing it needs no new borrow/ownership machinery: it is
+//@ reason: captured by value exactly like a top-level function's own
+//@ reason: parameter already is. Implementation: ASTBuilder::desugarClosures
+//@ reason: (via closure_desugar.cpp's desugarOne) now walks a closure's OWN
+//@ reason: body with a scope seeded from that closure's OWN parameter list
+//@ reason: BEFORE moving the body into the synthesized override method --
+//@ reason: this is what lets the existing recursive rewriteExpr/walkBody
+//@ reason: machinery find and desugar the nested closure at all, with the
+//@ reason: inner closure's synthesized class emitted BEFORE the outer's
+//@ reason: (required: CeeLing has no forward declarations, and the outer's
+//@ reason: own method body references the inner class by name). Must be
+//@ reason: RUN: confirms the inner closure's dispatch actually receives the
+//@ reason: right value carried through two levels of indirection, not just
+//@ reason: that it compiles.
+//@ run: 2
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (int x) {
+        each(closure Callback [x] (int y) {
+            std::cout << (x + y) << std::endl;
+        });
+    });
+    return 0;
+}

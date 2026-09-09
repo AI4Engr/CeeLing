@@ -1,0 +1,49 @@
+//@ expect: accept
+//@ reason: a bare `new Dog()` passed DIRECTLY as a call argument (no named
+//@ reason: local in between) to a parameter declared as the BASE type must
+//@ reason: construct the DERIVED type, not the parameter's declared type --
+//@ reason: found as a real, general, pre-existing bug while developing
+//@ reason: closures (a closure passed inline as a call argument is exactly
+//@ reason: this shape: a `new`-like expression, not a named variable).
+//@ reason: AstEmitter::emitMovedArg's own NewExpression branch used to call
+//@ reason: `factoryFor(targetParam.first, ...)` -- passing the CALLEE'S
+//@ reason: DECLARED parameter type (e.g. "Animal") as factoryFor's
+//@ reason: CONSTRUCTED-type argument, discarding the actual `new
+//@ reason: Expression::className` ("Dog") entirely. This produced
+//@ reason: `useIt(std::make_shared<Animal>())` from source that says `new
+//@ reason: Dog()` -- compiles, links, runs, and silently constructs the
+//@ reason: WRONG CLASS, printing "generic" instead of "woof" (confirmed via
+//@ reason: probe before the fix). Fixed by passing `neww->className` as
+//@ reason: factoryFor's constructed-type argument and `targetParam.first` as
+//@ reason: its declaredType argument instead -- the exact declared-vs-
+//@ reason: constructed split factoryFor's own doc comment already describes
+//@ reason: for a NAMED local (`Animal a = new Dog();`), now applied
+//@ reason: correctly to the inline-argument case too. Must be RUN: this is
+//@ reason: exactly the "compiles but does the wrong thing" class of bug
+//@ reason: `-fsyntax-only` cannot catch.
+//@ run: woof
+
+class Animal {
+public:
+    Animal() { }
+    virtual void speak() {
+        std::cout << "generic" << std::endl;
+    }
+};
+
+class Dog : public Animal {
+public:
+    Dog() { }
+    void speak() override {
+        std::cout << "woof" << std::endl;
+    }
+};
+
+void useIt(Animal a) {
+    a.speak();
+}
+
+int main() {
+    useIt(new Dog());
+    return 0;
+}

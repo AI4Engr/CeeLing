@@ -1,0 +1,38 @@
+//@ expect: accept
+//@ reason: nesting depth is not artificially capped at 2 levels -- desugarOne
+//@ reason: calling walkBody, which can call desugarOne again for a further
+//@ reason: nested closure, is a plain recursion that only terminates when a
+//@ reason: closure body contains no further ClosureExpression. Three levels
+//@ reason: here: outermost captures `a` (main()'s own local) and takes
+//@ reason: parameter `b`; middle captures `b` (the OUTERMOST's parameter --
+//@ reason: NOT `a`, which would be the outermost's own CAPTURE and rejected
+//@ reason: the same way closure_nested_rejected.clg's does) and takes
+//@ reason: parameter `c`; innermost captures `c` (the MIDDLE's own
+//@ reason: parameter -- the SAME "only immediate parent's parameters" rule
+//@ reason: applies at every nesting level, not just the outermost one) and
+//@ reason: takes parameter `d`. Must be RUN: proves three levels of
+//@ reason: indirection all carry the right values through to the innermost
+//@ reason: dispatch, not just that three synthesized classes compile.
+//@ run: 2
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int a = 1000;
+    each(closure Callback [a] (int b) {
+        each(closure Callback [b] (int c) {
+            each(closure Callback [c] (int d) {
+                std::cout << (c + d) << std::endl;
+            });
+        });
+    });
+    return 0;
+}

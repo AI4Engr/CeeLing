@@ -22,6 +22,12 @@ real.
   types, raw `delete`, casts, and raw `union` are all rejected with an explanatory
   diagnostic. See [Chapter 17](17-escape-hatches.md) for the mechanism and worked
   examples.
+- **Closures** (Phase 3.5) — `closure IFace [caps] (params) {...}` desugars to an
+  anonymous class overriding a single-virtual-method interface, with by-value-only
+  capture (`[&]` is unrepresentable, not merely rejected). May safely escape its
+  creating function (stored in a field, returned) since a captured value is owned,
+  never borrowed. See Phase 3.5 below for the full account, including two general
+  `AstEmitter`/`SmartPointerAnalyzer` bugs found and fixed while building it.
 - **`AstEmitter` is the default generator** — it walks the validated AST, so a
   construct CeeLing cannot express structurally cannot appear in the output. This is
   what makes the Phase 1 guarantee real end-to-end (rejecting a construct in the AST
@@ -332,12 +338,16 @@ precision, and `std::vector<T>` iterator/reference invalidation for `push_back`
 summaries also now exists (8 hand-picked `Eigen::MatrixXd` view methods, see
 "Working today" above) — but broader library summaries (a general per-library
 declaration mechanism, not individual hand-added entries), `insert`/`erase`/
-`resize` invalidation, `string_view`/`span` (#5), and lambda `[&]` escape (#7),
+`resize` invalidation, `string_view`/`span` (#5), and
 dangling temporaries (#8) are still open, gated on language features (`map`/
-`string`, lambdas) or the general library-summary mechanism that doesn't exist
+`string`) or the general library-summary mechanism that doesn't exist
 yet (Phase 2.6+). `auto`-vs-concrete provenance (#6) is now a CLOSED non-issue
 rather than an open item — confirmed CeeLing has no `auto` keyword at all, so the
 danger this threat describes cannot be expressed in the language (see Chapter 16).
+Lambda `[&]` escape (#7) is ALSO now closed, but not by the analysis this
+paragraph originally expected to need — see Phase 3.5 below; it turned out
+not to need `map`/`string` maturity at all, and closed by construction
+instead of by an analysis pass.
 The legacy `borrow_*.clg` (`owned<>/borrowed<>`) fixtures are superseded by the new
 syntax and kept only for regression.
 
@@ -351,6 +361,132 @@ tracks CeeLing's intended rebind semantics correctly.
 Moved-from state tracking; reject use of a moved-from value. Implemented in
 `dangling_checker.cpp` and reused by the AST-driven generator to justify inserting
 `std::move` automatically (Phase 2.5, below).
+
+### Phase 3.5 — Closures  ✅ done: by-value capture, escape allowed, `[&]` unrepresentable
+
+A genuine language-expressiveness milestone, not just a threat-table item closed —
+this is CeeLing's first higher-order-function-shaped capability (a value that
+carries both code and data), and it directly replaces a whole class of
+Begin/End-shaped API workaround that predated it (see `imgui-cling`'s own
+`PairingChecker`, built specifically because CeeLing had no way to express
+"do this, then guarantee that", and superseded by `GuiWindow.group()` taking a
+closure once this phase landed — one call, no matching call to forget).
+
+**Syntax**: `closure IFace [captures] (params) { body }`, where `IFace` is an
+ordinary CeeLing class declaring EXACTLY ONE virtual method — the closure
+desugars into an anonymous class deriving from `IFace`, with one field +
+constructor parameter per capture, and `body` becomes the overriding method.
+Leads with the `closure` keyword (not `[` — `[` is already live as
+`subscript_expression`'s infix operator, so a leading-`[` capture-list syntax
+would have hit the exact ambiguity `template_call`'s `<` did against
+`binary_expression`'s comparison operator; a leading keyword needs no
+`conflicts:` grammar entry at all, confirmed zero were needed).
+
+**The scope decision that made this tractable**: captures are BY VALUE ONLY —
+the capture list is bare identifiers, with no `&`/`=` capture-mode syntax in
+the grammar at all. This is a deliberate trade-off, not an oversight:
+- **By-reference capture (`[&]`) is unrepresentable, not detected-and-rejected**
+  — the same "sealed by construction" strategy already used for `ref` fields
+  (#3) and `ref` parameters. A captured name becomes an ordinary owned field,
+  so capturing it is exactly "pass this by value into a constructor" —
+  already-existing move analysis (`applyCallArgMoves`) handles it with ZERO
+  new lifetime-tracking code.
+- **This is why closures may safely ESCAPE** (be stored in a field, returned,
+  outlive the function that created them) — decision #3 in the original design
+  discussion. By-value capture means the closure OWNS (or, for a `shared_ptr`-
+  backed capture, SHARES ownership of) what it captured; there is nothing left
+  pointing at a dead stack frame the way a live reference capture would leave
+  behind. Verified end-to-end: a closure stored in a field and invoked on TWO
+  separate calls after its creating function had already returned still reads
+  its captured value correctly both times (`tests/safety/
+  closure_escapes_via_field_accepted.clg`).
+- **What this costs**: a closure can never mutate an enclosing LOCAL and have
+  that mutation observed by the caller afterward (unlike a real `[&]` capture).
+  Only a captured HANDLE to already-shared, already-indirected state (e.g. a
+  `shared_ptr`-backed object) can be used for that — see `imgui-cling`'s own
+  `Context` for the pattern (widget state lives in `Context`'s maps, keyed by
+  id, precisely so a closure capturing `ctx` by value still shares the live
+  object rather than a dead copy).
+
+**Where it lives**: `src/core/generator/closure_desugar.{h,cpp}` — a NEW,
+dedicated pass, not an extension of `ASTBuilder` or `SmartPointerAnalyzer`.
+Runs immediately after AST building (right where
+`ASTBuilder::spliceExternalSpecializations` already ran) and BEFORE
+`EscapeHatchChecker`, since that checker hard-rejects any construct it
+doesn't recognize — a raw, undesugared closure expression would be rejected
+as unknown rather than analyzed as the class it's about to become. Needed its
+OWN minimal scope-type stack (a `name -> declared-type-string` map, pushed/
+popped per block) to resolve what type each captured name has: confirmed
+neither existing symbol table could serve this — `ASTBuilder` has none at
+all (it's a syntax-directed translator), and `SmartPointerAnalyzer`'s own
+`symbolTypesByScope` (a) isn't populated until AFTER `EscapeHatchChecker`
+already ran, and (b) skips every non-class type entirely (`if
+(classNames.find(ptype) == classNames.end()) continue;`), which is exactly
+what closures capture most (`int`/`float`/`string`).
+
+Desugars DIRECTLY from the closure's literal syntax into an ordinary
+`ClassDeclaration` + `NewExpression` pair — deliberately does NOT introduce a
+persistent `ClosureExpression` AST node that any checker or `AstEmitter`
+needs to know about; the transient AST node that exists only between the
+parser and this one desugaring pass is discarded before anything else ever
+sees it. This mirrors `ExternalSpecializationMarker`'s own stated rationale
+(Chapter 18): "every downstream pass sees an ordinary `MethodDeclaration` ...
+with zero changes to any checker" — here, every downstream pass sees an
+ordinary `ClassDeclaration`, so `DanglingChecker`'s existing per-method-body
+walk (`check()`'s own `cls->members` loop) analyzes a closure's body with
+**zero new checker code**.
+
+**Two real, general, pre-existing `AstEmitter`/`SmartPointerAnalyzer` bugs
+were found and fixed while building this** (both independent of closures,
+both would affect any hand-written CeeLing code hitting the same shape):
+1. A class used as a base, which ALSO declared its own explicit zero-arg
+   constructor, got a DUPLICATE synthesized `T() = default;` injected — a
+   real "cannot be overloaded with" compile error. Fixed via
+   `AstEmitter::hasUserDefinedDefaultConstructor`.
+2. A bare `new Derived(...)` passed DIRECTLY as a call argument (no named
+   local in between) to a parameter declared as the BASE type constructed
+   the WRONG CLASS — `AstEmitter::emitMovedArg`'s own `NewExpression` branch
+   passed the callee's DECLARED parameter type where `factoryFor` expected
+   the CONSTRUCTED type, silently building `make_shared<Base>(...)` from
+   source that said `new Derived(...)`. This is precisely the shape a
+   closure passed inline as a call argument has, so it was directly
+   load-bearing, not a tangential find.
+A third, related fix in `SmartPointerAnalyzer::promoteParamsInBody`
+corrected a field-vs-constructor-argument pointer-KIND mismatch (a field
+storing a constructor parameter, with no other ownership signal, defaulted
+to `unique_ptr` while a fresh inline-constructed argument at the call site
+unconditionally defaults to `shared_ptr` — two independent defaults that
+disagreed, a real, general, pre-existing gap surfaced by the closure escape
+fixture, not specific to closures).
+
+**Nested closures are supported, to unbounded depth — added shortly after
+the initial phase landed**, once it turned out the original blanket ban was
+an implementation shortcut, not an architectural limit: `closure_desugar.cpp`
+already had a fully general recursive body-walker (`walkBody`); the only gap
+was that a closure's own body was never handed to it before being moved into
+the synthesized override method. Once fixed, `rewriteExpr`'s existing
+`ClosureExpression` dispatch finds and desugars a nested closure the same way
+it finds one anywhere else, with no new mechanism.
+
+The one real restriction: an inner closure may capture ONLY its **immediately
+enclosing closure's own parameters** — never that closure's own **captures**.
+An outer capture is a field of the outer's synthesized class, reachable only
+through the outer's own `this`; closures cannot capture `this` (it is a
+borrow, not an owned value), so there is no legal way for an inner closure to
+reach an outer's capture. This falls out of the ordinary
+`closure-unknown-capture` rejection with zero new code — the inner closure's
+scope is seeded only from the outer's parameter list, so an outer capture
+simply isn't there to find. `closure_nested_rejected.clg` is the negative
+control (inner tries to capture the outer's capture, correctly rejected);
+`closure_nested_captures_outer_param_accepted.clg` and
+`closure_nested_three_levels_accepted.clg` are the positive controls (proving
+2 and 3 levels of legal nesting both dispatch correctly at runtime).
+
+See `tests/safety/closure_*.clg` (14 fixtures: basic dispatch, escaping via a
+stored field, multiple mixed-type captures, a constructor-argument use site,
+2- and 3-level nesting, and every rejection case) and
+`../imgui-cling/src/gui_window.clg`'s `GroupBody`/`group()` for a real
+end-to-end consumer.
 
 ### Phase 2.5 — AST-driven code generator (new architecture)  ✅ done, now default
 Replaces text/regex substitution with a generator that walks the AST directly —
@@ -384,11 +520,12 @@ The minimum for the single-threaded 99.99% contract:
 > **dangling (#1–#8) + null (#9) + use-after-move (#10) + bounds (#11) + sealed
 > escape hatches (#13–#18).**
 
-Language expressiveness (light/general generics, lambdas, range-for, general
+Language expressiveness (light/general generics, range-for, general
 operator overloading, multiple inheritance) is tracked separately in `TODO.md`
 — safety is the foundation, expressiveness is the house built on top. `enum`,
 `namespace`, the narrow return-type-generic-method slice of templates,
-qualified free-function calls, `operator[]`/`operator=` overloading, and
+qualified free-function calls, `operator[]`/`operator=` overloading,
 INFERRED alias-returning methods (the actual solution to the
 reference-returning-method need — no `ref` return type was built or is
-needed) are done (see "Working today" above).
+needed), and **closures** (by-value capture, single-virtual-method interface
+dispatch — see Phase 3.5 above) are done (see "Working today" above).

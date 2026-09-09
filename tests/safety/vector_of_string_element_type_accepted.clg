@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ reason: std::vector<string> must emit std::vector<std::string> for its element
+//@ reason: type, not the bare CeeLing spelling `string` -- a real generator bug
+//@ reason: found while building imgui-cling's Tab Bar/Combo/ListBox widgets (all
+//@ reason: three need a plain list-of-labels parameter). AstEmitter::cppTypeFor's
+//@ reason: vector-element branch fell through untouched for any element that was
+//@ reason: neither a value-type class nor a registered class type -- `string`
+//@ reason: matched neither, so it reached the final `std::vector<" + elemCpp + ">"`
+//@ reason: with elemCpp still the bare CeeLing spelling, producing uncompilable
+//@ reason: `std::vector<string>` (string is not std::string without a `using
+//@ reason: namespace std;` this generator's output never emits). std::map's own
+//@ reason: key/value branch already recursed through cppTypeFor for exactly this
+//@ reason: reason; the vector branch now does the same for its element type.
+//@ run: Alpha,Beta,Gamma
+
+int main() {
+    std::vector<string> items;
+    items.push_back("Alpha");
+    items.push_back("Beta");
+    items.push_back("Gamma");
+    int i = 0;
+    while (i < items.size()) {
+        std::cout << items[i];
+        if (i < items.size() - 1) {
+            std::cout << ",";
+        }
+        i = i + 1;
+    }
+    std::cout << std::endl;
+    return 0;
+}

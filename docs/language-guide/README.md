@@ -20,8 +20,10 @@ Every **problem chapter** (10–17) follows the same three-part structure:
 ## Status
 
 Most safety features here are still the **design target**, but a real slice works
-today: using a moved-away or dangling `ref` observer is caught at compile time, and a
-new code generator is producing correct C++ for cases the original one couldn't. See
+today: using a moved-away or dangling `ref` observer is caught at compile time, a
+new code generator is producing correct C++ for cases the original one couldn't, and
+closures (by-value capture, `[&]` unrepresentable by construction — see Chapter 9's
+Phase 3.5) let a value carry both code and data for the first time. See
 [Chapter 9](09-status-and-roadmap.md) for the honest breakdown and
 [Chapter 18](18-implementation-notes.md) for how it works.
 

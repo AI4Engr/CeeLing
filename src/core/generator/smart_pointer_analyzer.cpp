@@ -1093,16 +1093,79 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
         // to ask getPointerType about.
         const auto fieldTypeIt = symbolTypesByScope.find(makeSymbolKey(className, fieldName));
         if (fieldTypeIt == symbolTypesByScope.end()) continue;
-        if (getPointerType(fieldTypeIt->second, fieldName) != PointerType::SHARED) continue;
 
-        // The parameter's own type tells us which (class, name) key to promote --
-        // registerParameters already gave every object-typed parameter a bare
-        // variableReferences entry to promote here.
         auto paramTypeIt = std::find_if(params.begin(), params.end(),
             [&](const auto& p) { return p.second == rhsId->name; });
         if (paramTypeIt == params.end()) continue;
         if (classNames.find(paramTypeIt->first) == classNames.end()) continue;
 
+        if (getPointerType(fieldTypeIt->second, fieldName) != PointerType::SHARED) {
+            // The field was NOT already decided SHARED by anything -- most
+            // commonly `secondPassDeterminePointerTypes`' own base case
+            // (`PointerType::UNIQUE`, "default unique ownership", when no
+            // other signal applies). Left alone, this is a real, general,
+            // pre-existing mismatch (confirmed via probe, no closures
+            // involved: `class Holder { Animal stored; Holder(Animal c) {
+            // stored = c; } }` called as `new Holder(new Dog())`) --
+            // AstEmitter's own inline-`new`-as-call-argument path
+            // (`emitMovedArg`'s NewExpression branch -> factoryFor) has NO
+            // signal from THIS pass to consult and falls back to
+            // `getPointerType`'s own "not found" default, which is
+            // UNCONDITIONALLY SHARED (see that function's own two identical
+            // `return PointerType::SHARED;` branches) -- so a constructor
+            // call site passing a freshly-`new`'d, unnamed argument always
+            // produces a `shared_ptr`, regardless of what this field ends up
+            // deciding. A field left at UNIQUE while its own constructor
+            // argument is unconditionally emitted as SHARED is a silent
+            // `std::unique_ptr<T> stored(std::shared_ptr<T>)` type mismatch
+            // -- a real compile error in the generated C++, not a safety
+            // hole (CeeLing's own analysis never runs on already-broken
+            // output), but exactly the "compiles this pass, fails the next"
+            // gap the safety suite's compile-gate exists to catch.
+            //
+            // Fix: when nothing else drives this field's decision, make it
+            // agree with the SAME default a fresh inline-constructed
+            // argument already gets, rather than leaving it on
+            // secondPass's unrelated "default unique ownership" base case,
+            // which was never reasoning about constructor-argument
+            // construction sites at all.
+            // NOTE: `pointerDecisions` has an entry for EVERY variableReferences
+            // key unconditionally (secondPassDeterminePointerTypes's own loop
+            // writes one on every iteration, including its UNIQUE base case) --
+            // so "does an entry exist" is always true and cannot distinguish
+            // "a real signal fired" from "nothing did." The reason STRING is
+            // the only thing that distinguishes them: the base case's literal
+            // reason is "default unique ownership" (see that function's own
+            // `std::string reason = "default unique ownership";`); anything
+            // else means some real rule (explicit hint, back-reference,
+            // bidirectional, shared-root, data-flow) already decided this
+            // field and must not be silently overridden here.
+            bool fieldHasOwnSignal = false;
+            for (const auto& [key, ref] : variableReferences) {
+                if (ref.className == fieldTypeIt->second && ref.variableName == fieldName) {
+                    auto reasonIt = pointerReasons.find(key);
+                    if (reasonIt != pointerReasons.end() && reasonIt->second != "default unique ownership") {
+                        fieldHasOwnSignal = true;
+                        break;
+                    }
+                }
+            }
+            if (fieldHasOwnSignal) continue;
+
+            for (auto& [key, ref] : variableReferences) {
+                if (ref.className == fieldTypeIt->second && ref.variableName == fieldName) {
+                    pointerDecisions[key] = PointerType::SHARED;
+                    pointerReasons[key] =
+                        "field is populated from a stored constructor parameter, matching "
+                        "the SHARED default a fresh inline-constructed argument already gets";
+                    ref.reason = pointerReasons[key];
+                }
+            }
+        }
+
+        // The parameter's own type tells us which (class, name) key to promote --
+        // registerParameters already gave every object-typed parameter a bare
+        // variableReferences entry to promote here.
         for (auto& [key, ref] : variableReferences) {
             if (ref.className == paramTypeIt->first && ref.variableName == rhsId->name) {
                 pointerDecisions[key] = PointerType::SHARED;

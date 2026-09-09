@@ -91,3 +91,29 @@ lifetime data. Keeping them on one shared base is a design requirement:
 Because all three read the same table they stay mutually consistent: the analyzer will
 never auto-`std::move` a value that dangling analysis knows is still borrowed, and
 pointer-type choice reflects the same ownership graph used for lifetime checks.
+
+## The one exception: closures are eliminated before this analysis ever runs
+
+Closures (`closure IFace [captures] (params) {...}`, Chapter 9's Phase 3.5) are
+**not** a fourth consumer of the provenance/lifetime table above — they never
+reach A/B/C at all. A dedicated desugaring pass
+(`src/core/generator/closure_desugar.cpp`) runs immediately after AST
+building and rewrites every closure expression into an ordinary
+`ClassDeclaration` (one field + constructor parameter per capture, one
+overriding method holding the closure body) **before** `EscapeHatchChecker`,
+before `SmartPointerAnalyzer`, before the dangling checker described in this
+chapter ever sees the program. By the time A/B/C run, there is no closure
+construct left to reason about — only an ordinary class, which the existing
+machinery already handles with zero changes.
+
+This is a deliberate architectural choice, not an oversight: it means
+closures needed no extension to the provenance table, no new death-event
+kind, and no new borrow-summary shape. The trade-off closures make to
+achieve this — capture is BY VALUE ONLY, so `[&]` capture-mode syntax simply
+does not exist in the grammar — is what makes the elimination sound. A
+captured name becomes an ordinary constructor parameter stored into an
+ordinary field, which death-event rule C (move into an owning sink) already
+covers with no new code; there is no borrowed capture for the provenance
+table (component B) to ever need to track. See Chapter 9's Phase 3.5 for the
+full account, including why by-reference capture was made unrepresentable
+rather than analyzed.

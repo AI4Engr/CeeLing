@@ -1,0 +1,25 @@
+//@ expect: reject
+//@ reason: a closure's interface must declare EXACTLY ONE virtual method, so
+//@ reason: there is a single unambiguous method for the closure body to
+//@ reason: override -- a class with zero virtual methods (this fixture) has
+//@ reason: nothing for the closure to override at all. The >1 case
+//@ reason: (ambiguous -- which one?) is rejected by the exact same check,
+//@ reason: not covered by a separate fixture since the underlying rule and
+//@ reason: code path are identical.
+
+class NotAnInterface {
+public:
+    NotAnInterface() { }
+    void ordinaryMethod(int x) { }
+};
+
+void each(NotAnInterface cb) {
+}
+
+int main() {
+    int total = 100;
+    each(closure NotAnInterface [total] (int x) {
+        std::cout << x << std::endl;
+    });
+    return 0;
+}

@@ -1,0 +1,30 @@
+//@ expect: accept
+//@ reason: two captures of DIFFERENT primitive types (int, string) in one
+//@ reason: capture list -- verifies constructor-parameter ordering (each
+//@ reason: capture becomes one constructor param, in capture-list order) and
+//@ reason: that AstEmitter's existing member-initializer-list hoisting
+//@ reason: (emitFunction's isConstructor path, landed in an earlier session
+//@ reason: for imgui-cling's ColorEditResult) applies automatically to a
+//@ reason: synthesized closure class exactly as it does to a hand-written
+//@ reason: one -- no special-casing needed in closure_desugar.cpp for that
+//@ reason: to happen, since it's the SAME AstEmitter code path either way.
+//@ run: result10
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb, int n) {
+    cb.call(n);
+}
+
+int main() {
+    int multiplier = 2;
+    string label = "result";
+    each(closure Callback [multiplier, label] (int x) {
+        std::cout << label << (multiplier * x) << std::endl;
+    }, 5);
+    return 0;
+}

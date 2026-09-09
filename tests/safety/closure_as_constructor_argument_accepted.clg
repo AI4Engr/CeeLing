@@ -1,0 +1,37 @@
+//@ expect: accept
+//@ reason: a closure passed as a CONSTRUCTOR argument (`new Holder(closure
+//@ reason: ...)`), not a plain function-call argument -- exercises a
+//@ reason: genuinely different AST shape (NewExpression::arguments, not
+//@ reason: FunctionCall::arguments) that closure_desugar.cpp's rewriteExpr
+//@ reason: needed its own dedicated case for. Found as a real gap during
+//@ reason: development: without that case, a closure inside `new T(...)`'s
+//@ reason: argument list was never visited at all, so the raw closure syntax
+//@ reason: survived all the way to AstEmitter and was echoed as literal,
+//@ reason: invalid text into the generated C++ (emitExpression's own
+//@ reason: "unknown node: best effort" fallback, `return expr->toString();`)
+//@ reason: -- not even a clean rejection, a silent miscompile.
+//@ run: 42
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+class Holder {
+public:
+    Callback stored;
+    Holder(Callback c) { stored = c; }
+    void run(int x) {
+        stored.call(x);
+    }
+};
+
+int main() {
+    int base = 40;
+    Holder h = new Holder(closure Callback [base] (int x) {
+        std::cout << (base + x) << std::endl;
+    });
+    h.run(2);
+    return 0;
+}

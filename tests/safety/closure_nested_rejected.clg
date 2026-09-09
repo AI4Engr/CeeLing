@@ -1,0 +1,36 @@
+//@ expect: reject
+//@ reason: nested closures ARE supported (see closure_nested_captures_outer_
+//@ reason: param_accepted.clg), but an inner closure may capture ONLY its
+//@ reason: immediately enclosing closure's own PARAMETERS -- never that
+//@ reason: closure's own CAPTURES. This fixture's inner closure captures
+//@ reason: `total`, which is the OUTER closure's capture (a field of its
+//@ reason: synthesized class, reachable only through the outer's own `this`),
+//@ reason: not the outer's parameter `x`. Since closures cannot capture
+//@ reason: `this` (see closure_captures_this_rejected.clg), there is no
+//@ reason: legal way for the inner closure to reach `total` -- rejected with
+//@ reason: `closure-unknown-capture` (the inner closure's own scope, seeded
+//@ reason: only from the outer's parameter list, simply never contains
+//@ reason: `total`). This fixture used to test a blanket "nesting is banned"
+//@ reason: rule; the verdict is unchanged but the underlying mechanism is not
+//@ reason: -- it is now the negative control proving nesting has real,
+//@ reason: principled limits rather than none at all.
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (int x) {
+        each(closure Callback [total] (int y) {
+            std::cout << y << std::endl;
+        });
+    });
+    return 0;
+}

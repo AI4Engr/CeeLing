@@ -1,0 +1,35 @@
+//@ expect: reject
+//@ reason: `this` is a borrow of the enclosing object (there is no way to
+//@ reason: "own" it independently -- the object it points to is owned by
+//@ reason: whatever holds the current instance), so capturing it would need
+//@ reason: by-reference semantics, which this feature explicitly does not
+//@ reason: support (by-value capture only, a binding project-owner decision).
+//@ reason: Rejected explicitly by name rather than falling through to the
+//@ reason: unknown-capture check, since `this` IS technically "in scope" in
+//@ reason: an ordinary sense and deserves a message explaining WHY it's
+//@ reason: different from an ordinary local, not just "not found".
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+class Widget {
+public:
+    int id;
+    Widget(int i) { id = i; }
+    void doIt() {
+        each(closure Callback [this] (int x) {
+            std::cout << x << std::endl;
+        });
+    }
+};
+
+int main() {
+    return 0;
+}

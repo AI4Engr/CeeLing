@@ -161,6 +161,13 @@ bool isKnownQualifiedFreeFunction(const std::string& qualifiedName) {
         // not real TTF rendering). Both take/return only primitives
         // (std::string by const&, like gfx_init's title parameter).
         "gfx_draw_text", "gfx_text_width",
+        // Phase 3: DragFloat's value-as-text label needs float->string, which
+        // CeeLing has no other way to express (std::to_string itself is not
+        // on any allow-list -- confirmed via probe: it's rejected as an
+        // unknown call). Same plain-primitives-only shape as every other
+        // gfx_* entry (float in, std::string out), so it needs no borrow
+        // summary either.
+        "gfx_float_to_string",
         // EXPLORATORY Eigen spike (see isKnownExternalClassType's doc comment):
         // Eigen::MatrixXd::Identity(rows, cols) is a static factory returning a
         // fresh, non-aliasing matrix -- unlike this allow-list's other entries,

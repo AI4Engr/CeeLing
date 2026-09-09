@@ -584,6 +584,8 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
         result = buildTemplateCall(node, source);
     } else if (strcmp(node_type, "new_expression") == 0) {
         result = buildNewExpression(node, source);
+    } else if (strcmp(node_type, "closure_expression") == 0) {
+        result = buildClosureExpression(node, source);
     } else if (strcmp(node_type, "binary_expression") == 0) {
         result = buildBinaryExpression(node, source);
     } else if (strcmp(node_type, "unary_expression") == 0) {
@@ -973,6 +975,69 @@ ExpressionPtr ASTBuilder::buildNewExpression(TSNode node, const std::string& sou
     }
 
     return std::make_unique<NewExpression>(className, std::move(arguments));
+}
+
+ExpressionPtr ASTBuilder::buildClosureExpression(TSNode node, const std::string& source) {
+    // closure_expression: "closure" identifier "[" optional(capture_list) "]"
+    //                     "(" optional(parameter_list) ")" "{" repeat(statement) "}"
+    // Builds a TRANSIENT ClosureExpression (see its own doc comment in ast.h) --
+    // ASTBuilder::desugarClosures replaces every one of these with a
+    // NewExpression before any checker ever runs. Parameters go through the
+    // SAME rejectObserverParams check every other parameter list uses (`ref`
+    // in a closure's own parameter list is exactly as forbidden as anywhere
+    // else -- see the 4 existing call sites this is the 5th of).
+    std::string interfaceName;
+    std::vector<std::string> captures;
+    std::vector<std::pair<std::string, std::string>> parameters;
+    std::vector<StatementPtr> body;
+    bool sawInterfaceName = false;
+
+    uint32_t childCount = ts_node_child_count(node);
+    for (uint32_t i = 0; i < childCount; i++) {
+        TSNode child = ts_node_child(node, i);
+        const char* childType = ts_node_type(child);
+
+        if (strcmp(childType, "identifier") == 0 && !sawInterfaceName) {
+            interfaceName = getNodeText(child, source);
+            sawInterfaceName = true;
+        } else if (strcmp(childType, "capture_list") == 0) {
+            uint32_t capCount = ts_node_child_count(child);
+            for (uint32_t j = 0; j < capCount; j++) {
+                TSNode capNode = ts_node_child(child, j);
+                if (strcmp(ts_node_type(capNode), "identifier") == 0) {
+                    captures.push_back(getNodeText(capNode, source));
+                }
+                // Skip comma tokens.
+            }
+        } else if (strcmp(childType, "parameter_list") == 0) {
+            rejectObserverParams(child);
+            std::string pendingType;
+            uint32_t paramCount = ts_node_child_count(child);
+            for (uint32_t j = 0; j < paramCount; j++) {
+                TSNode paramNode = ts_node_child(child, j);
+                const char* pt = ts_node_type(paramNode);
+                if (strcmp(pt, "type") == 0) {
+                    pendingType = getNodeText(paramNode, source);
+                } else if (strcmp(pt, "identifier") == 0 && !pendingType.empty()) {
+                    parameters.push_back({pendingType, getNodeText(paramNode, source)});
+                    pendingType.clear();
+                }
+            }
+        } else if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        } else if (strcmp(childType, "statement") == 0) {
+            auto stmt = buildStatement(child, source);
+            if (stmt) {
+                body.push_back(std::move(stmt));
+            } else {
+                rejectUnbuildableChild(child, source);
+            }
+        }
+        // Skip "closure", "[", "]", "(", ")", "{", "}" literal tokens.
+    }
+
+    return std::make_unique<ClosureExpression>(interfaceName, std::move(captures),
+                                               std::move(parameters), std::move(body));
 }
 
 StatementPtr ASTBuilder::buildIncludeStatement(TSNode node, const std::string& source) {

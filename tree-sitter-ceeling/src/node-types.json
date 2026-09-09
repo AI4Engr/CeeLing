@@ -57,6 +57,21 @@
     }
   },
   {
+    "type": "capture_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "class_declaration",
     "named": true,
     "fields": {},
@@ -78,6 +93,33 @@
         },
         {
           "type": "method_declaration",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "closure_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "capture_list",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "parameter_list",
+          "named": true
+        },
+        {
+          "type": "statement",
           "named": true
         }
       ]
@@ -150,6 +192,10 @@
       "types": [
         {
           "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "closure_expression",
           "named": true
         },
         {
@@ -1043,6 +1089,10 @@
   },
   {
     "type": "class",
+    "named": false
+  },
+  {
+    "type": "closure",
     "named": false
   },
   {

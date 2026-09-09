@@ -1,0 +1,38 @@
+//@ expect: reject
+//@ reason: the MOST IMPORTANT new check this feature adds. Capturing a `ref`
+//@ reason: observer by value would copy that non-owning reference into a
+//@ reason: FIELD of the synthesized closure class -- a field can outlive the
+//@ reason: observer's own stack frame (exactly threat #3, reference-stored-
+//@ reason: in-field escape, already sealed for ordinary hand-written fields
+//@ reason: by ref_field_rejected.clg's "no ref-qualified field production"
+//@ reason: grammar rule), and a closure capturing one would silently
+//@ reason: reintroduce that exact hole through a different door. Rejected by
+//@ reason: ASTBuilder::desugarClosures's own capture-resolution pass (NOT
+//@ reason: the grammar -- the capture list syntax itself can't distinguish
+//@ reason: an observer name from an ordinary one, so this must be a semantic
+//@ reason: check against the enclosing scope's own isObserver flag).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb, int n) {
+    cb.call(n);
+}
+
+int main() {
+    Node owner = new Node(5);
+    ref Node observed = owner;
+    each(closure Callback [observed] (int x) {
+        std::cout << x << std::endl;
+    }, 1);
+    return 0;
+}

@@ -27,7 +27,7 @@ memory safety means closing every item below.
 | 4 | **Iterator invalidation** (`push_back` reallocs, then `*it`) | summary marks mutators as invalidating a container's iterators | static |
 | 5 | **`string_view` / `span` dangles** (view of a temporary) | temporary-lifetime + provenance on view types | static |
 | 6 | Expression-template dangle (Eigen `auto e = A+B`) | `auto` vs concrete-type provenance | static |
-| 7 | Lambda captures `[&]` local, then escapes | capture provenance vs lambda lifetime | static |
+| 7 | Lambda captures `[&]` local, then escapes | **DONE** — closures exist (`closure IFace [caps] (params) {...}`), but capture is **by value only**; `[&]` is not detected-and-rejected, it is **unrepresentable in the grammar** (the capture list is bare identifiers, no capture-mode syntax at all). See Chapter 18a. | static (by construction) |
 | 8 | Dangling temporary bound to `const&` subobject | temporary-lifetime rule | static |
 | **Other UB (not dangling)** | | | |
 | 9 | Null deref (`shared_ptr`/`weak_ptr.lock()` may be empty) | non-null typing where provable, else runtime check | static + runtime |
@@ -55,6 +55,17 @@ memory safety means closing every item below.
 - **`.get()` (#14) is the smart-pointer back door.** Leaving it open silently voids
   the entire contract — one `.get()` reintroduces a raw pointer.
 - **99.99% is reached by static-catch + runtime-backstop**, not pure static proof.
+- **Closures (#7) close by elimination, not by analysis** — the same strategy as
+  `ref` fields (#3): rather than build a capture-provenance-vs-lambda-lifetime
+  analysis (the originally planned approach for #7, and the harder of the two
+  options), by-reference capture was made syntactically impossible. This is a
+  real trade-off, not a free win: it means a closure can never observe an
+  enclosing local without taking ownership of a copy (or, for a `shared_ptr`-
+  backed object, a share) of it — see Chapter 18a for what this does and does
+  not let a caller express, and why by-value-only still made closures a
+  genuine language-expressiveness milestone (Begin/End-shaped APIs collapse
+  to one call; callbacks/strategy objects become directly expressible)
+  despite that restriction.
 
 ## "Enough for modern C++"?
 

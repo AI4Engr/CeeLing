@@ -446,6 +446,7 @@ module.exports = grammar({
       $.template_call,
       $.function_call,
       $.new_expression,
+      $.closure_expression,
       $.member_access,
       $.subscript_expression,
       $.primary_expression
@@ -507,6 +508,53 @@ module.exports = grammar({
       '(',
       optional($.argument_list),
       ')'
+    ),
+
+    // `closure IFace [captureA, captureB] (int x) { ...body... }` -- a by-value-
+    // capture-only closure implementing the single-virtual-method interface
+    // `IFace` (validated/desugared in ASTBuilder, not here). Leads with the
+    // `closure` keyword for the SAME reason `new_expression` above needs no
+    // `prec` wrapper: a leading keyword makes the whole production unambiguous
+    // at the exact position `$.expression` already appears. A leading `[`
+    // instead (mimicking C++ `[x](...){...}`) would collide with
+    // subscript_expression's own infix `[` (below) -- the same real ambiguity
+    // template_call's `<` hit against binary_expression's comparison operator,
+    // which needed two `conflicts:` entries to resolve via GLR. The keyword
+    // avoids that class of problem entirely; no `conflicts:` entry is needed
+    // for this rule.
+    //
+    // Capture list is BARE IDENTIFIERS ONLY -- no `&`, no `=`. This is a
+    // deliberate language-level decision, not a missing feature: by-reference
+    // capture is a new dangling-reference source (CLAUDE.md threat #7,
+    // "lambda captures `[&]` local, then escapes") that this compiler's
+    // scope-aware, per-body analysis cannot verify once a closure escapes its
+    // creating function (see the design notes this fixture set's `closure_*`
+    // fixtures document). Making the capture list syntactically incapable of
+    // spelling a reference capture closes that door the same way the grammar
+    // has no `ref`-qualified FIELD production at all (ast_builder.cpp's
+    // ref_field_rejected.clg-adjacent comments) -- sealed by construction, not
+    // by a check that could be forgotten.
+    //
+    // Body shape (`'{', repeat($.statement), '}'`) is copied verbatim from
+    // function_declaration above -- this is the first EXPRESSION production in
+    // the grammar to contain statements (every other expression rule bottoms
+    // out in primary_expression, never $.statement), making expression and
+    // statement mutually recursive through this one rule.
+    closure_expression: $ => seq(
+      'closure',
+      $.identifier,
+      '[', optional($.capture_list), ']',
+      '(',
+      optional($.parameter_list),
+      ')',
+      '{',
+      repeat($.statement),
+      '}'
+    ),
+
+    capture_list: $ => seq(
+      $.identifier,
+      repeat(seq(',', $.identifier))
     ),
 
     primary_expression: $ => choice(

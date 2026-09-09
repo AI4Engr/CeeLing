@@ -1,0 +1,26 @@
+//@ expect: reject
+//@ reason: a closure's parameter list must match its interface's sole virtual
+//@ reason: method's exactly (arity AND declared types) -- a mismatch would
+//@ reason: otherwise make the synthesized method an OVERLOAD instead of an
+//@ reason: OVERRIDE in the generated C++ (AstEmitter emits `override`
+//@ reason: unconditionally on the synthesized method, so real g++ WOULD also
+//@ reason: reject a non-overriding `override`, but CeeLing's own message here
+//@ reason: is far more specific about which of the two signatures is wrong).
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (string wrongType) {
+        std::cout << wrongType << std::endl;
+    });
+    return 0;
+}

@@ -3631,3 +3631,343 @@ safety-fixture baseline) green after every fix, re-run after each change.
 yaml-cling's full 13-script bash smoke suite green (the pre-existing
 `run_node_smoke.sh` CRLF-only artifact, documented in Step 33, is the sole,
 unrelated, already-known exception).
+
+## Step 35 — Closures: by-value capture only, `[&]` sealed by construction, plus two real pre-existing bugs on the escape path
+
+Driven by `imgui-cling`'s recurring need for a Begin/End-shaped API
+(`GuiWindow.beginGroup()`/`endGroup()`, guarded only by the advisory-only
+`PairingChecker`) — every closure-shaped ImGui API (Group, Table, Tree, Menu)
+maps to a real egui closure (`ui.group(|ui| {...})`) that CeeLing had no
+equivalent for. The actual design question was narrower and harder than
+"add lambda syntax": can a closure be added **without opening a new
+dangling-reference hole**, since CLAUDE.md's threat #7 is literally "lambda
+captures `[&]` local, then escapes."
+
+### Step 0: a mandatory probe, run BEFORE any implementation, that surfaced a real bug
+
+The whole design depends on passing a derived-class instance to a
+base-typed PARAMETER (a closure passed to a function expecting its
+interface base type is exactly this shape). No existing fixture covered
+this — `inherit_virtual_dispatch_accepted.clg` only covers a base-typed
+LOCAL. The probe (`class Drawer { Drawer() {...} virtual call... }; class
+MyDrawer : public Drawer {...}; void invoke(Drawer d, int) { d.call(...);
+}`) failed to compile: `Drawer`'s own explicit `Drawer() { }` collided with
+`AstEmitter`'s UNCONDITIONAL synthesis of a second `protected: Drawer() =
+default;` for any class used as a base (the synthesis existed to give a
+derived constructor something to implicitly chain through — see the
+base-class-injection block in `emitClass`/`emitClassHeader` — but never
+checked whether the user had already written one). Real g++ error:
+`'Drawer::Drawer()' cannot be overloaded with 'Drawer::Drawer()'`. This is a
+general, pre-existing bug, unrelated to closures, confirmed to affect any
+hand-written base class with its own no-arg constructor. Fixed with
+`AstEmitter::hasUserDefinedDefaultConstructor` (walks `cls.members` for an
+existing zero-arg `ConstructorDeclaration` before synthesizing one) —
+covered by `tests/safety/inherit_base_own_default_ctor_accepted.clg` and
+`inherit_base_param_accepts_derived_accepted.clg` (the original probe, made
+permanent, since it's load-bearing regardless of closures).
+
+### Syntax: a leading keyword, chosen specifically to need zero grammar conflicts
+
+`closure IFace [captures] (params) { body }`. `new_expression` was the
+model: a leading keyword needs no `prec` wrapper because it's unambiguous at
+the exact position `$.expression` already appears. A leading `[` (mimicking
+C++ lambda syntax) was rejected before writing any grammar: `[` is already
+live as `subscript_expression`'s infix operator, which is the *exact* class
+of ambiguity `template_call`'s `<` hit against `binary_expression`'s
+comparison operator (needing two `conflicts:` entries and GLR
+disambiguation). Confirmed after adding the grammar rule: zero new
+`conflicts:` entries needed, exactly as predicted.
+
+Capture list is bare identifiers only — no `&`, no `=`. This is the single
+decision that makes the rest of this feature tractable: by-reference
+capture is not *detected and rejected*, it is **unrepresentable**, the same
+"sealed by construction" strategy already used for `ref` fields (no
+`ref`-qualified field production exists in the grammar at all).
+
+### Desugaring: eliminated before any checker runs, not analyzed by any checker
+
+`closure IFace [count] (int x) { body }` becomes, via a NEW dedicated pass
+(`src/core/generator/closure_desugar.cpp`) run immediately after
+`ASTBuilder::spliceExternalSpecializations` and BEFORE
+`EscapeHatchChecker`:
+
+```cpp
+class __closure_0 : public IFace {
+public:
+    int count;
+    __closure_0(int p_count) { count = p_count; }
+    <IFace's sole virtual method> override { body }
+};
+// the closure expression itself is replaced in-place by:
+new __closure_0(count)
+```
+
+Modeled on `ExternalSpecializationMarker`'s own stated rationale (Step 34
+and earlier in this chapter): "every downstream pass sees an ordinary
+`MethodDeclaration` ... with zero changes to any checker." Here, every
+downstream pass sees an ordinary `ClassDeclaration` — `DanglingChecker`'s
+existing `cls->members` walk analyzes the closure's body with **zero new
+checker code**, `EscapeHatchChecker` and `SmartPointerAnalyzer` likewise
+need no closure-specific branch. `EscapeHatchChecker` running BEFORE this
+pass would have hard-rejected the raw closure syntax as an unknown
+construct (it hard-fails on anything unrecognized), which is why ordering
+matters here, not just correctness of the desugar itself.
+
+The interface (`IFace`) must be an ordinary CeeLing class with EXACTLY ONE
+virtual method — validated by `desugarClosures` itself (not a new grammar
+rule), so "which method does the closure override" always has one
+unambiguous answer, and the closure's own parameter list is checked to
+match that method's signature exactly (a mismatch would otherwise make the
+synthesized method an OVERLOAD instead of an OVERRIDE, since `AstEmitter`
+emits `override` unconditionally on the synthesized method).
+
+**Constructor parameter naming avoids a real collision found via probe**:
+the constructor's own parameter is named `p_<capture>`, not `<capture>`.
+Confirmed by probe that CeeLing's `AstEmitter` has no parameter/field
+shadowing concept at all (unlike real C++, where a constructor parameter
+shadows a same-named field inside its own body) — an
+`AssignmentStatement`'s RHS `Identifier` is resolved via the SAME
+`isCurrentField` check as the LHS, so a body reading `count = count;` (same
+name on both sides) emitted BOTH sides as `this->count`, producing a
+nonsensical self-initializing `count(this->count)` in the generated member-
+initializer list. Every existing hand-written CeeLing constructor in the
+whole codebase already avoids this by using a different parameter name
+(`age = a;`, never `age = age;`) — this is not a special case invented for
+closures, it's the established convention, applied to a synthesized name.
+
+### The genuinely new piece: a third, dedicated scope-type stack
+
+Resolving each capture's type (`[count]` → is `count` an `int` or a
+`string`?) needed a real lookup this compiler did not have anywhere.
+Confirmed via direct inspection that neither existing symbol table could
+serve it:
+
+- `ASTBuilder` has **no symbol table at all** — it is a syntax-directed
+  translator with no per-instance state tracking local variable types.
+- `SmartPointerAnalyzer`'s own `symbolTypesByScope` (populated in its first
+  pass) is unusable for two independent reasons: (a) it is not populated
+  until AFTER `EscapeHatchChecker` already ran in `main.cpp`'s pipeline,
+  which would reject the raw closure syntax first, and (b) it unconditionally
+  SKIPS every non-class type (`if (classNames.find(ptype) ==
+  classNames.end()) continue;`, in both `registerParameters` and
+  `analyzeVariableDeclaration`) — because the analyzer only cares about
+  object OWNERSHIP, primitives were never worth tracking there. Primitives
+  are exactly what closures capture most (`int`/`float`/`string`).
+
+So `closure_desugar.cpp` maintains its own minimal `ScopeStack` (a
+`vector<map<string, ScopeEntry>>`, pushed/popped per block, populated from
+`VariableDeclaration`/`ContainerDeclaration`/parameters/fields as a
+dedicated recursive walker descends `if`/`while`/`for`/`try` bodies) —
+new, but deliberately narrow: it only ever answers "what is the declared
+type and is-`ref`-observer status of this name, here," nothing more.
+
+### Why by-value capture makes escape SAFE, not just simpler
+
+Design decision (binding, from the project owner): closures may safely
+ESCAPE their creating function — stored in a field, returned, outlive the
+stack frame that built them. This is exactly what by-value-only capture
+buys for free: a captured name becomes an ordinary OWNED field (or, for a
+`shared_ptr`-backed capture, a SHARED field), so there is nothing left
+pointing at a dead stack frame the way a live reference capture would leave
+behind. Concretely, capturing an object by value is EXACTLY "pass this by
+value into a constructor" — already-existing move-tracking
+(`applyCallArgMoves`) records the move with **zero new lifetime-analysis
+code**; using the captured-from variable afterward is already rejected by
+the existing use-after-move check. Verified end-to-end
+(`tests/safety/closure_escapes_via_field_accepted.clg`): a closure stored
+in a field and invoked on TWO separate calls after its creating function
+had already returned reads its captured value correctly both times.
+
+### Two more real, general, pre-existing bugs found on the escape path — neither is closure-specific
+
+**Bug 1 — a bare `new Derived(...)` passed directly as a call argument
+constructed the WRONG CLASS.** `AstEmitter::emitMovedArg`'s own
+`NewExpression` branch called `factoryFor(targetParam.first, ...)` —
+passing the CALLEE'S DECLARED parameter type (e.g. `"Animal"`) as
+`factoryFor`'s CONSTRUCTED-type argument, silently discarding
+`NewExpression::className` (`"Dog"`) entirely. `useIt(new Dog())` into
+`void useIt(Animal a)` produced `useIt(std::make_shared<Animal>())` —
+compiles, links, runs, and constructs the wrong object (confirmed via
+probe: prints "generic" instead of "woof"). This is exactly the shape a
+closure passed inline as a call argument has (a `NewExpression`, not a
+named local), so it was directly load-bearing for this feature, not a
+tangential find. Fixed by passing `neww->className` as the constructed
+type and `targetParam.first` as `factoryFor`'s existing `declaredType`
+parameter — the SAME declared-vs-constructed split `factoryFor` already
+implements correctly for a named local (`Animal a = new Dog();`), now
+applied to the inline-argument case too. Covered by
+`tests/safety/inherit_inline_new_arg_constructs_declared_type_accepted.clg`.
+
+**Bug 2 — a field storing a constructor parameter, with no other ownership
+signal, could disagree with the SHARED default every inline-constructed
+argument gets.** `SmartPointerAnalyzer::getPointerType`'s own "not found"
+fallback is unconditionally SHARED (confirmed: both of its own internal
+branches return `PointerType::SHARED`) — so `new Holder(new Dog())` always
+emits a `shared_ptr` argument. But `secondPassDeterminePointerTypes`'s base
+case for the FIELD that argument gets stored into is `PointerType::UNIQUE`
+("default unique ownership"), a decision made with zero knowledge of how
+instances of the class are constructed at call sites. Left alone, `Holder`'s
+constructor becomes `Holder(std::unique_ptr<Animal>)` while every real
+caller passes a `shared_ptr` — a genuine compile error (`no known
+conversion from shared_ptr<Dog> to unique_ptr<Animal>`), reproduced with
+plain `Animal`/`Dog`, no closures involved. Fixed in
+`SmartPointerAnalyzer::promoteParamsInBody`: when a field has no real
+signal of its own — checked by comparing `pointerReasons[key]` against the
+literal string `"default unique ownership"`, since `pointerDecisions` has
+an entry for EVERY `variableReferences` key unconditionally (confirmed:
+`secondPassDeterminePointerTypes`'s loop writes one on every iteration, so
+mere presence in the map cannot distinguish "a real rule fired" from
+"nothing did," which was the first, broken version of this fix) — and it's
+populated from a stored parameter, promote the field to SHARED to match.
+Covered by `tests/safety/field_stores_param_matches_inline_new_default_accepted.clg`.
+
+A third, smaller instance of the same class of gap surfaced integrating
+this into `imgui-cling`: a BRAND NEW parameter name
+(`GroupBody::call`'s own `ctx`) that the SHARED-forcing data-flow heuristic
+had never seen before defaulted to UNIQUE, while every OTHER `ctx` in that
+codebase already resolves SHARED organically. Fixed with an explicit
+`//@ptr shared ctx` hint (CeeLing's pre-existing bare-name annotation
+mechanism, not a new feature) rather than by generalizing the inference
+further — two independently-named parameters across two different files
+agreeing is not something whole-program name-based inference can promise
+without a real per-type "this is inherently shared" concept, which is out
+of scope for this feature.
+
+### What's explicitly NOT supported, on purpose
+
+- **Nested closures were initially rejected outright at launch, then
+  supported shortly after — see the dedicated sub-section below.**
+- **Capturing `this`** is rejected — `this` is a borrow of the enclosing
+  object, not an owned value; capturing it would need by-reference
+  semantics, which this feature does not support by design.
+- **Auto-capture (`[=]`/`[&]`)** does not exist — every capture is named
+  explicitly, matching CeeLing's existing "no `auto`, every declaration
+  states its type" convention.
+
+### Status (initial launch): COMPLETE, full pipeline green, real end-to-end consumer
+
+11 new fixtures in `tests/safety/closure_*.clg` (basic dispatch — must be
+`//@ run:`, not just compiled, since virtual dispatch is a runtime property
+the same way Step "inherit_virtual_dispatch" already established; escape via
+a stored field; multiple mixed-type captures verifying constructor-parameter
+ordering and the pre-existing member-initializer-list hoisting applies
+automatically to a synthesized class; a constructor-argument use site
+exercising `NewExpression`'s own argument list, found to need its own
+`rewriteExpr` case since it's a different AST shape than a plain function
+call's arguments; and all 8 rejection cases above), run with `--strict` to
+confirm each `_rejected.clg` fixture triggers its intended check rather than
+merely XFAILing silently. Full safety suite: 117/117. `ctest`: 13/13.
+
+Real end-to-end consumer: `imgui-cling/src/gui_window.clg`'s
+`GroupBody`/`GuiWindow.group()` replaced that project's `beginGroup()`/
+`endGroup()` Begin/End pair (previously guarded only by the advisory-only
+`PairingChecker`, since CeeLing had no closures when that pair was designed)
+with a single call taking a closure — no second call exists to forget, a
+strictly stronger guarantee than a warning. Required moving `imgui-cling`'s
+own `enabled`/`enabled2`/`volume` locals into `Context`'s state maps first,
+since a closure can capture a `shared_ptr`-backed handle (by value, sharing
+the same live object) but can never capture-and-mutate a plain local and
+have that mutation observed by the caller. Verified via direct interaction
+with the rebuilt demo: both checkboxes and the slider behave identically to
+the pre-closure version.
+
+### Follow-up — nested closures: the blanket ban was an implementation shortcut, not a wall
+
+Driven by `imgui-cling`'s next planned widget (a closure-based Table,
+mirroring real `egui_extras::Table`'s own `header(|h| { h.col(|ui| {...});
+})` / `body(|b| { b.row(18.0, |r| { r.col(|ui| {...}); }); })` — genuinely
+NESTED closures, not just one level). Investigating whether the initial "no
+nesting" rule was a hard limit or a scope cut, before designing around it,
+found it was the latter: `closure_desugar.cpp`'s `desugarOne` never called
+`walkBody` on the closure's OWN body at all — it moved `closure.body`
+verbatim into the synthesized override method, unwalked. `walkBody` itself
+already fully supported recursive descent through `if`/`while`/`for`/`try`
+(pushing/popping scope at each level); the ONLY reason a `ClosureExpression`
+sitting inside another closure's body was never found is that the one
+function that finds and desugars one (`rewriteExpr`) was never invoked on
+that body in the first place. The explicit `containsNestedClosure`
+scan-and-reject-up-front check existed purely to catch this gap cleanly
+(matching the "unknown node echoed as literal text" failure mode
+`NewExpression` arguments hit before their own fix, rather than let it
+recur here) — not because a real design obstacle had been hit.
+
+**The one genuine semantic question, resolved before writing any code**:
+when an inner closure's capture list names something that was itself part of
+the OUTER closure's OWN capture list (now a field of the outer's synthesized
+class, reachable only through the outer's own `this`), what should happen?
+Two options existed: (a) implicitly let the inner closure capture the
+outer's `this` on its behalf — rejected immediately, since it would silently
+reintroduce exactly the borrow-capture this whole feature exists to forbid;
+(b) copy the value out of the outer's field at desugar time into a field of
+the inner's own — a real, narrower option, deferred rather than built,
+since it was not needed for the actual motivating use case (Table's own
+header/row/col nesting captures loop variables and formatting parameters,
+not an outer closure's own captured state).
+
+**Decided instead**: an inner closure may capture ONLY its immediately
+enclosing closure's own PARAMETERS — never that closure's own CAPTURES. A
+parameter is an ordinary local already in scope inside the method body, not
+reached through `this` at all, so capturing it needs zero new borrow/
+ownership machinery: it's captured by value exactly like any top-level
+function's own parameter already is.
+
+**The fix, once the design was settled, was three lines of consequence, not
+three lines of code**: in `desugarOne`, immediately before `closure.body` is
+moved into the synthesized `MethodDeclaration`, build a fresh `ScopeStack`
+seeded ONLY from `closure.parameters` (mirroring exactly how
+`desugarClosures`' own top-level driver seeds a `FunctionDeclaration`'s scope
+from `fn->parameters`) and call `walkBody(closure.body, innerScope,
+classesByName, pendingClasses)`. `pendingClasses` had to be threaded into
+`desugarOne` as a new parameter (previously only `rewriteExpr` held it) so a
+nested closure's synthesized class lands in the SAME accumulator the outer
+call is using. `containsNestedClosure` and its call site were deleted
+entirely — the ban it enforced no longer exists. **No change was needed to
+`rewriteExpr`, `walkBody`, or `ScopeStack` themselves** — the recursion
+`desugarOne` → `walkBody` → `rewriteExpr` → `desugarOne` (for a nested
+closure) falls out automatically once the one missing call was added; depth
+is unbounded (3+ levels work identically) since nothing caps the recursion
+except a body eventually containing no further closure.
+
+**Ordering falls out for free.** `pendingClasses` is accumulated bottom-up:
+because the OUTER closure's own `desugarOne` call walks its body (which
+recursively desugars any INNER closure) BEFORE returning its own
+`DesugarResult`, the inner closure's synthesized class is always pushed onto
+`pendingClasses` strictly before the outer's — required, since the outer's
+own synthesized method body references the inner class by name
+(`new __closure_N(...)`) and CeeLing has no forward declarations (the same
+constraint `ExternalSpecializationMarker`'s own placement logic already
+works around, elsewhere in this chapter). No explicit ordering code was
+needed for this; it was a consequence of the existing bottom-up accumulation
+shape, confirmed by inspecting real generated output
+(`class __closure_1 : ...` — the inner one — emitted before `class
+__closure_0 : ...` — the outer one — in the compiled probe used to verify
+this).
+
+**What still rejects, and why it needed no new rejection code**: an inner
+closure capturing an outer closure's own CAPTURE (as opposed to its
+parameter) falls straight through to the PRE-EXISTING `closure-unknown-
+capture` rejection — the inner closure's scope, seeded only from the outer's
+parameter list, simply never contains the outer's captured name, so
+`scope.find(name)` returns `nullptr` exactly as it already does for any
+genuinely out-of-scope name. Only the `help` text needed a one-line addition
+explaining the nested case specifically, so a user hitting this error isn't
+left guessing whether it's a typo or a structural rule.
+
+**The existing `closure_nested_rejected.clg` fixture's verdict is unchanged,
+its meaning is not**: its inner closure captures `total` (the OUTER's own
+capture, not the outer's parameter `x`), so it still correctly rejects —
+now via `closure-unknown-capture` instead of the deleted `closure-nested`
+check. It was rewritten from "the negative control for a blanket ban" into
+"the negative control proving nesting has real, principled limits rather
+than none at all." Two new fixtures verify the positive cases end-to-end
+(`//@ run:`, not just compile, since dispatch through nested indirection is
+a runtime property): `closure_nested_captures_outer_param_accepted.clg` (2
+levels) and `closure_nested_three_levels_accepted.clg` (3 levels, confirming
+depth isn't artificially capped at 2 — each level captures only its
+immediate parent's own parameter, the same rule applied recursively).
+
+**Status**: full safety suite 119/119 (`--strict`), `ctest` 13/13. No
+`imgui-cling` changes were made in this pass — the closure-based Table
+design that motivated this investigation is a separate, not-yet-started
+follow-up; this change only makes nesting possible, it does not design or
+build that consumer.

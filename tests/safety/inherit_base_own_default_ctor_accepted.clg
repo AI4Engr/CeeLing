@@ -1,0 +1,37 @@
+//@ expect: accept
+//@ reason: a class used as a base, which ALSO declares its own explicit
+//@ reason: zero-arg constructor, must compile -- found as a real bug via
+//@ reason: inherit_base_param_accepts_derived_accepted.clg's own probe:
+//@ reason: AstEmitter's base-class injection (emitClass/emitClassHeader)
+//@ reason: unconditionally synthesized `protected: T() = default;` for ANY
+//@ reason: class used as a base, with no check for whether the user already
+//@ reason: wrote one -- producing a real g++ error ("'Animal::Animal()'
+//@ reason: cannot be overloaded with 'Animal::Animal()'") whenever a base
+//@ reason: class had its own no-arg constructor. Fixed by
+//@ reason: AstEmitter::hasUserDefinedDefaultConstructor, consulted before
+//@ reason: synthesizing the default. The synthesized `virtual ~T() =
+//@ reason: default;` destructor is UNAFFECTED -- CeeLing has no destructor
+//@ reason: syntax at all, so there is nothing for it to collide with.
+//@ run: woof
+
+class Animal {
+public:
+    Animal() { }
+    virtual void speak() {
+        std::cout << "generic" << std::endl;
+    }
+};
+
+class Dog : public Animal {
+public:
+    Dog() { }
+    void speak() override {
+        std::cout << "woof" << std::endl;
+    }
+};
+
+int main() {
+    Animal a = new Dog();
+    a.speak();
+    return 0;
+}

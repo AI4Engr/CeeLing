@@ -1,0 +1,49 @@
+//@ expect: accept
+//@ reason: a closure stored in a FIELD, invoked on TWO separate later calls
+//@ reason: after the function that created it has already returned, still
+//@ reason: dispatches correctly and reads the captured value correctly both
+//@ reason: times. This is the direct proof for the project's central design
+//@ reason: claim: by-value capture makes escape SAFE BY CONSTRUCTION, because
+//@ reason: the closure OWNS what it captured (or shares ownership via
+//@ reason: shared_ptr) rather than borrowing it -- there is nothing left
+//@ reason: pointing at a dead stack frame the way a `[&]` reference capture
+//@ reason: would leave behind. `main()`'s own `base` local's scope has
+//@ reason: exited by the time `h.run(...)` is called (h is constructed
+//@ reason: before those calls, but `base` itself is never touched again),
+//@ reason: and the closure keeps working anyway. Must be RUN: the correct
+//@ reason: values (1001, then 1002) can only be confirmed by executing.
+//@ run: 1001 1002
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+class Holder {
+public:
+    Callback stored;
+    int callCount;
+    Holder(Callback c) {
+        stored = c;
+        callCount = 0;
+    }
+    void run(int x) {
+        if (callCount > 0) {
+            std::cout << " ";
+        }
+        callCount = callCount + 1;
+        stored.call(x);
+    }
+};
+
+int main() {
+    int base = 1000;
+    Holder h = new Holder(closure Callback [base] (int x) {
+        std::cout << (base + x);
+    });
+    h.run(1);
+    h.run(2);
+    std::cout << std::endl;
+    return 0;
+}

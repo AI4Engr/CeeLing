@@ -343,6 +343,52 @@ public:
     }
 };
 
+// A `closure IFace [captures] (params) { body }` expression. TRANSIENT: this
+// node never survives past ASTBuilder -- ASTBuilder::desugarClosures (run at
+// the end of buildProgram, before validateInheritance) replaces every
+// occurrence with a NewExpression naming a freshly synthesized ClassDeclaration
+// (derived from `interfaceName`, one field+ctor-param per capture, one
+// overriding method holding `body`) inserted just before the top-level
+// statement that used it. No checker or the emitter ever sees this type --
+// it exists purely to carry the closure's literal syntax from the CST to the
+// desugaring pass. This is the first Expression subclass to hold a statement
+// body (mirrors MethodDeclaration's body, not any other Expression), which is
+// exactly why it cannot be treated like an ordinary expression by anything
+// downstream and must be fully desugared away before EscapeHatchChecker (or
+// any other checker) ever walks the program.
+class ClosureExpression : public Expression {
+public:
+    std::string interfaceName;
+    std::vector<std::string> captures;
+    std::vector<std::pair<std::string, std::string>> parameters;
+    std::vector<StatementPtr> body;
+
+    ClosureExpression(const std::string& iface, std::vector<std::string> caps,
+                      std::vector<std::pair<std::string, std::string>> params,
+                      std::vector<StatementPtr> stmts)
+        : interfaceName(iface), captures(std::move(caps)),
+          parameters(std::move(params)), body(std::move(stmts)) {}
+
+    std::string toString() const override {
+        std::string result = "closure " + interfaceName + " [";
+        for (size_t i = 0; i < captures.size(); ++i) {
+            if (i > 0) result += ", ";
+            result += captures[i];
+        }
+        result += "] (";
+        for (size_t i = 0; i < parameters.size(); ++i) {
+            if (i > 0) result += ", ";
+            result += parameters[i].first + " " + parameters[i].second;
+        }
+        result += ") {\n";
+        for (const auto& stmt : body) {
+            result += "    " + stmt->toString() + "\n";
+        }
+        result += "}";
+        return result;
+    }
+};
+
 class MemberAccess : public Expression {
 public:
     ExpressionPtr object;

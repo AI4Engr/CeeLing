@@ -1,0 +1,49 @@
+//@ expect: accept
+//@ reason: a derived-class instance can be passed to a FUNCTION PARAMETER
+//@ reason: declared as the base type, and virtual dispatch through that
+//@ reason: parameter still resolves to the derived override. This is the
+//@ reason: base-typed-LOCAL case (`Animal a = new Dog(3); a.speak();`,
+//@ reason: already covered by inherit_virtual_dispatch_accepted.clg) extended
+//@ reason: to a base-typed PARAMETER -- confirmed via probe to be a genuinely
+//@ reason: different code path (AstEmitter::emitMovedArg's std::move handling
+//@ reason: for a call argument, not factoryFor's declared-vs-constructed
+//@ reason: split), and load-bearing for any future feature that passes a
+//@ reason: polymorphic value through a function boundary (e.g. closures
+//@ reason: implementing a shared interface).
+//@ run: derived 15
+//
+// Landing this surfaced and fixed a real, general, pre-existing bug (unrelated
+// to parameter-passing itself): any class used as a base, if it ALSO declared
+// its own explicit zero-arg constructor, got a colliding SECOND `T() =
+// default;` synthesized into it by AstEmitter's base-class injection block --
+// a real g++ error ("cannot be overloaded with"). Fixed by
+// AstEmitter::hasUserDefinedDefaultConstructor, which the injection now
+// checks before synthesizing one. `Drawer`'s own explicit `Drawer() { }`
+// below is what exercises this.
+
+class Drawer {
+public:
+    Drawer() { }
+    virtual void call(int x) {
+        std::cout << "base" << std::endl;
+    }
+};
+
+class MyDrawer : public Drawer {
+public:
+    int captured;
+    MyDrawer(int c) { captured = c; }
+    void call(int x) override {
+        std::cout << "derived " << (captured + x) << std::endl;
+    }
+};
+
+void invoke(Drawer d, int arg) {
+    d.call(arg);
+}
+
+int main() {
+    MyDrawer m = new MyDrawer(10);
+    invoke(m, 5);
+    return 0;
+}

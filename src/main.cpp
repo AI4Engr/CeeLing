@@ -3,6 +3,7 @@
 #include "core/generator/dangling_checker.h"
 #include "core/generator/escape_hatch_checker.h"
 #include "core/generator/pairing_checker.h"
+#include "core/generator/closure_desugar.h"
 #include "core/generator/ast_emitter.h"
 #include "core/generator/smart_pointer_analyzer.h"
 #include <iostream>
@@ -290,6 +291,15 @@ int main(int argc, char* argv[]) {
         // happen any earlier (confirmed via probe: a target-class-in-another-
         // file specialization is otherwise wrongly rejected as unknown).
         ASTBuilder::spliceExternalSpecializations(*program);
+
+        // Desugar every closure expression into an ordinary class + `new` call
+        // BEFORE any checker runs -- EscapeHatchChecker (next) hard-rejects any
+        // construct it doesn't recognize, so a raw ClosureExpression that reached
+        // it would be rejected as unknown rather than analyzed as the class it's
+        // about to become. See closure_desugar.h's own doc comment for the full
+        // design (why this needs its own scope-type pass rather than reusing
+        // ASTBuilder's or SmartPointerAnalyzer's, and why it must run exactly here).
+        desugarClosures(*program);
 #else
         throw std::runtime_error("This build was configured without Tree-sitter support. Rebuild with -DWITH_TREE_SITTER=ON.");
 #endif
