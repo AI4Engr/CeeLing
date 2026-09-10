@@ -1,0 +1,38 @@
+//@ expect: accept
+//@ reason: `this` used as a plain function-call ARGUMENT (`useSelf(this)`,
+//@ reason: not `return this;`) is a new capability (Chapter 18 Step 37) --
+//@ reason: previously `this` was only handled in the `return this;` position;
+//@ reason: everywhere else it silently emitted a raw `this` pointer where a
+//@ reason: smart pointer was expected, a generated-C++ compile error (the
+//@ reason: worst failure mode for a compiler promising "if it compiles, it's
+//@ reason: safe" -- neither EscapeHatchChecker nor DanglingChecker rejected
+//@ reason: it at the CeeLing level; g++ was the only thing that ever caught it).
+//@ reason: Safe for the same reason `return this;` already is: every CeeLing
+//@ reason: object is compiler-wrapped in a smart pointer, so passing `this`
+//@ reason: lowers to shared_from_this() -- a genuine additional owning/shared
+//@ reason: reference to the SAME control block, never a raw alias into
+//@ reason: something that could already be destroyed. Requires
+//@ reason: SmartPointerAnalyzer::methodPassesThisAsArgument's new detection
+//@ reason: scan to fire (forcing enable_shared_from_this + a shared
+//@ reason: construction root for Node) -- this fixture's own runtime
+//@ reason: assertion below is what actually proves the whole pipeline works
+//@ reason: end to end, not just that it compiles.
+//@ run: 9
+
+class Node {
+public:
+    int v;
+    Node(int val) { v = val; }
+    int useSelf(Node other) {
+        return other.v;
+    }
+    int chainSelf() {
+        return useSelf(this);
+    }
+};
+
+int main() {
+    Node n = new Node(9);
+    std::cout << n.chainSelf() << std::endl;
+    return 0;
+}

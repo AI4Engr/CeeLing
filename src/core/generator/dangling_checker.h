@@ -178,6 +178,20 @@ private:
     // across branches by mergeBranchStates, so this needs no new BranchState field).
     void invalidateContainerObservers(const Expression* callExpr);
 
+    // Resolve the CeeLing CLASS NAME of `expr`'s static type -- a bare identifier
+    // (local/param/field, via localType_/classFields_) or a CHAINED call
+    // (`a.b()`/`f()`, via functionReturnType_/classMethodReturnType_, recursing
+    // into the call's own receiver). Mirrors
+    // EscapeHatchChecker::resolveObjectType's identical widening and identical
+    // safety argument: every CeeLing object is compiler-wrapped in a smart
+    // pointer, so a method/function's return value is always a live, owning
+    // COPY, never a raw alias into an already-destroyed temporary -- widening
+    // return-type resolution to a call receiver cannot itself introduce a
+    // dangling read. Returns "" for anything unresolved (`new`, literals, an
+    // external/opaque type not in classFields_/classMethodParams_, etc.),
+    // preserving the existing conservative fallback everywhere this is used.
+    std::string resolveClassOfExpr(const Expression* expr) const;
+
     // If `expr` is a call to a known CeeLing function/method whose summary says the
     // return value aliases one of its parameters, return the NAME of the object-local
     // argument passed at that position (empty if not applicable: unknown callee,
@@ -228,6 +242,15 @@ private:
     // via classMethodParams_.
     std::map<std::string, std::vector<std::pair<std::string, std::string>>> functionParams_;
     std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, std::string>>>> classMethodParams_;
+    // Free-function name / (className -> methodName) -> declared return type.
+    // Lets resolveClassOfExpr (see below) resolve a CHAINED receiver
+    // (`a.b().c()`: needs `b()`'s return class before `c()`'s own summary can be
+    // looked up) the same way EscapeHatchChecker::classMethodReturnType_/
+    // freeFunctionReturnType_ do -- kept as this checker's OWN copy rather than
+    // shared with EscapeHatchChecker (which runs as a fully separate pass over
+    // its own class/method tables) to avoid a cross-checker dependency.
+    std::map<std::string, std::string> functionReturnType_;
+    std::map<std::string, std::map<std::string, std::string>> classMethodReturnType_;
 
     // (className, methodName) -> index of the parameter that is a MUTABLE
     // OUT-PARAMETER, not moved into the callee -- populated for a method

@@ -1,0 +1,52 @@
+//@ expect: reject
+//@ reason: the safety-critical companion to chained_method_call_accepted.clg --
+//@ reason: widening EscapeHatchChecker::resolveObjectType to resolve a chained
+//@ reason: call receiver is only safe if DanglingChecker's own summary-alias
+//@ reason: tracking (resolveCallReturnAlias) is widened THE SAME WAY. Before
+//@ reason: this fix, resolveCallReturnAlias required the receiver of
+//@ reason: `recv.method(args)` to be a bare Identifier (`recvId = dynamic_cast
+//@ reason: <const Identifier*>(member->object.get())`); a chained receiver
+//@ reason: made it return {} SILENTLY (not a conservative reject -- a missed
+//@ reason: catch), which would have let `r` below be wrongly registered as a
+//@ reason: fresh, unobserved owner instead of an observer of `x`. Fixed by a
+//@ reason: new resolveClassOfExpr helper (mirrors EscapeHatchChecker's own
+//@ reason: fix) that both resolveCallReturnAlias and resolveObjectType now
+//@ reason: route through, so a chained receiver's alias tracking is exactly
+//@ reason: as strict as a plain receiver's already was.
+//@ reason: `r` here observes `x` via `pick()`'s return-aliases-param summary,
+//@ reason: reached through `factory.makePicker()` (a CHAINED receiver) rather
+//@ reason: than a plain local -- reassigning `x` frees the object `r` still
+//@ reason: points at, so using `r` afterward must dangle exactly like
+//@ reason: summary_return_alias_dangles.clg's own plain-receiver case.
+
+class Node {
+public:
+    int v;
+    Node(int val) { v = val; }
+};
+
+class Picker {
+public:
+    Picker() { }
+    Node pick(Node a, Node b) {
+        return a;
+    }
+};
+
+class PickerFactory {
+public:
+    PickerFactory() { }
+    Picker makePicker() {
+        return new Picker();
+    }
+};
+
+int main() {
+    PickerFactory factory = new PickerFactory();
+    Node x = new Node(1);
+    Node y = new Node(2);
+    Node r = factory.makePicker().pick(x, y);   // r observes x, via a CHAINED receiver
+    x = new Node(3);                             // old object (the one r observes) freed
+    std::cout << r.v << std::endl;               // ERROR: r observes a destroyed object
+    return 0;
+}

@@ -570,6 +570,8 @@ ExpressionPtr ASTBuilder::buildExpression(TSNode node, const std::string& source
     ExpressionPtr result;
     if (strcmp(node_type, "identifier") == 0) {
         result = buildIdentifier(node, source);
+    } else if (strcmp(node_type, "this_expression") == 0) {
+        result = std::make_unique<ThisExpression>();
     } else if (strcmp(node_type, "scoped_identifier") == 0) {
         result = buildScopedIdentifier(node, source);
     } else if (strcmp(node_type, "string_literal") == 0) {
@@ -858,8 +860,16 @@ ExpressionPtr ASTBuilder::buildBinaryExpression(TSNode node, const std::string& 
 }
 
 StatementPtr ASTBuilder::buildReturnStatement(TSNode node, const std::string& source) {
-    // return_statement: "return" expression ";"
-    TSNode expression_node = ts_node_child(node, 1); // Skip "return"
+    // return_statement: "return" optional(expression) ";" -- a bare `return;`
+    // (void early-exit) has NO named child at all (only the unnamed literal
+    // tokens "return"/";"), so ReturnStatement::expression stays null rather
+    // than being built from whatever ts_node_child(node, 1) happened to be
+    // (previously the semicolon token itself when no expression was
+    // written, before the grammar made this slot genuinely optional).
+    if (ts_node_named_child_count(node) == 0) {
+        return std::make_unique<ReturnStatement>(nullptr);
+    }
+    TSNode expression_node = ts_node_named_child(node, 0);
     auto expr = buildExpression(expression_node, source);
     return std::make_unique<ReturnStatement>(std::move(expr));
 }

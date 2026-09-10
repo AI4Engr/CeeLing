@@ -195,6 +195,7 @@ void DanglingChecker::deriveSummaries(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             functionParams_[fn->name] = fn->parameters;
+            functionReturnType_[fn->name] = fn->returnType;
             summaries_[summaryKey("", fn->name)] = deriveSummaryForBody(fn->body, fn->parameters);
             // Dual-register under the qualified name (`YAML::Load`), same
             // reasoning as every other namespaced-declaration dual-
@@ -205,6 +206,7 @@ void DanglingChecker::deriveSummaries(const Program& program) {
             if (!fn->namespaceName.empty()) {
                 const std::string qualified = fn->namespaceName + "::" + fn->name;
                 functionParams_[qualified] = fn->parameters;
+                functionReturnType_[qualified] = fn->returnType;
                 summaries_[summaryKey("", qualified)] = summaries_[summaryKey("", fn->name)];
             }
         }
@@ -215,6 +217,7 @@ void DanglingChecker::deriveSummaries(const Program& program) {
     // keeps the base's summary verbatim -- it is literally the same body.
     for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
         auto& params = classMethodParams_[cls->name];
+        auto& returnTypes = classMethodReturnType_[cls->name];
         if (!cls->baseClass.empty()) {
             if (auto baseIt = classMethodParams_.find(cls->baseClass);
                 baseIt != classMethodParams_.end()) {
@@ -225,6 +228,10 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                         summaries_[summaryKey(cls->name, methodName)] = baseSummary->second;
                     }
                 }
+            }
+            if (auto baseIt = classMethodReturnType_.find(cls->baseClass);
+                baseIt != classMethodReturnType_.end()) {
+                returnTypes = baseIt->second;
             }
         }
         // See AstEmitter::collectClassNames's identical pre-count -- only a
@@ -256,6 +263,7 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                     key = method->name;
                 }
                 params[key] = method->parameters;
+                returnTypes[key] = method->returnType;
                 summaries_[summaryKey(cls->name, key)] =
                     deriveSummaryForBody(method->body, method->parameters);
                 // The PRIMARY generic (typeParameter set) with T used as a
@@ -286,6 +294,7 @@ void DanglingChecker::deriveSummaries(const Program& program) {
         if (!cls->namespaceName.empty()) {
             const std::string qualified = cls->namespaceName + "::" + cls->name;
             classMethodParams_[qualified] = params;
+            classMethodReturnType_[qualified] = returnTypes;
             for (const auto& [methodName, _] : params) {
                 if (auto it = summaries_.find(summaryKey(cls->name, methodName)); it != summaries_.end()) {
                     summaries_[summaryKey(qualified, methodName)] = it->second;
@@ -365,6 +374,37 @@ std::string DanglingChecker::resolveObservedOwner(const Expression* expr) const 
     return asContainerSubscript(expr);
 }
 
+std::string DanglingChecker::resolveClassOfExpr(const Expression* expr) const {
+    if (expr == nullptr) return {};
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        auto typeIt = localType_.find(id->name);
+        if (typeIt == localType_.end()) return {};
+        return classNames_.count(typeIt->second) ? typeIt->second : std::string{};
+    }
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        if (!call->callee) {
+            auto fnIt = functionReturnType_.find(call->function_name);
+            if (fnIt == functionReturnType_.end()) return {};
+            return classNames_.count(fnIt->second) ? fnIt->second : std::string{};
+        }
+        auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+        if (member == nullptr) return {};
+        std::string recvClass = resolveClassOfExpr(member->object.get());
+        if (recvClass.empty()) return {};
+        auto clsIt = classMethodReturnType_.find(recvClass);
+        if (clsIt == classMethodReturnType_.end()) return {};
+        auto methodIt = clsIt->second.find(member->member);
+        if (methodIt == clsIt->second.end()) return {};
+        const std::string& returnType = methodIt->second;
+        return classNames_.count(returnType) ? returnType : std::string{};
+    }
+    // MemberAccess (bare field chains), `new`, literals, etc: not resolved by
+    // this lightweight pass -- same pre-existing conservative fallback every
+    // caller of this function already relies on (a field's declared TYPE is
+    // not tracked anywhere in this checker, only its NAME via classFields_).
+    return {};
+}
+
 std::string DanglingChecker::resolveCallReturnAlias(const Expression* expr) const {
     auto call = dynamic_cast<const FunctionCall*>(expr);
     if (call == nullptr) return {};
@@ -374,14 +414,14 @@ std::string DanglingChecker::resolveCallReturnAlias(const Expression* expr) cons
 
     if (call->callee) {
         // `recv.method(args)`: resolve the receiver's static class to find the
-        // right class's method summary.
+        // right class's method summary. resolveClassOfExpr handles both a bare
+        // identifier receiver AND a CHAINED call receiver (`a.b().c(...)`) --
+        // see its own doc comment for why widening to a call receiver is safe.
         auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
         if (member == nullptr) return {};
-        auto recvId = dynamic_cast<const Identifier*>(member->object.get());
-        if (recvId == nullptr) return {};
-        auto typeIt = localType_.find(recvId->name);
-        if (typeIt == localType_.end()) return {};
-        auto clsIt = classMethodParams_.find(typeIt->second);
+        std::string recvClass = resolveClassOfExpr(member->object.get());
+        if (recvClass.empty()) return {};
+        auto clsIt = classMethodParams_.find(recvClass);
         if (clsIt == classMethodParams_.end()) return {};
         // A call carrying a type argument resolves to the specialization's own
         // key -- see EscapeHatchChecker::isKnownCallable's identical reasoning.
@@ -398,7 +438,7 @@ std::string DanglingChecker::resolveCallReturnAlias(const Expression* expr) cons
         }
         if (paramIt == clsIt->second.end()) return {};
         params = &paramIt->second;
-        auto sumIt = summaries_.find(summaryKey(typeIt->second, methodKey));
+        auto sumIt = summaries_.find(summaryKey(recvClass, methodKey));
         if (sumIt == summaries_.end()) return {};
         summary = &sumIt->second;
     } else {

@@ -167,12 +167,12 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
     // partially constructing a broken class.
     std::vector<std::pair<std::string, std::string>> resolvedCaptures;  // (type, name)
     for (const auto& name : closure.captures) {
-        if (name == "this") {
-            reject("closure-captures-this", &closure, "closures may not capture `this`",
-                   "`this` is a borrow of the enclosing object, not an owned value -- "
-                   "capturing it would need by-reference semantics, which closures do not "
-                   "support (see this file's own doc comment: by-value capture only)");
-        }
+        // `[this]` cannot reach here anymore: `this` is now a reserved keyword
+        // (grammar.js's `this_expression`), and `capture_list` still parses its
+        // entries as plain `$.identifier` tokens -- `this` no longer lexes as
+        // one, so `[this]` is a PARSE ERROR before this pass ever runs, not a
+        // semantic rejection. See tests/safety/closure_captures_this_rejected.clg
+        // for the fixture proving this (still correctly rejected, just earlier).
         const ScopeEntry* entry = scope.find(name);
         if (entry == nullptr) {
             reject("closure-unknown-capture", &closure,

@@ -3971,3 +3971,139 @@ immediate parent's own parameter, the same rule applied recursively).
 design that motivated this investigation is a separate, not-yet-started
 follow-up; this change only makes nesting possible, it does not design or
 build that consumer.
+
+## Step 36 — Chained method calls (`a.b().c()`): a real gap found by comparing CeeLing's own idiom against real ImGui/egui's
+
+Prompted by a design discussion (not a bug report): does CeeLing support the
+`if (ui.button("Save").clicked())`-style inline chaining real egui/ImGui code
+is normally written in? `imgui-cling`'s own widgets already returned a
+`Response` struct and always bound it to a named local first
+(`Response r = button(...); if (r.clicked) {...}`) — never confirmed whether
+that was a deliberate choice or a real language limitation.
+
+### The investigation, done as probes before touching any source
+
+1. **One-level "call, then field access" already worked**: `ui.button("Save").clicked`
+   (a method call immediately followed by reading a FIELD on its return
+   value, no second method call) transpiled, compiled, and ran correctly
+   with zero changes needed — `member_access`'s grammar rule
+   (`tree-sitter-ceeling/grammar.js`) already allows `$.function_call` as its
+   left operand, and nothing downstream rejected it.
+2. **Two-level "call, then ANOTHER method call" failed**:
+   `outer.getInner().button("Save")` (i.e. `expr.method()` where `expr`
+   is itself a call, not a bare identifier) hit
+   `error[semantic/forbidden-construct]: call to unknown function/method`.
+   Confirmed via reading `EscapeHatchChecker::resolveObjectType`
+   (`escape_hatch_checker.cpp`) that its own doc comment said exactly why:
+   *"Calls, `new`, literals, etc: not resolved by this lightweight pass"* —
+   only a bare `Identifier` or a `MemberAccess` chain of FIELDS was ever
+   resolved to a class; a `FunctionCall` receiver always returned `{}`,
+   which `isKnownCallable` then treats as an unresolvable, thus unknown,
+   thus rejected call. A real, narrow, previously-undocumented gap — not an
+   architectural wall (the grammar already parses the shape fine).
+
+### The safety question this raises, checked before writing any fix
+
+Widening `resolveObjectType` to resolve a call receiver's return type sounds
+like it could open threat #8 (dangling temporary bound to `const&`): in
+plain C++, `getInner()`'s receiver `makeHolder()` produces a temporary that
+dies at the end of the full expression — if `getInner()` returned a raw
+reference into it, `i` would dangle immediately. Checked via a standalone
+probe (a hand-written `.cpp` with tracing destructors, not a `.clg` file):
+`Holder`'s destructor logs BEFORE `i->v` is read, proving the `Holder`
+temporary really does die mid-expression — but `i` (an `Inner`) is still
+safely readable afterward, because `getInner()`'s declared return type
+(`Inner`, not `ref Inner` — `ref` return types don't exist in CeeLing) makes
+CeeLing generate `std::shared_ptr<Inner> Holder::getInner() { return
+this->inner; }` — a COPY of the shared_ptr, not a raw alias. The copy's own
+refcount keeps `Inner` alive independent of `Holder`'s lifetime. This is the
+general reason threat #8 doesn't apply to CeeLing's own classes at all:
+every CeeLing object is compiler-wrapped in a smart pointer, so "return an
+object" always means "return an owning/shared handle," never a raw
+reference into the callee's own storage. Threat #8 is only a live concern
+for classes CeeLing does NOT compile itself (Eigen, matched by
+`isKnownExternalClassType`) — those keep plain C++ value semantics on
+purpose (an expression-template return truly can dangle, per the existing
+`auto` vs concrete-type provenance rule, #6, still open). **Deliberately did
+NOT widen `resolveDeclaredType`** (the function `isKnownCallable`'s
+external-class branch uses, a DIFFERENT function from `resolveObjectType`)
+— so a chained call into an external/opaque class's borrowing method
+(`getMatrix().block(...)`) remains exactly as rejected as before this
+change. Confirmed via probe: `(new Picker()).pick(...)` (a `NewExpression`
+receiver, a different unresolved shape from a chained call) is also
+untouched by this fix and stays correctly rejected.
+
+### The two-checker requirement: found by asking "what if I only fix one?"
+
+`EscapeHatchChecker::resolveObjectType` is not the only place with this
+exact shape. `DanglingChecker::resolveCallReturnAlias` — the function that
+detects "this call's return value ALIASES one of its arguments," the
+mechanism `summary_return_alias_dangles.clg` exists to test — had the
+IDENTICAL restriction: `auto recvId = dynamic_cast<const Identifier*>
+(member->object.get()); if (recvId == nullptr) return {};`. Probed this
+directly: `(new Picker()).pick(x, y)` (attempting to reach this exact
+path with a receiver `EscapeHatchChecker` didn't yet allow) confirmed the
+ONLY thing currently preventing the gap from being exploitable was
+`EscapeHatchChecker`'s own rejection running first. Had `EscapeHatchChecker`
+been widened alone, `factory.makePicker().pick(x, y)` would have passed the
+escape-hatch gate while `DanglingChecker` SILENTLY skipped alias tracking
+(returning `{}`, not a conservative reject) — `r` would have been wrongly
+registered as a fresh, unobserved owner instead of an observer of `x`,
+reopening exactly the dangling scenario `summary_return_alias_dangles.clg`
+was written to close, just reachable through a chained receiver instead of
+a plain one. Both checkers needed the same fix, applied symmetrically.
+
+### The fix: a return-type table in each checker, plus one recursive resolver each
+
+**`EscapeHatchChecker`**: added `classMethodReturnType_` (className ->
+methodName -> declared return type) and `freeFunctionReturnType_`
+(function name -> declared return type), populated in the SAME base-first
+loops that already build `classMethods_`/`knownFreeFunctions_` (one extra
+line each: `returnTypes[key] = method->returnType;` /
+`freeFunctionReturnType_[fn->name] = fn->returnType;`, inheriting down the
+class hierarchy the same way `classMethods_` already does). Added a
+`FunctionCall` branch to `resolveObjectType`: for a plain `f()`, look up
+`freeFunctionReturnType_`; for `recv.method()`, recursively resolve
+`recv`'s own class first (so `a.b().c().d()` — any depth — falls out of
+plain recursion, not special-cased per level), then look up
+`classMethodReturnType_[recvClass][method]`. Either way, the resolved
+return-type string is only accepted if `classNames_.count(...)` — an
+external/opaque type, or a type this checker never saw a `ClassDeclaration`
+for, still resolves to `{}` and falls through to the existing "unknown ->
+reject" behavior, preserving the default-reject posture exactly.
+
+**`DanglingChecker`**: same shape, independently (this checker does not
+share tables with `EscapeHatchChecker` — they are two separate passes over
+their own state). Added `functionReturnType_`/`classMethodReturnType_`,
+populated in `deriveSummaries`'s existing collection loops. Extracted a new
+`resolveClassOfExpr` helper (previously this logic was inlined at the top
+of `resolveCallReturnAlias` and stopped at a bare `Identifier`) that both
+`resolveCallReturnAlias`'s method-call branch and (via the same function)
+any future caller can use — handles `Identifier` (via the pre-existing
+`localType_`), `FunctionCall` (new, recursing into its own receiver exactly
+like `EscapeHatchChecker`'s version), and conservatively returns `{}` for
+anything else (a bare `MemberAccess` field chain is NOT resolved here,
+since this checker's own `classFields_` only tracks field NAMES, not
+declared TYPES — a separate, pre-existing gap this fix does not touch).
+`resolveBorrowingMethodReceiver` (the Eigen-style external-class borrow
+path) was deliberately left UNCHANGED: it needs to return a stable
+IDENTIFIER NAME to watch for a later reassignment, which a chained
+receiver's temporary never has, and it is only ever reached through
+`resolveDeclaredType`, which (see above) was deliberately not widened —
+so this path stays fully gated exactly as before.
+
+### Verification
+
+`tests/safety/chained_method_call_accepted.clg` (`//@ run: 7`): the positive
+control — `makeHolder().getInner()` (free-function-call-then-method-call),
+transpiles, compiles, and prints the expected value, proving the widened
+resolution produces correct generated C++, not just a passing type check.
+`tests/safety/chained_method_call_dangling_rejected.clg`: the safety-critical
+negative control — `factory.makePicker().pick(x, y)` (method-call-then-
+method-call) where `pick`'s summary aliases a parameter; `x` is reassigned
+afterward, and the fixture must still be rejected exactly like
+`summary_return_alias_dangles.clg`'s plain-receiver original. Both new
+fixtures pass; full safety suite 121/121 (`--strict`, up from 119), `ctest`
+13/13 — both re-run after the fix, not just the two new fixtures in
+isolation, since this touches a resolution path shared by every existing
+class-method-call fixture.

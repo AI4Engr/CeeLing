@@ -411,6 +411,95 @@ void collectReturnExpressions(const std::vector<StatementPtr>& body,
         }
     }
 }
+
+// True if `this` (grammar.js's reserved `this_expression`, ast.h's
+// ThisExpression) appears ANYWHERE in `body` as a call argument, a
+// VariableDeclaration RHS, or an AssignmentStatement RHS -- the three
+// positions AstEmitter::emitMovedArg lowers to shared_from_this() (see
+// Chapter 18 Step 37; `return this;` is deliberately NOT one of these, since
+// it is already covered by the separate anyReturnsThis scan above, which
+// only looks at RETURN expressions).
+//
+// A call argument is checked at ANY nesting depth (`wrap(this)` inside a
+// bigger expression, inside an if/while/for/try body) -- not just when the
+// call is the top-level statement -- because emitMovedArg fires wherever
+// AstEmitter's own expression emission encounters a FunctionCall, at
+// whatever depth. Each argument is checked as being DIRECTLY `this` (not
+// merely containing it somewhere further inside), matching emitMovedArg's
+// own exact-shape check.
+bool methodPassesThisAsArgument(const std::vector<StatementPtr>& body) {
+    std::function<bool(const Expression*)> exprHasThisArg = [&](const Expression* expr) -> bool {
+        if (expr == nullptr) return false;
+        if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+            for (const auto& arg : call->arguments) {
+                if (dynamic_cast<const ThisExpression*>(arg.get()) != nullptr) return true;
+            }
+            for (const auto& arg : call->arguments) {
+                if (exprHasThisArg(arg.get())) return true;
+            }
+            return call->callee && exprHasThisArg(call->callee.get());
+        }
+        if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
+            for (const auto& arg : neww->arguments) {
+                if (dynamic_cast<const ThisExpression*>(arg.get()) != nullptr) return true;
+                if (exprHasThisArg(arg.get())) return true;
+            }
+            return false;
+        }
+        if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+            return exprHasThisArg(bin->left.get()) || exprHasThisArg(bin->right.get());
+        }
+        if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+            return exprHasThisArg(un->operand.get());
+        }
+        if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+            return exprHasThisArg(member->object.get());
+        }
+        if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+            return exprHasThisArg(sub->object.get()) || exprHasThisArg(sub->index.get());
+        }
+        return false;
+    };
+
+    std::function<bool(const std::vector<StatementPtr>&)> walkBody =
+        [&](const std::vector<StatementPtr>& stmts) -> bool {
+        for (const auto& stmtPtr : stmts) {
+            const Statement* stmt = stmtPtr.get();
+            if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+                if (dynamic_cast<const ThisExpression*>(decl->expression.get()) != nullptr) return true;
+                if (exprHasThisArg(decl->expression.get())) return true;
+            } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+                if (dynamic_cast<const ThisExpression*>(assign->expression.get()) != nullptr) return true;
+                if (exprHasThisArg(assign->expression.get())) return true;
+            } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+                if (exprHasThisArg(exprStmt->expression.get())) return true;
+            } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+                // NOT checking whether the return's own top-level expression
+                // IS `this` directly (`return this;`) -- that shape is the
+                // separate anyReturnsThis scan's job, above. This only needs
+                // to catch `this` NESTED inside a larger returned expression
+                // (`return r.readVal(this);`), which anyReturnsThis's own
+                // narrower `dynamic_cast<ThisExpression>` check on the whole
+                // return expression would miss entirely.
+                if (exprHasThisArg(ret->expression.get())) return true;
+            } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
+                if (exprHasThisArg(ifs->condition.get())) return true;
+                if (walkBody(ifs->body) || walkBody(ifs->elseBody)) return true;
+            } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+                if (exprHasThisArg(whiles->condition.get())) return true;
+                if (walkBody(whiles->body)) return true;
+            } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+                if (exprHasThisArg(fors->container.get())) return true;
+                if (walkBody(fors->body)) return true;
+            } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
+                if (walkBody(trys->body) || walkBody(trys->catchBody)) return true;
+            }
+        }
+        return false;
+    };
+
+    return walkBody(body);
+}
 } // namespace
 
 namespace {
@@ -446,14 +535,13 @@ std::optional<std::pair<std::string, std::string>> resolveInnerFieldChain(
         // existing conservatism elsewhere), then look up `member->member`
         // in THAT class's field map.
         std::string receiverClass;
-        if (auto recv = dynamic_cast<const Identifier*>(member->object.get())) {
-            receiverClass = (recv->name == "this") ? enclosingClass : std::string{};
-            if (receiverClass.empty()) {
-                auto clsIt = classMembersByClass.find(enclosingClass);
-                if (clsIt != classMembersByClass.end()) {
-                    if (auto fIt = clsIt->second.find(recv->name); fIt != clsIt->second.end()) {
-                        receiverClass = fIt->second;
-                    }
+        if (dynamic_cast<const ThisExpression*>(member->object.get()) != nullptr) {
+            receiverClass = enclosingClass;
+        } else if (auto recv = dynamic_cast<const Identifier*>(member->object.get())) {
+            auto clsIt = classMembersByClass.find(enclosingClass);
+            if (clsIt != classMembersByClass.end()) {
+                if (auto fIt = clsIt->second.find(recv->name); fIt != clsIt->second.end()) {
+                    receiverClass = fIt->second;
                 }
             }
         } else if (auto innerMember = dynamic_cast<const MemberAccess*>(member->object.get())) {
@@ -476,14 +564,13 @@ std::optional<std::pair<std::string, std::string>> resolveInnerFieldChain(
         // Resolve the receiver chain's class, then require the called method
         // to already be classified alias-returning ON THAT CLASS.
         std::string receiverClass;
-        if (auto recv = dynamic_cast<const Identifier*>(callMember->object.get())) {
-            receiverClass = (recv->name == "this") ? enclosingClass : std::string{};
-            if (receiverClass.empty()) {
-                auto clsIt = classMembersByClass.find(enclosingClass);
-                if (clsIt != classMembersByClass.end()) {
-                    if (auto fIt = clsIt->second.find(recv->name); fIt != clsIt->second.end()) {
-                        receiverClass = fIt->second;
-                    }
+        if (dynamic_cast<const ThisExpression*>(callMember->object.get()) != nullptr) {
+            receiverClass = enclosingClass;
+        } else if (auto recv = dynamic_cast<const Identifier*>(callMember->object.get())) {
+            auto clsIt = classMembersByClass.find(enclosingClass);
+            if (clsIt != classMembersByClass.end()) {
+                if (auto fIt = clsIt->second.find(recv->name); fIt != clsIt->second.end()) {
+                    receiverClass = fIt->second;
                 }
             }
         } else {
@@ -593,8 +680,8 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                                            // not-yet-classified method (retry later)
                 std::set<std::string> fieldsThisMethod;
                 for (const Expression* expr : returns) {
+                    if (dynamic_cast<const ThisExpression*>(expr) != nullptr) continue;  // case (a)
                     if (auto id = dynamic_cast<const Identifier*>(expr)) {
-                        if (id->name == "this") continue;  // case (a)
                         auto fIt = fieldTypes.find(id->name);
                         if (fIt != fieldTypes.end() && classNames.count(fIt->second) > 0) {
                             fieldsThisMethod.insert(id->name);  // case (b), bare
@@ -604,11 +691,9 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                         break;
                     }
                     if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
-                        // `this->field` -- CeeLing has no explicit `this.x` source
-                        // syntax, but the AST can still carry it if ever produced;
-                        // treat identically to the bare form.
-                        if (auto recv = dynamic_cast<const Identifier*>(member->object.get());
-                            recv != nullptr && recv->name == "this") {
+                        // `this->field` / `this.field` (a bare-field-access, not
+                        // itself the whole return value -- that's case (a) above).
+                        if (dynamic_cast<const ThisExpression*>(member->object.get()) != nullptr) {
                             auto fIt = fieldTypes.find(member->member);
                             if (fIt != fieldTypes.end() && classNames.count(fIt->second) > 0) {
                                 fieldsThisMethod.insert(member->member);  // case (b)
@@ -786,8 +871,7 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                     std::vector<const Expression*> returns;
                     collectReturnExpressions(method->body, returns);
                     for (const Expression* expr : returns) {
-                        if (auto id = dynamic_cast<const Identifier*>(expr);
-                            id != nullptr && id->name == "this") {
+                        if (dynamic_cast<const ThisExpression*>(expr) != nullptr) {
                             return true;
                         }
                     }
@@ -801,6 +885,24 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                 // mechanism classesNeedingSharedRoots already provides for
                 // back-reference/bidirectional cases, so ordinary `new ClassName()`
                 // sites need no changes to pick up make_shared.
+                classesNeedingSharedFromThis_.insert(cls->name);
+                classesNeedingSharedRoots.insert(cls->name);
+            }
+        }
+        // A SEPARATE scan, over EVERY method (not just ones already classified
+        // `aliasReturning` above -- passing `this` as an argument has nothing to
+        // do with a method's OWN return value, so it must not be gated on that
+        // classification): does any method pass `this` as a call argument, or
+        // store it via a bare `Node y = this;`/`y = this;`? Chapter 18 Step 37 --
+        // AstEmitter::emitMovedArg lowers any of those three shapes to
+        // shared_from_this(), which needs the SAME enable_shared_from_this +
+        // forced-shared-root machinery `return this;` above already triggers.
+        // Skipping this scan would leave a `this`-passing class with NO base
+        // class inheriting enable_shared_from_this at all (a "not a member"
+        // compile error) or, worse, an object not actually shared_ptr-owned
+        // (shared_from_this()'s own std::bad_weak_ptr throw at runtime).
+        for (const auto* method : methods) {
+            if (methodPassesThisAsArgument(method->body)) {
                 classesNeedingSharedFromThis_.insert(cls->name);
                 classesNeedingSharedRoots.insert(cls->name);
             }
@@ -962,8 +1064,13 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
             // comment).
             const std::string methodScope = cls->name + "::" + method->name;
             for (const Expression* expr : returns) {
+                // `return this;` is never a SHARED-local return in this sense (it's
+                // handled by the separate anyReturnsThis/classesNeedingSharedFromThis_
+                // mechanism above) -- `this` is its own ThisExpression node now, so
+                // dynamic_cast<Identifier> already returns nullptr for it, same as
+                // any other non-Identifier return shape.
                 auto id = dynamic_cast<const Identifier*>(expr);
-                if (id == nullptr || id->name == "this") continue;
+                if (id == nullptr) continue;
                 if (getPointerTypeForVariableInScope(methodScope, id->name) == PointerType::SHARED) {
                     anyLocalIsShared = true;
                     break;

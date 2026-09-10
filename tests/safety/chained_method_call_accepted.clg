@@ -1,0 +1,43 @@
+//@ expect: accept
+//@ reason: a CHAINED method call receiver (`a.b().c()`, or `f().c()`) used to
+//@ reason: be rejected outright by EscapeHatchChecker's default-reject-unknown-
+//@ reason: calls rule: resolveObjectType only ever resolved a bare Identifier
+//@ reason: or a field-of-a-known-class MemberAccess, never a FunctionCall --
+//@ reason: so `.c()`'s own receiver type could never be determined and the
+//@ reason: call was treated as unknown. Fixed by widening resolveObjectType to
+//@ reason: also resolve a call receiver, via new classMethodReturnType_/
+//@ reason: freeFunctionReturnType_ tables (populated alongside the existing
+//@ reason: classMethods_/knownFreeFunctions_ collection). Safe to widen:
+//@ reason: every CeeLing object is compiler-wrapped in a smart pointer, so a
+//@ reason: method's return value is always a live, owning COPY -- confirmed
+//@ reason: via a standalone probe (destructor-order trace) that a chained
+//@ reason: call's own intermediate temporary (Holder here) can die at the end
+//@ reason: of the full expression while the value returned from a method
+//@ reason: called on it (Inner, via a shared_ptr copy) stays alive.
+//@ run: 7
+
+class Inner {
+public:
+    int v;
+    Inner(int val) { v = val; }
+};
+
+class Holder {
+public:
+    Inner inner;
+    Holder(int val) { inner = new Inner(val); }
+    Inner getInner() { return inner; }
+};
+
+Holder makeHolder() {
+    return new Holder(7);
+}
+
+int main() {
+    // `makeHolder()` (a free-function call) is the first link; `.getInner()`
+    // is called on ITS return value, not on a named local -- this exact shape
+    // (free-function-call-then-method-call) was rejected before this fix.
+    Inner i = makeHolder().getInner();
+    std::cout << i.v << std::endl;
+    return 0;
+}

@@ -58,6 +58,15 @@ public:
 
 private:
     void collectClassNames(const Program& program);
+    // Every EXTERNAL class name (declared by a merged `#include "*.clh"`, not
+    // by `program`'s own non-external statements) that appears in a field,
+    // parameter, or return-type position across `program`'s own declarations
+    // -- used by emitHeader to forward-declare (`class X;`) instead of
+    // requiring the corresponding header to have already been fully
+    // `#include`d. Only classes qualify (never value-type structs, which
+    // need their full definition even for a declaration-only header, since a
+    // struct field/return is embedded by value, not smart-pointer-wrapped).
+    std::set<std::string> collectForwardDeclarableClasses(const Program& program) const;
     bool isClassType(const std::string& type) const;
     // A value-type class (see SmartPointerAnalyzer::isValueTypeClass) -- never
     // wrapped in a smart pointer, accessed via `.` not `->`, constructed as a

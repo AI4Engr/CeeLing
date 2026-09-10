@@ -73,6 +73,16 @@ private:
     void checkStatement(const Statement* stmt);
     void checkExpression(const Expression* expr);
 
+    // If `expr` is DIRECTLY the bare Identifier `this` (not merely containing
+    // `this` somewhere inside a larger expression -- e.g. NOT `this.foo()`'s
+    // receiver) and we're currently inside a constructor, record a rejection
+    // at `anchor`'s source location. Shared by the three positions where
+    // AstEmitter::emitMovedArg would otherwise lower a bare `this` to
+    // `shared_from_this()`: a call argument, a VariableDeclaration RHS, and an
+    // AssignmentStatement RHS -- see checkExpression's FunctionCall branch and
+    // checkStatement's VariableDeclaration/AssignmentStatement branches.
+    void rejectThisEscapeInConstructor(const Expression* expr, const ASTNode* anchor);
+
     // Resolve the CeeLing class name of `expr`, or "" if it isn't a known object type
     // (unresolved shapes are treated as unknown, not flagged -- this check only needs
     // the direct, common receiver shapes, not full type inference).
@@ -86,9 +96,23 @@ private:
     std::set<std::string> classesWithOwnGet_;
     // Free-function names declared at the top level.
     std::set<std::string> knownFreeFunctions_;
+    // Free-function name -> declared return type. Same purpose as
+    // classMethodReturnType_, for a chained call whose FIRST link is a plain
+    // `f()` call rather than a `recv.method()` call (e.g. `makeHolder().getInner()`).
+    std::map<std::string, std::string> freeFunctionReturnType_;
     // className -> set of method names declared on that class (constructors excluded
     // -- they are never called by name, only via `new T(...)`, a distinct AST node).
     std::map<std::string, std::set<std::string>> classMethods_;
+    // className -> (methodName -> declared return type). Populated alongside
+    // classMethods_ in the same base-first loop (inherited the same way). Lets
+    // resolveObjectType resolve a CHAINED call receiver (`a.b().c()`) by looking
+    // up what `b()` returns instead of giving up the moment the receiver isn't a
+    // bare Identifier -- see resolveObjectType's own comment for why this was
+    // previously "not resolved by this lightweight pass" and why it's safe to
+    // widen now (CeeLing objects are always smart-pointer-wrapped, so a method's
+    // return value is a live reference-counted/owning copy, never a dangling
+    // alias into a temporary that's already been destroyed).
+    std::map<std::string, std::map<std::string, std::string>> classMethodReturnType_;
     // "Class::as<int>"-style key (className + "::" + specializationKey) -> every
     // arity (parameter count) a specialization under that key is actually
     // declared with. ALWAYS populated for every specialization (not just ones

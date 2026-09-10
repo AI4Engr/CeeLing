@@ -1,0 +1,39 @@
+//@ expect: accept
+//@ reason: the positive control for the whole feature's safety argument
+//@ reason: (Chapter 18 Step 37): `this` passed into another object's method
+//@ reason: and stored into a plain OWNING field is genuine shared
+//@ reason: co-ownership, not a borrow -- CeeLing has no non-owning reference
+//@ reason: type a field could hold instead (`ref` fields are banned by
+//@ reason: construction, ref_field_rejected.clg), so a stored `this` can
+//@ reason: only ever land in a shared_ptr field, exactly like
+//@ reason: field_stores_owner_accepted.clg's already-blessed "ordinary
+//@ reason: parameter storage" pattern. Proven at RUNTIME, not just by
+//@ reason: compiling: `a` is REASSIGNED to a brand-new Node after
+//@ reason: `a.registerWith(b)` runs, and `b.other` -- which holds the
+//@ reason: shared_from_this() alias `a` passed into it -- must still read
+//@ reason: the ORIGINAL Node's value (1), proving the object `b.other`
+//@ reason: observes was kept alive by real shared ownership, independent of
+//@ reason: `a`'s own later reassignment.
+//@ run: 1
+
+class Node {
+public:
+    int v;
+    Node other;
+    Node(int val) { v = val; }
+    void rememberMe(Node n) {
+        other = n;
+    }
+    void registerWith(Node partner) {
+        partner.rememberMe(this);
+    }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    a.registerWith(b);
+    a = new Node(99);
+    std::cout << b.other.v << std::endl;
+    return 0;
+}

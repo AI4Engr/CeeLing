@@ -48,6 +48,21 @@ MatrixXd e = A + B;  // e EVALUATES to an owned copy (safe) — break provenance
 Same RHS, different provenance — the analyzer keys on whether the LHS is
 `auto` / an expression type vs. a concrete value type.
 
+**Resolving the receiver of a CHAINED call.** A summary lookup needs to know the
+receiver's class (`recv.method(...)` — which class's `method` summary applies?).
+This resolution recurses through a chained receiver that is itself a call
+(`a.b().c(...)`: find `b`'s return class first, then look up `c`'s summary on
+it), not just a bare local — any depth, since it's a plain recursive walk, not
+a per-level special case. This is safe specifically because CeeLing's own
+objects are always compiler-managed smart pointers: a method's return value is
+a live, owning/shared COPY, never a raw alias into a temporary that could
+already be gone by the time the outer call runs. The one place this receiver
+resolution deliberately does NOT reach is a THIRD-PARTY type's own borrowing
+method chained onto another view (`a.block(...).transpose()`) — Eigen's views
+keep real C++ value/reference semantics on purpose (that's the point of
+tracking them at all, Chapter 16), so a chained Eigen view is a genuinely
+harder, still-open provenance question, not closed by this general mechanism.
+
 ### C. Death events + use-site check
 
 An owner "dies" on:

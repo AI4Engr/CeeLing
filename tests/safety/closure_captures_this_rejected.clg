@@ -4,10 +4,18 @@
 //@ reason: whatever holds the current instance), so capturing it would need
 //@ reason: by-reference semantics, which this feature explicitly does not
 //@ reason: support (by-value capture only, a binding project-owner decision).
-//@ reason: Rejected explicitly by name rather than falling through to the
-//@ reason: unknown-capture check, since `this` IS technically "in scope" in
-//@ reason: an ordinary sense and deserves a message explaining WHY it's
-//@ reason: different from an ordinary local, not just "not found".
+//@ reason: UPDATE (Chapter 18 Step 37): `this` is now a reserved grammar
+//@ reason: keyword (`this_expression`), not an ordinary identifier -- and
+//@ reason: `capture_list`'s own grammar rule parses its entries as plain
+//@ reason: `$.identifier` tokens, so `this` no longer LEXES as one at all.
+//@ reason: `[this]` is therefore now a PARSE ERROR, caught before
+//@ reason: closure_desugar.cpp ever runs, not the semantic
+//@ reason: `closure-captures-this` rejection this fixture originally tested
+//@ reason: (that check's own call site was removed as dead code once this
+//@ reason: became unreachable). Kept as a fixture since the VERDICT (reject)
+//@ reason: is still exactly what a real user should experience -- only the
+//@ reason: mechanism/error message changed, which run_safety_tests.sh's
+//@ reason: exit-code-only pass/fail check does not distinguish.
 
 class Callback {
 public:

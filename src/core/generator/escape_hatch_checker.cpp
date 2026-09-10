@@ -9,7 +9,9 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
     classNames_.clear();
     classFields_.clear();
     knownFreeFunctions_.clear();
+    freeFunctionReturnType_.clear();
     classMethods_.clear();
+    classMethodReturnType_.clear();
     classSpecializationArities_.clear();
     collectClasses(program);
     collectCallables(program);
@@ -80,12 +82,14 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             knownFreeFunctions_.insert(fn->name);
+            freeFunctionReturnType_[fn->name] = fn->returnType;
             // Dual-register under the qualified name (`YAML::Load`) -- a call
             // site inside a DIFFERENT namespace (or at global scope) spells it
             // qualified, same reasoning as ClassDeclaration's identical
             // dual-registration for `YAML::Node`.
             if (!fn->namespaceName.empty()) {
                 knownFreeFunctions_.insert(fn->namespaceName + "::" + fn->name);
+                freeFunctionReturnType_[fn->namespaceName + "::" + fn->name] = fn->returnType;
             }
         }
     }
@@ -95,9 +99,14 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
     for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
         auto& methods = classMethods_[cls->name];
         auto& virtuals = classVirtualMethods_[cls->name];
+        auto& returnTypes = classMethodReturnType_[cls->name];
         if (!cls->baseClass.empty()) {
             if (auto baseIt = classMethods_.find(cls->baseClass); baseIt != classMethods_.end()) {
                 methods = baseIt->second;
+            }
+            if (auto baseIt = classMethodReturnType_.find(cls->baseClass);
+                baseIt != classMethodReturnType_.end()) {
+                returnTypes = baseIt->second;
             }
             // A method stays virtual all the way down the chain once any ancestor
             // declared it so -- that's exactly what makes calling it from a
@@ -137,6 +146,7 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
                     ? method->name
                     : specializationKey(method->name, method->specializationArg);
                 methods.insert(key);
+                returnTypes[key] = method->returnType;
                 if (method->isVirtual || method->isOverride) {
                     virtuals.insert(key);
                 }
@@ -337,7 +347,44 @@ std::string EscapeHatchChecker::resolveObjectType(const Expression* expr) const 
         }
         return {};
     }
-    // Calls, `new`, literals, etc: not resolved by this lightweight pass.
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        // A CHAINED receiver (`a.b().c()`: resolving `a.b()`'s own class here so
+        // `.c()` can be checked against it). Only `recv.method(...)` calls are
+        // resolved -- a bare `f()` free-function call has no per-function return
+        // CLASS tracked anywhere in this checker (only classMethodReturnType_
+        // exists, keyed by owning class), so it stays unresolved, same
+        // conservative "unknown shape -> {}" fallback every other unhandled case
+        // here already uses.
+        //
+        // Safe to widen resolution to a call receiver (previously always {}):
+        // every CeeLing object is compiler-wrapped in a smart pointer, so a
+        // method's return value is always a live reference-counted/owning COPY,
+        // never a raw alias into a temporary that could already be destroyed --
+        // confirmed via probe (chained call on a temporary Holder: the Holder
+        // destructs at end of the full expression, but the returned shared_ptr
+        // keeps the pointee alive, exactly like `Node r = pick(x, y);` already
+        // does for free functions). This only widens what CAN be resolved to a
+        // known class; an unresolvable receiver still falls through to {},
+        // preserving the default-reject posture for everything genuinely unknown.
+        if (!call->callee) {
+            // A plain `f()` call -- the first link of a chain can be a free
+            // function too (e.g. `makeHolder().getInner()`).
+            auto fnIt = freeFunctionReturnType_.find(call->function_name);
+            if (fnIt == freeFunctionReturnType_.end()) return {};
+            return classNames_.count(fnIt->second) ? fnIt->second : std::string{};
+        }
+        auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+        if (member == nullptr) return {};
+        std::string recvClass = resolveObjectType(member->object.get());
+        if (recvClass.empty()) return {};
+        auto clsIt = classMethodReturnType_.find(recvClass);
+        if (clsIt == classMethodReturnType_.end()) return {};
+        auto methodIt = clsIt->second.find(member->member);
+        if (methodIt == clsIt->second.end()) return {};
+        const std::string& returnType = methodIt->second;
+        return classNames_.count(returnType) ? returnType : std::string{};
+    }
+    // `new`, literals, etc: not resolved by this lightweight pass.
     return {};
 }
 
@@ -442,6 +489,17 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
             }
         }
 
+        // `this` passed as a call argument from a CONSTRUCTOR must be rejected --
+        // see rejectThisEscapeInConstructor's own doc comment for the full
+        // bad_weak_ptr rationale. Checked narrowly (each argument must be
+        // DIRECTLY the bare Identifier `this`) so `this.foo()` -- an ordinary,
+        // always-safe member access that never extracts a shared_ptr copy -- is
+        // never caught by this: that shape's `this` is checked via the
+        // MemberAccess branch below, which this check deliberately does not touch.
+        for (const auto& arg : call->arguments) {
+            rejectThisEscapeInConstructor(arg.get(), expr);
+        }
+
         checkExpression(call->callee.get());
         for (const auto& arg : call->arguments) {
             checkExpression(arg.get());
@@ -543,13 +601,39 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
     // Identifier/Number/ScopedIdentifier/StringLiteral leaves: nothing to check.
 }
 
+// See header for the full contract. `expr` must be checked as a DIRECT bare
+// ThisExpression node (grammar.js's reserved `this_expression`) -- callers
+// must NOT recurse into a larger expression and call this on some inner
+// sub-expression, or a legal `this.foo()` receiver would be wrongly caught
+// (a ThisExpression used as a MemberAccess's own receiver is not itself
+// "the whole expression at this position"; the distinction is made by which
+// call sites choose to call this function at all, e.g. checkExpression's
+// MemberAccess branch deliberately never calls this on `member->object`).
+void EscapeHatchChecker::rejectThisEscapeInConstructor(const Expression* expr, const ASTNode* anchor) {
+    if (!inConstructor_) return;
+    if (dynamic_cast<const ThisExpression*>(expr) == nullptr) return;
+    EscapeHatchError e;
+    e.line = anchor->loc.line;
+    e.column = anchor->loc.column;
+    e.message = "`this` passed as an argument from a constructor";
+    e.help = "passing `this` lowers to shared_from_this(), which throws "
+             "std::bad_weak_ptr unconditionally when called before the "
+             "object's shared_ptr control block exists -- and inside a "
+             "constructor, it never does yet. Move this to after "
+             "construction (e.g. a separate init() method called once the "
+             "object is already held by a shared_ptr).";
+    errors_.push_back(e);
+}
+
 void EscapeHatchChecker::checkStatement(const Statement* stmt) {
     if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+        rejectThisEscapeInConstructor(decl->expression.get(), stmt);
         checkExpression(decl->expression.get());
         localType_[decl->identifier] = decl->type;
     } else if (auto cdecl = dynamic_cast<const ContainerDeclaration*>(stmt)) {
         localType_[cdecl->identifier] = cdecl->type;
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+        rejectThisEscapeInConstructor(assign->expression.get(), stmt);
         checkExpression(assign->expression.get());
         if (auto sub = dynamic_cast<const SubscriptExpression*>(assign->target.get())) {
             // `n[key] = value;` on a CLASS-typed (not container) receiver needs a

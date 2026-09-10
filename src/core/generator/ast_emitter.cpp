@@ -132,6 +132,31 @@ std::string AstEmitter::emitHeader(const Program& program, const std::string& gu
             }
         }
     }
+    // Forward-declare (`class X;`) every EXTERNAL class this header's own
+    // declarations reference, INDEPENDENT of whatever #include lines the
+    // source .clg wrote (emitted right after them, before this header's own
+    // declarations begin) -- makes this header's use of `std::shared_ptr<X>`
+    // etc. correct regardless of whether X's own real header actually
+    // manages to fully expand at this point in the include graph. Found as
+    // a real bug via imgui-cling's Context gaining a method that calls a
+    // free function from another file (button.clg): button.h's own
+    // declarations need `Context` (context.clg) visible, and context.clg's
+    // own `#include "button.clh"` (needed only by its .cpp body, not by
+    // context.h's own declarations) created a genuine two-header cycle --
+    // whichever header's #include-guard fired SECOND, transitively, saw the
+    // other's class body already skipped by that header's OWN #ifndef guard
+    // and never re-run, so the type was never declared at all by the point
+    // it was needed. A forward declaration sidesteps the whole ordering
+    // question: `std::shared_ptr<X>` only needs X to be a known INCOMPLETE
+    // type at the declaration (not full-definition) sites a header ever
+    // has -- CeeLing headers contain ONLY signatures, never bodies that
+    // would dot/arrow-access X's members, so a forward declaration is
+    // always sufficient here. Never applies to a value-type/struct (e.g.
+    // Response embedded/returned BY VALUE) -- those need their real size at
+    // declaration time too, so they keep requiring the real #include instead.
+    for (const auto& className : collectForwardDeclarableClasses(program)) {
+        out << "class " << className << ";\n";
+    }
     out << "\n";
 
     // Same namespace-grouping traversal as emit() (see its comment) -- a header's
@@ -305,6 +330,68 @@ void AstEmitter::collectClassNames(const Program& program) {
     }
 }
 
+std::set<std::string> AstEmitter::collectForwardDeclarableClasses(const Program& program) const {
+    // Classes THIS file declares itself (non-external ClassDeclarations) get
+    // their own real, full declaration emitted below -- never forward-declare
+    // one of those, that would conflict with (or pointlessly precede) the
+    // real thing.
+    std::set<std::string> ownClasses;
+    for (const auto& stmt : program.statements) {
+        if (stmt->isExternalDeclaration) continue;
+        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            ownClasses.insert(cls->name);
+        }
+    }
+
+    // A candidate type qualifies for forward declaration only if it's a
+    // KNOWN CLASS (classNames_, populated by collectClassNames from every
+    // merged declaration, own and external alike), not namespace-qualified
+    // (`class YAML::Node;` is not valid C++ -- would need `namespace YAML {
+    // class Node; }` instead; conservatively skipped rather than handled,
+    // since no current consumer needs a namespaced class here), not one of
+    // THIS file's own classes, and not a value-type/struct (which needs its
+    // real size at declaration time, so it keeps requiring the actual
+    // #include instead of a forward declaration).
+    std::set<std::string> result;
+    auto consider = [&](const std::string& type) {
+        if (type.empty()) return;
+        if (type.find("::") != std::string::npos) return;
+        if (ownClasses.count(type) > 0) return;
+        if (classNames_.count(type) == 0) return;
+        if (analyzer_.isValueTypeClass(type)) return;
+        result.insert(type);
+    };
+
+    for (const auto& stmt : program.statements) {
+        if (stmt->isExternalDeclaration) continue;
+        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                    consider(field->type);
+                } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    consider(method->returnType);
+                    for (const auto& [ptype, pname] : method->parameters) {
+                        (void)pname;
+                        consider(ptype);
+                    }
+                } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    for (const auto& [ptype, pname] : ctor->parameters) {
+                        (void)pname;
+                        consider(ptype);
+                    }
+                }
+            }
+        } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            consider(fn->returnType);
+            for (const auto& [ptype, pname] : fn->parameters) {
+                (void)pname;
+                consider(ptype);
+            }
+        }
+    }
+    return result;
+}
+
 void AstEmitter::collectUsedRuntimeHelpers(const Program& program) {
     std::function<void(const Expression*)> visitExpr = [&](const Expression* expr) {
         if (expr == nullptr) return;
@@ -433,20 +520,20 @@ std::string AstEmitter::fieldType(const std::string& cls, const std::string& nam
 }
 
 std::string AstEmitter::exprObjectClass(const Expression* expr) const {
-    if (auto id = dynamic_cast<const Identifier*>(expr)) {
-        // A bare `this` used as an explicit expression (`this.field`, `this[key]`,
+    if (dynamic_cast<const ThisExpression*>(expr) != nullptr) {
+        // `this` used as an explicit expression (`this.field`, `this[key]`,
         // `Node self = this;`) resolves to the enclosing class -- `this` is real
         // C++ syntax inside a method body, always a pointer to the current
         // object, so it needs the SAME `->` access every other smart-pointer/
-        // observer expression gets. Checked before the field/varClass_/
-        // observerClass_ lookups below since `this` is never itself a
-        // variable name recorded in any of those maps. Found as a real gap
+        // observer expression gets. Checked before the Identifier branch below
+        // since `this` is now its own AST node type (grammar.js's reserved
+        // `this_expression`), never an Identifier at all. Found as a real gap
         // via yaml-cling's convert<T> customization point: a user-written
         // decodeInto<T> specialization calling `this["key"]` or storing
         // `this` into a local both need this to resolve correctly.
-        if (id->name == "this" && !currentClass_.empty()) {
-            return currentClass_;
-        }
+        return currentClass_.empty() ? "" : currentClass_;
+    }
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
         // A field of the current class (accessed via this->) that is object-typed.
         if (isCurrentField(id->name)) {
             const std::string ft = fieldType(currentClass_, id->name);
@@ -1315,6 +1402,24 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
 
 std::string AstEmitter::emitMovedArg(const Expression* arg,
                                      const std::pair<std::string, std::string>& targetParam) {
+    if (dynamic_cast<const ThisExpression*>(arg) != nullptr && !currentClass_.empty()) {
+        // `this` passed as a call argument, a VariableDeclaration RHS, or an
+        // AssignmentStatement RHS (this function is the shared lowering point
+        // for all three -- see its own call sites) shares ownership of the
+        // current object, exactly like `return this;` already does (Chapter
+        // 18 Step 37): shared_from_this() aliases the object's OWN existing
+        // shared_ptr control block, never a second independent one. Requires
+        // the enclosing class to inherit std::enable_shared_from_this and
+        // always be constructed via make_shared -- both forced by
+        // SmartPointerAnalyzer::methodPassesThisAsArgument's detection scan,
+        // the argument-position counterpart of the return-position
+        // anyReturnsThis scan that already backs `return this;`.
+        // EscapeHatchChecker separately hard-rejects this shape from inside a
+        // constructor, where shared_from_this() would throw std::bad_weak_ptr
+        // unconditionally (the control block does not exist yet) -- by the
+        // time this runs, that case has already failed to compile.
+        return "shared_from_this()";
+    }
     if (auto id = dynamic_cast<const Identifier*>(arg)) {
         // Object-typed local or parameter (smart pointer): transfer ownership.
         // Field access and references are not moved here.
@@ -1610,13 +1715,21 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         std::string rhs = selectAssignmentRhs(assign, ptrVar, memberTarget, subscriptTarget);
         out << pad << lhs << " = " << rhs << ";\n";
     } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+        // A bare `return;` (void early-exit, ret->expression null -- see
+        // grammar.js's `optional($.expression)` on return_statement) needs
+        // none of the value-lowering logic below, which all assume a real
+        // expression to inspect.
+        if (!ret->expression) {
+            out << pad << "return;\n";
+            return;
+        }
         // Returning an object hands ownership back to the caller. A `new T(...)`
         // becomes a factory; an owning local is std::move'd out (a smart pointer is
         // move-only, so this is required, and the dangling checker has proven the
         // local is not used after the return). Non-object returns (`return 0;`,
         // `return a.value;`) fall through unchanged.
         std::string rhs;
-        auto retId = dynamic_cast<const Identifier*>(ret->expression.get());
+        auto retIsThis = dynamic_cast<const ThisExpression*>(ret->expression.get()) != nullptr;
         if (currentMethodReturnsValueType_) {
             // Value-type return: plain, unwrapped, copied (never moved) -- matches
             // the value-type VariableDeclaration branch's own RHS handling above.
@@ -1627,7 +1740,7 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
                     rhs += emitExpression(neww->arguments[i].get());
                 }
                 rhs += ")";
-            } else if (retId != nullptr && retId->name == "this") {
+            } else if (retIsThis) {
                 // `this` is ALWAYS a raw pointer in C++ (Type*), regardless of
                 // value-type-ness -- `return this;` with a plain (non-pointer)
                 // return type does not compile (confirmed via direct probe:
@@ -1640,7 +1753,7 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
             } else {
                 rhs = emitExpression(ret->expression.get());
             }
-        } else if (currentMethodReturnsShared_ && retId != nullptr && retId->name == "this") {
+        } else if (currentMethodReturnsShared_ && retIsThis) {
             // `return this;` from a @ptr-shared-hinted method: shared_from_this()
             // aliases the object's OWN existing shared_ptr control block (set up by
             // enable_shared_from_this, wired in by emitClass/classNeedsSharedFromThis
@@ -1988,7 +2101,31 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             receiverClass = mClass;
             methodName = m->member;
         } else {
-            prefix = call->function_name;
+            // A bare call whose name is BOTH a known free function AND a
+            // method of the CURRENT class needs `::` qualification in the
+            // EMITTED C++, or real C++'s member-name-hides-outer-name rule
+            // silently resolves it to the (arity-mismatched) member instead
+            // of the free function CeeLing's own resolution (isKnownCallable
+            // checks free functions before same-class methods) already
+            // committed to -- confirmed via a minimal, CeeLing-independent
+            // probe (`struct S { int foo(int); }; ... s.foo() calls
+            // ::foo(1,2,3) from inside S::foo`, a hard compile error: "no
+            // matching function", NOT a fallback to the free function).
+            // Found via imgui-cling's Context gaining a `button()` method
+            // that forwards to the pre-existing free function of the exact
+            // same name (`return button(this, ...);`) -- the first consumer
+            // to intentionally reuse a free function's name as a method
+            // name. Only qualifies on an ACTUAL collision (currentClass_
+            // has its own same-named method) -- unconditionally prefixing
+            // every bare free-function call would wrongly force GLOBAL
+            // namespace lookup for one truly different case: a namespaced
+            // free function called bare from WITHIN its own namespace.
+            bool collidesWithOwnMethod = !currentClass_.empty() &&
+                call->function_name.find("::") == std::string::npos &&
+                functionParams_.count(call->function_name) > 0 &&
+                classMethodParams_.count(currentClass_) > 0 &&
+                classMethodParams_.at(currentClass_).count(call->function_name) > 0;
+            prefix = (collidesWithOwnMethod ? "::" : "") + call->function_name;
             if (!call->templateArg.empty()) {
                 prefix += "<" + cppTypeFor(call->templateArg, "") + ">";
             }
@@ -2001,8 +2138,14 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             // or `n.decodeInto(out)`) skipped the .get()/no-move handling
             // entirely -- confirmed via probe (yaml-cling's own as<Point>()
             // specialization calling decodeInto(out) with implicit this).
-            receiverClass = currentClass_;
-            methodName = call->function_name;
+            // NOT reassigned when collidesWithOwnMethod -- the call resolves
+            // to the FREE function in that case, not currentClass_'s own
+            // same-named method, so there is no out-parameter to look up
+            // under currentClass_'s method map for it.
+            if (!collidesWithOwnMethod) {
+                receiverClass = currentClass_;
+                methodName = call->function_name;
+            }
         }
         const bool receiverIsVector = isVectorType(receiverContainerType);
         const bool elementIsShared = receiverIsVector && analyzer_.containerElementIsShared(receiverName);

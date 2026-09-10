@@ -208,9 +208,24 @@ module.exports = grammar({
       )
     ),
 
+    // `optional($.expression)` -- a bare `return;` (void early-exit) is real,
+    // legal CeeLing source (see tests/linked_list.clg's own deleteNode()).
+    // Before this, the expression was REQUIRED, and a bare `return;` only
+    // "worked" by accident: tree-sitter's GLR error recovery silently
+    // inserted a zero-width MISSING node to satisfy the required slot,
+    // choosing whichever primary_expression alternative its heuristic rated
+    // cheapest -- an empty-name `identifier` before `this_expression`
+    // existed (harmless: emitted `return ;`, valid C++ for void), but
+    // `this_expression` once it was added (confirmed via `tree-sitter parse`
+    // showing `(MISSING this_expression ...)`), which the `return this;` ->
+    // `shared_from_this()` lowering then wrongly fired on. Relying on
+    // undefined, heuristic-dependent error-recovery behavior for something
+    // that should be an explicit, well-defined grammar production was
+    // already the real bug; this makes bare `return;` a first-class case
+    // instead of a lucky accident of recovery-choice ordering.
     return_statement: $ => seq(
       'return',
-      $.expression,
+      optional($.expression),
       ';'
     ),
 
@@ -560,11 +575,27 @@ module.exports = grammar({
     primary_expression: $ => choice(
       $.scoped_identifier,
       $.identifier,
+      $.this_expression,
       $.number,
       $.string_literal,
       $.char_literal,
       seq('(', $.expression, ')')
     ),
+
+    // `this` -- a reserved keyword, not an ordinary identifier (unlike the
+    // earlier approach, where `this` was just an Identifier whose NAME
+    // happened to be special-cased by string comparison throughout the
+    // generator). Tree-sitter's lexer already prefers an explicit string-
+    // literal token like this one over the general `identifier` regex
+    // whenever both could match -- the same mechanism that already makes
+    // `new`/`class`/every other keyword unusable as a declared name with no
+    // exclusion regex needed on `identifier` itself. Consequence: `this` can
+    // no longer be used anywhere an `identifier` is expected (a variable,
+    // parameter, field, or class named `this`; a closure capture-list entry
+    // `[this]`, since capture_list's own grammar uses `$.identifier`
+    // directly) -- these now fail to PARSE rather than needing a semantic
+    // check to catch them.
+    this_expression: $ => 'this',
 
     // Qualified name like `std::cout`, `std::endl`, `std::vector`. General `::` scope
     // resolution — usable in both expression and type position.

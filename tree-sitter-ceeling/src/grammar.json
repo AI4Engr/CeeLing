@@ -512,8 +512,16 @@
           "value": "return"
         },
         {
-          "type": "SYMBOL",
-          "name": "expression"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "expression"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         },
         {
           "type": "STRING",
@@ -1704,6 +1712,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "this_expression"
+        },
+        {
+          "type": "SYMBOL",
           "name": "number"
         },
         {
@@ -1732,6 +1744,10 @@
           ]
         }
       ]
+    },
+    "this_expression": {
+      "type": "STRING",
+      "value": "this"
     },
     "scoped_identifier": {
       "type": "PREC_LEFT",

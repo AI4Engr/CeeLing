@@ -650,6 +650,10 @@
         {
           "type": "string_literal",
           "named": true
+        },
+        {
+          "type": "this_expression",
+          "named": true
         }
       ]
     }
@@ -660,7 +664,7 @@
     "fields": {},
     "children": {
       "multiple": false,
-      "required": true,
+      "required": false,
       "types": [
         {
           "type": "expression",
@@ -1207,6 +1211,10 @@
   {
     "type": "struct",
     "named": false
+  },
+  {
+    "type": "this_expression",
+    "named": true
   },
   {
     "type": "throw",

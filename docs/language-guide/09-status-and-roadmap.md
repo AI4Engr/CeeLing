@@ -274,6 +274,47 @@ real.
   safe, not silent), chained views (`a.block(...).transpose()`) are not specially
   handled, and the list is still hand-maintained rather than auto-extracted from
   Eigen's own headers.
+  **Update**: chained CALLS are now supported in general (see the "Chained
+  method calls" entry below) — but deliberately NOT extended to Eigen's
+  borrowing methods. `resolveBorrowingMethodReceiver` (the function this
+  path goes through) was left untouched on purpose: a chained Eigen view's
+  receiver is an unnamed C++ temporary with real value semantics (not
+  smart-pointer-wrapped), so `a.block(...).transpose()` still needs genuine
+  transitive-borrow-provenance design, not just wider call resolution.
+  `a.block(...).transpose()` remains rejected today, correctly.
+- **Chained method calls (`a.b().c()`, any depth) for CeeLing's own classes**
+  (Chapter 18 Step 36). Previously rejected outright — `EscapeHatchChecker::
+  resolveObjectType` and `DanglingChecker::resolveCallReturnAlias` both only
+  ever resolved a bare identifier or a field-access chain as a call's
+  receiver, so a receiver that was itself a call (`getInner()` in
+  `makeHolder().getInner()`) always resolved to "unknown," and the call was
+  rejected by the default-reject-unknown-calls rule. Fixed by adding a
+  return-type table to each checker (className/function name -> declared
+  return type) and a small recursive resolver that walks into a chained
+  receiver's own call to find its return class, falling back to the
+  existing "unknown -> reject" behavior the moment the type can't be
+  resolved to a real CeeLing class (an external/opaque type, `new`, a
+  literal, ...). **Safe because every CeeLing object is a compiler-managed
+  smart pointer**: a method's return value is always a live, reference-
+  counted/owning COPY, never a raw alias into a temporary that could already
+  be destroyed — confirmed via a standalone destructor-order probe before
+  writing any fix. The harder half of this fix was noticing that
+  `DanglingChecker`'s own alias-tracking (`resolveCallReturnAlias`) had the
+  identical bare-identifier-only restriction: fixing only
+  `EscapeHatchChecker` would have let a chained call whose return value
+  aliases one of its arguments (the exact shape Chapter 11's
+  `summary_return_alias_dangles.clg` exists to catch) slip through
+  SILENTLY once the escape-hatch gate was widened — both checkers needed
+  the identical fix, applied symmetrically. See
+  `tests/safety/chained_method_call_accepted.clg` (positive control, `//@
+  run:`-asserted) and `chained_method_call_dangling_rejected.clg` (the
+  negative control proving the dangling case above is still caught through
+  a chained receiver). Deliberately does NOT cover: a bare field-access
+  chain as a receiver (`a.field.method()`; `DanglingChecker`'s own
+  `classFields_` tracks field NAMES, not declared TYPES, a separate
+  pre-existing gap), a `new Foo().method()` receiver (a different
+  unresolved shape, unchanged by this fix), or Eigen/external-class chained
+  borrows (see the update just above).
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**

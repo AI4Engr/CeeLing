@@ -1,0 +1,33 @@
+//@ expect: accept
+//@ reason: proves detection fires from the ARGUMENT-position scan alone,
+//@ reason: independent of the pre-existing return-position anyReturnsThis
+//@ reason: scan (Chapter 18 Step 37): every method here returns void or int
+//@ reason: -- NO method returns `Node`/any object type at all, so there is
+//@ reason: no possible `return this;` anywhere in this fixture that could
+//@ reason: have triggered enable_shared_from_this/the shared construction
+//@ reason: root instead. If SmartPointerAnalyzer::methodPassesThisAsArgument
+//@ reason: (the new scan) were accidentally skipped or scoped wrong, `n`
+//@ reason: would stay unique_ptr and useSelf's `shared_from_this()` call
+//@ reason: would fail with "not a member of std::enable_shared_from_this"
+//@ reason: at the g++ stage -- this fixture's own runtime assertion below is
+//@ reason: what proves the whole pipeline, not just that CeeLing accepts it.
+//@ run: 4
+
+class Node {
+public:
+    int v;
+    Node(int val) { v = val; }
+    void useSelf(Node other) {
+        v = v + other.v;
+    }
+    void chainSelf() {
+        useSelf(this);
+    }
+};
+
+int main() {
+    Node n = new Node(2);
+    n.chainSelf();
+    std::cout << n.v << std::endl;
+    return 0;
+}

@@ -37,10 +37,23 @@ of this note before relying on it):
   self`, is accurate in spirit but is currently a small hand-maintained allow-list of
   8 method names, not a general per-library declaration mechanism or an
   auto-extracted one). Any Eigen view method NOT in that list of 8 (`topRows()`,
-  `array()`, chained views like `a.block(...).transpose()`, ...) is rejected by the
-  ordinary default-reject-unknown-call rule — the safe failure mode, not a silent
-  hole. Full design and exact implementation in `PLAN_eigen_views.md` (repo root)
-  and `TODO.md`'s "Eigen view/borrow tracking" entry.
+  `array()`, ...) is rejected by the ordinary default-reject-unknown-call rule —
+  the safe failure mode, not a silent hole. Full design and exact implementation
+  in `PLAN_eigen_views.md` (repo root) and `TODO.md`'s "Eigen view/borrow
+  tracking" entry.
+- **Chained views** (`a.block(...).transpose()`) specifically remain rejected,
+  and deliberately so, even though chained method calls are now supported in
+  general for CeeLing's own classes (Chapter 9's roadmap entry, Chapter 18
+  Step 36). That fix is safe for CeeLing's own classes because every one of
+  them is a compiler-managed smart pointer — a method's return value is
+  always a live, owning copy. Eigen types keep plain C++ value/reference
+  semantics on purpose (that is the whole point of this chapter's view
+  tracking), so a chained view's receiver really is an unnamed temporary
+  with real dangling risk if mishandled — closing this needs genuine
+  transitive-borrow-provenance design (does a view's own borrow propagate
+  through a SECOND view built on top of it?), not just wider call
+  resolution. Tracked as a separate, harder follow-up in `TODO.md`'s Eigen
+  entry; not attempted by the general chained-call fix.
 
 Read the rest of this chapter as: **the target design**, with the two paragraphs
 above telling you exactly which piece of it is real today.
