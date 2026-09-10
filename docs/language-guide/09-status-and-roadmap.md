@@ -315,6 +315,66 @@ real.
   pre-existing gap), a `new Foo().method()` receiver (a different
   unresolved shape, unchanged by this fix), or Eigen/external-class chained
   borrows (see the update just above).
+- **`this` is now a real reserved keyword, and usable as a call argument**
+  (Chapter 18 Step 37). Previously `this` was an ordinary `identifier` whose
+  NAME happened to be string-compared against `"this"` at 8 separate call
+  sites — nothing stopped a user declaring a variable/parameter/field/class
+  literally named `this`. Added `this_expression` to the grammar and a
+  dedicated `ThisExpression` AST node; every prior string-comparison site
+  migrated to `dynamic_cast<ThisExpression>`. Also fixes the actual feature
+  gap: `this` previously only worked in `return this;` (lowered to
+  `shared_from_this()`); it's now equally usable as a call argument, a
+  `VariableDeclaration` RHS, or an `AssignmentStatement` RHS — all three
+  lower to `shared_from_this()` the same way, correctly forcing
+  `enable_shared_from_this` + a shared construction root via a new
+  argument-position detection scan (independent of the pre-existing
+  return-position one). **Safe for the same reason `return this;` already
+  is**: CeeLing has no non-owning reference a field could hold instead (`ref`
+  fields/parameters are both banned by construction), so a passed/stored
+  `this` can only ever create genuine shared co-ownership, never a dangle.
+  **Hard-rejects passing `this` from inside a constructor**
+  (`this_escapes_constructor_rejected.clg`) — `shared_from_this()` throws
+  `std::bad_weak_ptr` unconditionally there, a guaranteed crash, not a
+  sometimes-risk. This work also uncovered and fixed three unrelated,
+  pre-existing bugs a real multi-file consumer surfaced: bare `return;` had
+  never been a real grammar production (silently relying on tree-sitter's
+  error recovery, which broke the moment `this_expression` gave it a new,
+  wrong MISSING-node choice); generated headers had no forward-declaration
+  mechanism, so a genuinely circular `#include` pair between two `.clh`
+  files couldn't compile; and a member method sharing a free function's
+  exact name was emitted as a bare call that real C++'s own name-hiding
+  rules resolve differently than CeeLing's own analysis does. See Chapter
+  18 Step 37 for the full account of all four fixes. New fixtures:
+  `this_as_call_argument_accepted.clg`, `this_argument_forces_shared_root_
+  accepted.clg`, `this_stored_in_field_accepted.clg`,
+  `this_escapes_constructor_rejected.clg`. Deliberately does NOT cover:
+  `this` as a chained-call RECEIVER (`this.method().other()`) —
+  `EscapeHatchChecker::resolveObjectType`/`DanglingChecker::
+  resolveClassOfExpr` have no `ThisExpression` branch, a different,
+  narrower feature not needed by the consumer that motivated this work.
+  **Follow-up fix**: a VALUE-TYPE (`struct`) class returning `this` (real
+  egui-style fluent chains, e.g. `Response.onHoverText(text) -> Response`)
+  was wrongly picking up `std::enable_shared_from_this<T>` as a spurious
+  base — `struct`s are never smart-pointer-wrapped by this project's own
+  design, and `return this;` on a value type already gets a separate,
+  correct `*this`-dereference lowering with no shared_ptr machinery needed
+  at all. Fixed by excluding value-type classes from both the return- and
+  argument-position detection scans (`SmartPointerAnalyzer::
+  isValueTypeClass`). See `value_type_return_this_no_shared_from_this_
+  accepted.clg` and Chapter 18 Step 37's own follow-up section.
+- **Per-class declaration guards, replacing a file-level guard that was
+  wrong in general.** Generated headers/`.cpp`s could still double-define a
+  class when THREE OR MORE files mutually depended on each other's types
+  (found by converting `imgui-cling`'s remaining ~15 widgets to `Context`
+  methods, which made `context.clg` `#include` twelve sibling `.clh` files
+  at once — a much denser circular-include graph than the original
+  two-file case Step 37 first fixed). `AstEmitter::perClassGuardName` now
+  wraps each individual class's OWN declaration block in `#ifndef
+  CEELING_DECL_<NAME> / #endif`, applied identically in both `.cpp`-mode
+  (`emitClass`) and `.h`-mode (`emitClassHeader`) — whichever reaches a
+  given class's declaration first in a translation unit wins, independent
+  of which FILE that happens to be. Replaces the earlier, coarser
+  file-level guard-preemption entirely (removed from `main.cpp`).
 
 **Not yet done:**
 - The analyzer still also runs the older **smart-pointer type selection**

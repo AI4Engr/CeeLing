@@ -1,0 +1,44 @@
+//@ expect: accept
+//@ reason: a VALUE-TYPE (struct) class's `return this;` must NOT pick up
+//@ reason: `std::enable_shared_from_this<T>` as a spurious base -- a struct
+//@ reason: is never smart-pointer-wrapped anywhere in CeeLing, and its own
+//@ reason: `return this;` already gets a completely different, correct
+//@ reason: lowering (`return *this;`, AstEmitter's currentMethodReturnsValueType_
+//@ reason: branch). Found as a real bug via imgui-cling's Response struct
+//@ reason: gaining a chainable `onHoverText()` method (matching real egui's
+//@ reason: own `Response::on_hover_text(self, ...) -> Self` fluent-chain
+//@ reason: shape) -- SmartPointerAnalyzer's anyReturnsThis/
+//@ reason: methodPassesThisAsArgument scans (Chapter 18 Step 37) didn't
+//@ reason: check isValueTypeClass before flagging a class as needing
+//@ reason: enable_shared_from_this, so `struct Resp` wrongly inherited it
+//@ reason: (harmless in that it happened to still compile -- an unused,
+//@ reason: never-instantiated-via-shared_ptr base -- but semantically wrong
+//@ reason: for a type this project's own design promises never wraps in a
+//@ reason: smart pointer). This fixture is a genuine two-link CHAIN
+//@ reason: (`r.onHover("x").clicked`, a method call whose return value is
+//@ reason: itself further accessed), the real egui-style fluent pattern --
+//@ reason: not just "one method call then one field read."
+//@ run: hover:test clicked:0
+
+struct Resp {
+public:
+    bool hovered;
+    bool clicked;
+    Resp(bool h, bool c) {
+        hovered = h;
+        clicked = c;
+    }
+    Resp onHover(string label) {
+        if (hovered) {
+            std::cout << "hover:" << label << " ";
+        }
+        return this;
+    }
+};
+
+int main() {
+    Resp r = new Resp(true, false);
+    bool result = r.onHover("test").clicked;
+    std::cout << "clicked:" << result << std::endl;
+    return 0;
+}

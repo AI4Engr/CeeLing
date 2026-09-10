@@ -409,33 +409,27 @@ int main(int argc, char* argv[]) {
         } else {
             // AST-driven generator (default): walks the validated Program, so an
             // unsupported/forbidden construct cannot appear in the output.
+            // Per-class declaration guards (AstEmitter::perClassGuardName,
+            // wrapping each "class X {...};" block emitted by emitClass, the
+            // SAME mechanism emitHeader's emitClassHeader uses) are what make
+            // a genuinely circular `.clh` include pair (e.g. context.clg <->
+            // button.clh) safe -- whichever of a class's own local
+            // declaration (here) or a transitively-included copy of its
+            // header is reached FIRST in one translation unit wins, and the
+            // other is skipped, without needing this file to pre-declare
+            // anything about its own companion header up front. An earlier,
+            // simpler attempt at this fix (unconditionally #define-ing this
+            // whole FILE's header guard before any #include) worked for the
+            // narrow case that first surfaced it, but broke the moment a
+            // SECOND file (drag_float.cpp, transitively needing context.h,
+            // which transitively needed drag_float.h back) was compiled
+            // together in the same circular graph -- the file-level guard
+            // pre-declaration blocked that second file's own real header
+            // content from ever expanding. Per-class guards, checked at the
+            // exact point each class is actually declared (not the whole
+            // file's top), don't have this problem.
             AstEmitter emitter(analyzer);
             cppCode = emitter.emit(*program);
-            // Define THIS FILE'S OWN companion-header guard before any
-            // #include lines, so a copy of this exact class/declaration set
-            // reached TRANSITIVELY (via another file's generated .h, which
-            // this .cpp's own #include chain may pull in -- e.g. context.cpp
-            // including button.h, which itself includes context.h) is
-            // correctly SKIPPED by that header's own #ifndef guard, instead
-            // of producing a duplicate definition in this translation unit.
-            // Found as a real bug via imgui-cling's Context gaining a
-            // forwarding method that calls a free function from ANOTHER
-            // file (button.clg) -- the first genuinely circular `.clh`
-            // include pair (context.clg -> button.clh -> context.clh) this
-            // project had ever exercised; every prior consumer was
-            // one-directional. Deriving the guard from the SOURCE (.clg)
-            // file's own base name, not the requested OUTPUT (.cpp) name,
-            // matches this project's own naming convention (a .clg's
-            // companion header is always named after the .clg itself, e.g.
-            // context.clg -> context.h) -- the two must agree exactly, or
-            // this guard would never actually match the transitively-
-            // included header's own #ifndef and the duplicate would persist.
-            size_t clgSlash = inputFile.find_last_of("/\\");
-            std::string clgBaseName = (clgSlash == std::string::npos) ? inputFile : inputFile.substr(clgSlash + 1);
-            if (clgBaseName.size() > 4 && clgBaseName.compare(clgBaseName.size() - 4, 4, ".clg") == 0) {
-                clgBaseName = clgBaseName.substr(0, clgBaseName.size() - 4) + ".h";
-                cppCode = "#define " + guardNameFor(clgBaseName) + "\n" + cppCode;
-            }
         }
         cppCode = rewriteClhIncludes(cppCode);
 

@@ -878,7 +878,20 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                 }
                 return false;
             }();
-            if (anyReturnsThis) {
+            // A VALUE-TYPE (struct) class's `return this;` already gets a
+            // completely different, correct lowering (`return *this;` --
+            // AstEmitter's currentMethodReturnsValueType_ branch) that needs
+            // no shared_ptr machinery at all. Found via a real probe:
+            // imgui-cling's `Response` (a plain value struct, never
+            // smart-pointer-wrapped anywhere) gained a chainable
+            // `onHoverText()` method (`return this;`, matching real egui's
+            // own `Response::on_hover_text(self, ...) -> Self` fluent-chain
+            // shape) and wrongly picked up `class Response : public
+            // std::enable_shared_from_this<Response>` as a spurious base --
+            // harmless in that it happened to still compile (unused base,
+            // no crash), but semantically wrong for a type this project's
+            // own design explicitly never wraps in a smart pointer.
+            if (anyReturnsThis && !isValueTypeClass(cls->name)) {
                 // A class returning `this` as a shared_ptr must itself ALWAYS be
                 // constructed as shared_ptr (shared_from_this() requires the
                 // object to already be owned by a shared_ptr) -- reuses the exact
@@ -901,10 +914,14 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
         // class inheriting enable_shared_from_this at all (a "not a member"
         // compile error) or, worse, an object not actually shared_ptr-owned
         // (shared_from_this()'s own std::bad_weak_ptr throw at runtime).
-        for (const auto* method : methods) {
-            if (methodPassesThisAsArgument(method->body)) {
-                classesNeedingSharedFromThis_.insert(cls->name);
-                classesNeedingSharedRoots.insert(cls->name);
+        // Same value-type exclusion as the return-position scan above --
+        // a value-type class's `this` never needs shared_ptr machinery.
+        if (!isValueTypeClass(cls->name)) {
+            for (const auto* method : methods) {
+                if (methodPassesThisAsArgument(method->body)) {
+                    classesNeedingSharedFromThis_.insert(cls->name);
+                    classesNeedingSharedRoots.insert(cls->name);
+                }
             }
         }
     }

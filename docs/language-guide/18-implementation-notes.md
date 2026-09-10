@@ -4107,3 +4107,376 @@ fixtures pass; full safety suite 121/121 (`--strict`, up from 119), `ctest`
 13/13 — both re-run after the fix, not just the two new fixtures in
 isolation, since this touches a resolution path shared by every existing
 class-method-call fixture.
+
+## Step 37 — `this` as a real keyword, `this` as a call argument, and three unrelated pre-existing bugs a real end-to-end consumer surfaced
+
+Motivated by `imgui-cling` wanting the real egui/ImGui inline idiom
+(`if (ctx.button("Save", x, y, 2.0).clicked) {...}`) instead of its own
+two-step `Response r = button(ctx, ...); if (r.clicked) {...}`. Step 36's
+chained calls made `.clicked` work on a call's own return value; the
+remaining blocker was turning `button()` and friends into `Context`
+METHODS. The natural, low-churn shape is a one-line forwarding method
+(`Response button(...) { return buttonImpl(this, ...); }`) — which needs
+`this` usable as a plain call ARGUMENT, not just in `return this;` (the
+only position that worked before this step).
+
+### Part A: promoting `this` to a real keyword
+
+Investigating "can `this` be passed as an argument" surfaced that `this`
+was never a grammar keyword at all — it parsed as an ordinary `identifier`,
+with every consumer (`ast_emitter.cpp`, `smart_pointer_analyzer.cpp`,
+`closure_desugar.cpp`) special-casing it via a **string comparison** on the
+name `"this"`. Nothing stopped a user from declaring a variable, parameter,
+field, or class literally named `this`, which would collide with every one
+of those string checks in confusing ways.
+
+Redirected mid-implementation to fix this properly: added
+`this_expression: $ => 'this',` to `primary_expression`'s choice
+(`grammar.js`), and a matching `ThisExpression : public Expression` AST
+node (trivial marker, no fields). Tree-sitter's lexer already prefers an
+explicit string-literal token over the general `identifier` regex whenever
+both could match — the same mechanism that already makes `new`/`class`/etc.
+unusable as identifiers, with zero exclusion regex needed — so this one
+grammar addition makes `this` unusable as a declared name anywhere
+`identifier` is expected, for free.
+
+**Every existing `id->name == "this"` string comparison had to migrate to
+`dynamic_cast<const ThisExpression*>` in the SAME pass** — a full inventory
+via `grep -rn '"this"'` found 8 call sites across
+`ast_emitter.cpp`/`smart_pointer_analyzer.cpp`/`closure_desugar.cpp`.
+Leaving even one on the old shape would silently stop matching once `this`
+parsed as a `ThisExpression` instead of an `Identifier` — confirmed
+concretely by a regression: after the grammar change alone (before
+migrating the emitter), `shared_return_this_accepted.clg`'s `return this;`
+stopped becoming `shared_from_this()` and started emitting a raw pointer
+into a `unique_ptr<Node>` return — exactly the class of silent breakage
+this project's own safety-suite discipline exists to catch immediately, not
+discover later. `closure_desugar.cpp`'s `closure-captures-this` rejection
+became **dead code**, not just changed: `capture_list`'s own grammar rule
+uses `$.identifier` directly, so `[this]` no longer lexes as an identifier
+at all once `this` is reserved — `[this]` is now a PARSE ERROR, caught
+before that check would ever run. `closure_captures_this_rejected.clg`
+still passes (the test runner only checks exit code, never error text), but
+its own doc comment needed updating to describe the new failure mode.
+
+### An unrelated, pre-existing grammar bug this uncovered: bare `return;` was never real
+
+Re-running the full safety suite after the grammar change (before touching
+anything else) surfaced a SECOND regression: `tests/linked_list.clg` (an
+existing ctest fixture) failed to compile with "return-statement with a
+value, in function returning 'void'". Root cause, confirmed via
+`tree-sitter parse` on a minimal `void f() { return; }`:
+`return_statement`'s grammar rule (`seq('return', $.expression, ';')`) has
+**never** supported a genuinely bare `return;` — the rule required an
+expression unconditionally. `linked_list.clg`'s own bare `return;`
+statements were always relying on tree-sitter's GLR error-recovery silently
+inserting a zero-width MISSING node to satisfy the required slot — an
+already-fragile, heuristic-dependent behavior that happened to synthesize
+an empty-name `identifier` before `this_expression` existed (harmless:
+emitted `return ;`, valid C++ for void) and started synthesizing a
+`this_expression` node instead the moment that alternative existed
+(confirmed via `tree-sitter parse`'s own
+`(MISSING this_expression [1, 10] - [1, 10])` output) — which the new
+`return this;` lowering then wrongly fired on.
+
+Fixed the root cause rather than the symptom: `return_statement` becomes
+`seq('return', optional($.expression), ';')`. `ASTBuilder::
+buildReturnStatement` no longer blindly indexes `ts_node_child(node, 1)`
+(which, for a bare `return;`, used to be whatever the parser's error
+recovery happened to insert there) — it checks `ts_node_named_child_count`
+first and returns a `ReturnStatement` with a genuinely null `expression`
+when there is none. `ReturnStatement::expression` becoming nullable needed
+one real new guard (`AstEmitter`'s `ReturnStatement` emission now checks
+`!ret->expression` and emits a bare `return;` before any of the
+value-lowering branches, which all assumed a real expression) — every other
+consumer (`checkExpression`, `checkExpressionUses`, `visitExpr`,
+`collectReturnExpressions`) was already null-safe by construction
+(`dynamic_cast` on `nullptr` returns `nullptr`, and most either explicitly
+guard at their own top or naturally fall through to an existing
+conservative default). Verified via `tree-sitter parse` that a bare
+`return;` now produces a real, childless `return_statement` with no MISSING
+node at all, and both `ctest` (`cling_test_linked_list_compile`) and the
+full safety suite re-passed.
+
+### Part B: `this` as a call argument
+
+With `this` now a real, unambiguous node type, the actual feature was
+small. Two gaps, both narrow:
+
+1. **`AstEmitter::emitMovedArg`** (the shared lowering point for a call
+   argument, a `VariableDeclaration` RHS, AND an `AssignmentStatement`
+   RHS — not call-argument-only, a real correction to the original plan's
+   premise) had no `this` handling at all — it fell through to
+   `emitExpression`'s Identifier branch, which for `this` degrades to
+   emitting the bare token `this`, a raw pointer, into a
+   `shared_ptr<T>`/`unique_ptr<T>` parameter slot. Fixed by adding a
+   `ThisExpression` branch emitting `shared_from_this()` — exactly the
+   already-shipped `return this;` lowering, just reachable from three more
+   positions.
+2. **`SmartPointerAnalyzer`**'s existing `anyReturnsThis` detection
+   (`inferAliasReturningMethods`) only ever scanned RETURN expressions.
+   A class passing `this` as an argument but never writing `return this;`
+   needs the identical `enable_shared_from_this` + forced-shared-
+   construction-root treatment, or `shared_from_this()` either fails to
+   compile (missing base) or throws `std::bad_weak_ptr` at runtime (object
+   never actually shared_ptr-owned). Added a new, separate walker
+   (`methodPassesThisAsArgument`, modeled on `collectReturnExpressions` but
+   covering try/catch — which that helper misses — and recursing into
+   nested call arguments, not just top-level statement shapes) scanning
+   EVERY method in a class, independent of whether that method is already
+   classified `aliasReturning`. **A real gap found while writing this
+   walker's first draft**: it initially had no `ReturnStatement` case at
+   all (reasoning "that's the separate anyReturnsThis scan's job"), which
+   is true only for the return's OWN top-level expression — a NESTED call
+   argument inside a return (`return r.readVal(this);`) needs the SAME
+   argument-position scan and was silently missed until an end-to-end probe
+   (`Node.registerSelf` calling `r.readVal(this)` inside a `return`) showed
+   `Node` never got `enable_shared_from_this` at all. Fixed by adding a
+   `ReturnStatement` branch that scans the return's expression for a
+   NESTED `this` argument (deliberately NOT re-checking whether the whole
+   return expression IS `this` — that stays the original scan's job).
+
+**Constructor rejection**: `shared_from_this()` throws `std::bad_weak_ptr`
+UNCONDITIONALLY when called before the object's `shared_ptr` control block
+exists — and inside a constructor, it never does yet. Not a sometimes-risk;
+a guaranteed crash. Added `EscapeHatchChecker::rejectThisEscapeInConstructor`,
+mirroring the existing virtual-call-from-constructor check's `inConstructor_`
+gating, called from exactly the three positions `emitMovedArg` handles (a
+call argument, a `VariableDeclaration` RHS, an `AssignmentStatement` RHS) —
+each checking that the expression IS DIRECTLY the bare `ThisExpression`, not
+merely containing it (so `this.foo()`'s ordinary, always-safe receiver usage
+is never caught by this check).
+
+**Why passing `this` cannot dangle**: CeeLing has no non-owning reference to
+store it in. `ref` fields are banned by construction (no grammar production
+exists) and `ref` parameters are banned too, so a passed `this` can only
+land in a plain OWNING field, which lowers to `shared_ptr` — genuine shared
+co-ownership, the same already-blessed shape `field_stores_owner_accepted
+.clg` documents for ordinary parameter storage. Verified end-to-end with a
+destructor-order probe (a hand-written `.cpp`, not a `.clg`): the object
+`this` pointed at stayed alive and correctly readable after the ORIGINAL
+variable holding it was reassigned to something else entirely.
+
+New fixtures: `this_as_call_argument_accepted.clg` (`//@ run:`, a same-class
+bare-call shape avoiding an unrelated forward-declaration ordering issue —
+see Part C), `this_argument_forces_shared_root_accepted.clg` (every method
+returns `void`/`int`, so there is no possible `return this;` anywhere —
+proves the argument-position scan fires independently), `this_stored_in_
+field_accepted.clg` (the safety-argument positive control: `this` stored
+into another object's field, original variable reassigned afterward, field
+still reads the ORIGINAL value), `this_escapes_constructor_rejected.clg`
+(the guaranteed-crash case, rejected at compile time). Full safety suite
+125/125 (`--strict`), `ctest` 13/13.
+
+### Part C: three more real bugs found ONLY by an actual end-to-end consumer
+
+Compiling CeeLing's own safety fixtures never exercises real multi-file
+`.clh` header generation the way an actual multi-file project does. Wiring
+one real forwarding method into `imgui-cling`'s `Context` (`Response
+button(...) { return button(this, ...); }`, requiring `context.clg` to
+`#include "button.clh"` for the very first time — every OTHER consumer in
+that project had `#include "context.clh"`, never the reverse) surfaced
+three more pre-existing gaps, none related to `this` itself:
+
+1. **Circular `.clh` includes duplicate a class's definition.**
+   `context.cpp`'s OWN generation always emits its class's FULL body
+   directly (not just `ClassName::method(...)`-qualified definitions) —
+   it does not rely on including its own header at all. Adding `#include
+   "button.clh"` to `context.clg` meant `context.cpp` now also emitted
+   `#include "button.h"` — and `button.h` (needing `Context`'s type in ITS
+   own signatures) `#include`s `context.h`, which ALSO has the full class
+   body. Two definitions, one translation unit. Fixed generally: `.cpp`-mode
+   generation now `#define`s its OWN companion header's include-guard
+   symbol (derived from the SOURCE `.clg`'s own base name, not the
+   requested output filename, so it matches exactly what `emitHeader` would
+   independently compute for the SAME `.clg`) before any `#include` line —
+   so a transitively-reached copy of its own header is correctly skipped by
+   that header's own pre-existing `#ifndef` guard.
+2. **That fix alone was incomplete — headers had no forward-declaration
+   mechanism at all.** With `context.h`'s guard now pre-set from
+   `context.cpp`, `button.h`'s OWN transitive `#include "context.h"`
+   correctly no-ops — but that left `Context` undeclared by the point
+   `button.h`'s own signatures needed it (`'Context' was not declared in
+   this scope`). CeeLing headers contain ONLY signatures, never bodies that
+   dot/arrow-access another type's members, so a forward declaration is
+   ALWAYS sufficient for any externally-referenced CLASS (never a
+   value-type/struct, which needs its real size even for a declaration).
+   Added `AstEmitter::collectForwardDeclarableClasses`: walks every
+   field/parameter/return-type across a file's OWN (non-external)
+   declarations, and for each referenced class that is (a) not declared by
+   this file itself, (b) not namespace-qualified (`class YAML::Node;` isn't
+   valid C++; conservatively skipped, no current consumer needs it), and
+   (c) not a value-type (`SmartPointerAnalyzer::isValueTypeClass`), emits
+   `class X;` right after the file's own `#include` lines. This is a
+   STRICTLY ADDITIVE change — existing `#include` lines are untouched, the
+   forward declaration is just insurance that the type is known even if the
+   "real" include gets skipped by guard timing.
+3. **A member method hides a same-named free function in real C++,
+   unconditionally — CeeLing's own call resolution didn't match.**
+   `Context::button()`'s forwarding body, `return button(this, ...);`
+   (5 args), compiled to a HARD ERROR: `no matching function for call to
+   'Context::button(...)' — candidate expects 4 arguments`. Confirmed via a
+   minimal, CeeLing-independent probe (`struct S { int foo(int); }; ...
+   s.foo() calls foo(1,2,3) from inside S::foo` — same error) that this is
+   ordinary C++ name lookup: a member name HIDES an outer name of the same
+   spelling, full stop, regardless of whether the member's own signature
+   is arity-compatible with the call — lookup finds the member first and
+   stops, it does not fall back to outer scope on a signature mismatch.
+   `EscapeHatchChecker::isKnownCallable` checks free functions BEFORE a
+   same-class method of the same name (confirmed: an early `return true`
+   for a `knownFreeFunctions_` match, before the class-method branch is
+   even reached) — CeeLing's own ANALYSIS already resolves this exact
+   ambiguity to "the free function," but the EMITTED bare-call text relied
+   on real C++ agreeing, which it does not. Fixed in `AstEmitter`'s
+   `FunctionCall` emission: a bare call is now qualified `::name(...)`
+   whenever `currentClass_` has a method of the exact same name AND that
+   name is also a known free function — deliberately NOT unconditional for
+   every bare free-function call (that would wrongly force GLOBAL namespace
+   lookup for a genuinely different, already-working case: a namespaced
+   free function called bare from within its own namespace).
+
+**Status after all of Step 37**: full safety suite 125/125 (`--strict`),
+`ctest` 13/13, and a real `imgui-cling` demo compiled, linked, ran, and was
+visually confirmed interactive (`ctx.button("CLICK", ...).clicked` firing
+correctly alongside every other widget, unaffected) — the actual motivating
+consumer, not just a synthetic probe. Only ONE call site in
+`imgui-cling/src/layout_demo.clg` was converted as the proof of concept;
+converting the rest of that project's widgets to `Context` methods is a
+separate, not-yet-started follow-up.
+
+### Follow-up — a real fluent chain, and a fourth pre-existing bug it found
+
+`ctx.button(...).clicked` (a method call, then a field read) is not yet the
+real egui pattern — real egui's `Response` has methods like
+`on_hover_text(self, text) -> Self` (`../egui/crates/egui/src/response.rs`)
+that return `Self` again, enabling a true multi-link fluent chain
+(`.on_hover_text(...).on_hover_cursor(...)`), pointed out directly by
+example rather than accepted at face value. Built the equivalent:
+`Response.onHoverText(string text)` (`imgui-cling/src/response.clg`) draws a
+small tooltip label when hovered and does `return this;`, enabling
+`ctx.button(...).onHoverText("Click me!").clicked` — a genuine two-link
+chain (the SECOND method call's own return value is what `.clicked` finally
+reads), not just one call plus one field.
+
+Verified the underlying mechanism first with a standalone probe before
+touching `imgui-cling`: a value-type `struct` with a method returning
+`this` (`Resp.onHover(...) -> Resp`), chained two levels
+(`r.onHover("test").clicked`) — transpiled, compiled, ran, printed the
+correct value. This is `return this;`'s PRE-EXISTING value-type handling
+(`*this` dereference, unrelated to Step 37's own shared_from_this() work)
+composed with Step 36's chained-method-calls, not a new mechanism.
+
+**Found a real, fourth bug while building this**: the generated `Response`
+class picked up `class Response : public std::enable_shared_from_this
+<Response>` — a spurious base for a type that is, by this project's own
+explicit design, NEVER smart-pointer-wrapped (`response.clg`'s own doc
+comment: "Phase 0.5's `struct` keyword is what makes this a bare value...
+instead of an owned/reference class instance"). Root cause: `SmartPointer
+Analyzer`'s `anyReturnsThis` scan and the newer `methodPassesThisAsArgument`
+scan (both from earlier in this same Step) never checked `isValueTypeClass`
+before flagging a class into `classesNeedingSharedFromThis_`/
+`classesNeedingSharedRoots` — both scans only look at the SHAPE of a
+`return this;`/`this`-as-argument, never at whether the enclosing class is
+even eligible for shared-pointer treatment at all. Confirmed via
+`-fsyntax-only` that this did NOT cause a hard compile error (an unused,
+never-instantiated-via-shared_ptr base compiles fine) — but it is
+semantically wrong regardless of whether it happens to crash, and this
+project's own testing discipline treats "compiles but is not what the
+design promises" as a real bug, not a pass. Fixed by adding `!isValueType
+Class(cls->name)` to both scans' insertion sites — `classifyValueTypeClasses`
+already runs before `inferAliasReturningMethods` in the pipeline, so the
+data was already available, no ordering change needed.
+
+New fixture: `value_type_return_this_no_shared_from_this_accepted.clg` (the
+exact `Resp`/`onHover` probe above, made permanent, `//@ run:`-asserted).
+Full safety suite 126/126 (`--strict`, up from 125), `ctest` 13/13.
+`imgui-cling`'s own demo re-verified end-to-end after the fix: transpiled,
+compiled, linked, ran, and confirmed BOTH the click counter incrementing
+AND the "Click me!" tooltip rendering on hover — the real chain, working.
+
+**Deliberately not fixed this round**: `AstEmitter::emitMovedArg`'s
+`ThisExpression` branch still unconditionally emits `shared_from_this()`
+whenever `currentClass_` is non-empty, with no `isValueType` check of its
+own. This is currently harmless because nothing in this project (or any
+fixture) passes a value-type struct's `this` as a call ARGUMENT (only as a
+`return this;`, which has its own, separate, already-correct `*this`
+lowering) — but it is a latent gap, not a proven-safe case, should that
+shape ever be written. Left as a known, narrower follow-up rather than
+fixed speculatively without a failing test to fix against.
+
+### Follow-up — converting an ENTIRE consumer, and the guard fix's own bug
+
+`imgui-cling` converting its remaining ~15 widgets (not just `button()`) to
+`Context` methods exercised something the single-widget proof-of-concept
+never did: `context.clg` now `#include`s TWELVE sibling `.clh` files (one
+per widget), each of which `#include`s `context.clh` right back — a much
+larger, denser circular-include graph than the original context.clg
+<-> button.clh pair.
+
+**Found the Step 37 guard fix (`main.cpp` unconditionally `#define`-ing a
+`.cpp`'s own companion-header guard before any `#include`) was WRONG in
+general**, not just incomplete — it only happened to work for the narrow
+case that first surfaced it. Compiling `drag_float.cpp` (needing `Context`,
+hence `#include "context.h"`) exposed the real flaw: `context.h`'s own
+preamble needs `#include "drag_float.h"` (for `Context::dragFloat`'s
+`DragFloatResult` return type) — but `drag_float.cpp` had ALREADY
+pre-defined `CEELING_GEN_DRAG_FLOAT_H` at ITS OWN file-top (the guard fix),
+so THAT specific inclusion silently no-op'd, and `DragFloatResult` was
+never actually declared by the point `context.h` needed it — the exact
+"declared too late" failure the original fix was meant to prevent, just
+relocated to a different file pair. Confirmed by reading `drag_float.h`'s
+own generated content directly: it DOES carry `DragFloatResult`'s full
+struct definition (unlike a plain class, a struct return type needs its
+real layout even in a declaration-only header, not a forward declaration)
+— so the type WAS available, just suppressed by a guard the wrong file had
+already claimed.
+
+**Root cause: a FILE-level guard is the wrong granularity.** Pre-defining
+one guard symbol for "this whole file's declaration content" assumes
+nothing else in the same translation unit will ever legitimately need that
+content to expand for real later — false the moment TWO OR MORE files
+mutually depend on each other's types, not just one pair.
+
+**Fixed with a PER-CLASS guard instead**: `AstEmitter::perClassGuardName`
+(`"CEELING_DECL_" + uppercased class name`) wraps ONLY the `"class X {
+... };"` declaration block — never the out-of-line method bodies, which
+must always compile regardless of guard state, since header-mode never
+emits them and they exist nowhere else to fall back to. Applied
+symmetrically in `emitClass` (`.cpp` mode) and `emitClassHeader` (`.h`
+mode), using the IDENTICAL guard-naming scheme, so whichever of "this
+class's own local declaration" or "a transitively-included copy of its
+header" is reached FIRST in a translation unit wins, and the other
+correctly no-ops — with NO assumption about which FILE that happens in,
+unlike the file-level version. This also correctly handles a file
+declaring MULTIPLE classes (each gets its own independent guard, not one
+shared guard that would wrongly suppress the SECOND class in the same
+file) and needed no `main.cpp` involvement at all once implemented purely
+inside `AstEmitter` — the earlier file-level `#define`-injection code in
+`main.cpp` was removed entirely, not just adjusted.
+
+**Also found and fixed a real, narrower naming collision** while adding the
+15 new forwarding methods: `Context` already had its own, previously-shipped
+`openModal(string id, float x, float y, float width, float height)` method
+(a plain state setter, from this project's earlier Modal work) with the
+EXACT SAME parameter types a forwarding wrapper for `modal.clg`'s free
+function `openModal(ctx, id, screenWidth, screenHeight, width, height)`
+would need — a genuine redefinition, not the harmless same-name-different-
+scope case every other widget was. Resolved by NOT forwarding `openModal`/
+`drawPendingModal` at all — `Context` already has an adequate native API
+for modal state, and callers needing the free function's screen-centering
+convenience still call it directly, unchanged. Documented directly in
+`context.clg` rather than worked around by renaming already-shipped,
+already-verified code for a naming nicety.
+
+**Verified end-to-end**: all ~15 remaining `imgui-cling` widgets (checkbox,
+slider, dragFloat, comboBox, comboBoxPopup, drawPendingPopup, listBox,
+menuButton, drawPendingMenu, radioButton, selectable, tabBar, treeNode,
+colorEdit3) converted to `Context` methods; every call site in
+`layout_demo.clg` updated to the `ctx.widget(...)` form. Full project
+transpiled, compiled (every translation unit, zero errors), linked, ran;
+direct interaction confirmed the checkbox pair, radio buttons, and list box
+all still fire correctly (console log), and the user separately confirmed
+every other widget (slider, color edit, drag float, tree node, tab bar,
+combo box, table, delete modal) still works visually. CeeLing's own safety
+suite (126/126, `--strict`) and `ctest` (13/13) both re-confirmed green
+after the guard-mechanism rewrite.

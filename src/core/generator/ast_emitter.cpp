@@ -917,7 +917,17 @@ void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
     }
 }
 
+std::string AstEmitter::perClassGuardName(const std::string& className) {
+    std::string guard = className;
+    for (char& c : guard) {
+        c = (std::isalnum(static_cast<unsigned char>(c)) ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : '_');
+    }
+    return "CEELING_DECL_" + guard;
+}
+
 void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out) {
+    const std::string guard = perClassGuardName(cls.name);
+    out << "#ifndef " << guard << "\n#define " << guard << "\n";
     out << "class " << cls.name;
     // `std::enable_shared_from_this<T>` is a SEPARATE, compiler-generated base from
     // the user's own `cls.baseClass` (single inheritance) -- auto-derived whenever
@@ -1055,7 +1065,7 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
             outOfLineMethods.push_back(method);
         }
     }
-    out << "};\n\n";
+    out << "};\n#endif // " << guard << "\n\n";
 
     for (const auto* ctor : outOfLineCtors) {
         emitFunction("", cls.name + "::" + ctor->name, ctor->parameters, ctor->body, out, cls.name, 0,
@@ -1092,6 +1102,8 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
 }
 
 void AstEmitter::emitClassHeader(const ClassDeclaration& cls, std::ostringstream& out) {
+    const std::string guard = perClassGuardName(cls.name);
+    out << "#ifndef " << guard << "\n#define " << guard << "\n";
     out << "class " << cls.name;
     std::vector<std::string> bases;
     if (!cls.baseClass.empty()) bases.push_back("public " + cls.baseClass);
@@ -1165,7 +1177,7 @@ void AstEmitter::emitClassHeader(const ClassDeclaration& cls, std::ostringstream
             out << indentStr(1) << sig << ";\n";
         }
     }
-    out << "};\n\n";
+    out << "};\n#endif // " << guard << "\n\n";
 
     for (const auto* method : specializations) {
         // Declaration only: `template<> ReturnType Node::as<int>(params);` -- build

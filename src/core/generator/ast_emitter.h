@@ -67,6 +67,22 @@ private:
     // need their full definition even for a declaration-only header, since a
     // struct field/return is embedded by value, not smart-pointer-wrapped).
     std::set<std::string> collectForwardDeclarableClasses(const Program& program) const;
+    // "CEELING_DECL_" + uppercased class name (non-alnum -> '_') -- a PER-CLASS
+    // include-guard-style symbol, independent of any FILE-level guard
+    // (emitHeader's own `#ifndef <FILE>_H` wraps a whole header, potentially
+    // several classes at once; this wraps exactly one class's own
+    // declaration). Used by both emitClass (.cpp mode) and emitClassHeader
+    // (.h mode) to wrap JUST the "class X { ... };" declaration block (never
+    // the out-of-line method bodies, which must always compile regardless)
+    // in `#ifndef GUARD / #define GUARD ... #endif` -- so whichever of the
+    // two reaches a given class's declaration FIRST within one translation
+    // unit "wins", and the other is correctly skipped instead of producing a
+    // duplicate definition. See Chapter 18 Step 37's own follow-up for the
+    // real bug this fixes (a genuinely circular `.clh` include pair, e.g.
+    // context.clg <-> button.clh, could otherwise see the SAME class
+    // declared twice -- once via context.cpp's own local declaration, once
+    // via a transitively-included copy of context.h).
+    static std::string perClassGuardName(const std::string& className);
     bool isClassType(const std::string& type) const;
     // A value-type class (see SmartPointerAnalyzer::isValueTypeClass) -- never
     // wrapped in a smart pointer, accessed via `.` not `->`, constructed as a
