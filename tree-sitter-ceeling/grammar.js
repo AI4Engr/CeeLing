@@ -468,9 +468,13 @@ module.exports = grammar({
     ),
 
     binary_expression: $ => choice(
-      // Multiplicative `* /`: highest of the arithmetic group, left-associative,
-      // matching C++ precedence (tighter than `+ -`).
-      prec.left(9, seq($.expression, choice('*', '/'), $.expression)),
+      // Multiplicative `* / %`: highest of the arithmetic group, left-associative,
+      // matching C++ precedence (tighter than `+ -`). `%` added for zlib-cling's
+      // adler32 (`% 65521`) and zlib header check (`% 31`) -- mechanically
+      // identical to `*`/`/`, same tier, no new AST/checker work (ast_builder,
+      // EscapeHatchChecker, DanglingChecker are all operator-text-agnostic here,
+      // same as every prior binary-operator addition).
+      prec.left(9, seq($.expression, choice('*', '/', '%'), $.expression)),
       // Arithmetic `+ -`: left-associative, so `a + b + c` chains. Operands are
       // full expressions (not just primaries), enabling nesting like `(a + b) - c`.
       prec.left(8, seq($.expression, choice('+', '-'), $.expression)),
@@ -506,9 +510,9 @@ module.exports = grammar({
       prec.left(6, seq($.expression, choice(token('<<'), token('>>')), $.expression)),
       // Bitwise AND: above bitwise OR -- matching real C++ precedence relative
       // to `|` (`a & b | c` groups as `(a & b) | c`). Scope deliberately
-      // narrow: only `&`/`|` here -- no `^`/`~` (not needed by any current
-      // consumer; `~` would additionally need a new unary_expression
-      // alternative). Shift `<<`/`>>` lives one tier ABOVE, see above.
+      // narrow: only `&`/`|` here -- no `^` (not needed by any current
+      // consumer). `~` (bitwise NOT) is a unary_expression alternative, see
+      // below. Shift `<<`/`>>` lives one tier ABOVE, see above.
       prec.left(5, seq($.expression, '&', $.expression)),
       // Bitwise OR: below bitwise AND (matching C++: `a & b | c` groups as
       // `(a & b) | c`), above logical &&/||.
@@ -530,18 +534,21 @@ module.exports = grammar({
     // Unary prefix operators: `!x`, `-x`, `*x` (dereference, e.g. an iterator's
     // `operator*`), `++x` (prefix increment ONLY -- no postfix `x++`, unneeded by
     // range-for's `++it` desugaring and would need a disambiguating dummy-`int`
-    // parameter shape nothing here requires). Higher precedence than any binary
-    // operator -- kept one tier above binary_expression's own highest tier
-    // (currently `* /` at 9; bumped from 6 when bitwise `&`/`|` were inserted
-    // below comparison, then 7->9 and now 9->10 when bitwise shift was
-    // inserted and the arithmetic/comparison group shifted up to make room --
-    // this must move with that group to preserve the invariant, not get left
-    // behind at the old number). `*` here is
-    // unambiguous against binary_expression's multiplication rule (`a * b`)
-    // -- a leading `*` can only be prefix since binary `*` requires an
-    // already-parsed left operand first.
+    // parameter shape nothing here requires), `~x` (bitwise NOT -- added for
+    // zlib-cling's stored-block NLEN check, `~nlenField & 0xFFFF`; unlike `*`
+    // it has no binary_expression counterpart at all, so it is unambiguous by
+    // construction -- no disambiguation concern the way `*` needed one).
+    // Higher precedence than any binary operator -- kept one tier above
+    // binary_expression's own highest tier (currently `* / %` at 9; bumped
+    // from 6 when bitwise `&`/`|` were inserted below comparison, then 7->9
+    // and now 9->10 when bitwise shift was inserted and the arithmetic/
+    // comparison group shifted up to make room -- this must move with that
+    // group to preserve the invariant, not get left behind at the old
+    // number). `*` here is unambiguous against binary_expression's
+    // multiplication rule (`a * b`) -- a leading `*` can only be prefix since
+    // binary `*` requires an already-parsed left operand first.
     unary_expression: $ => prec(10, seq(
-      choice('!', '-', '*', '++'),
+      choice('!', '-', '*', '++', '~'),
       $.expression
     )),
 

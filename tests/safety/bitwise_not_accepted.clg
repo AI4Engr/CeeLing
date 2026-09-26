@@ -1,0 +1,26 @@
+//@ expect: accept
+//@ reason: `~` (bitwise NOT) did not exist in CeeLing's grammar -- only binary
+//@ reason: `&`/`|` and shift existed, no unary bitwise op. Added while building
+//@ reason: `../zlib-cling`'s inflate slice, which needs it for DEFLATE's stored-
+//@ reason: block validation: the format stores a length LEN and its one's-
+//@ reason: complement NLEN, and the decoder must check `LEN == (~NLEN) & 0xFFFF`.
+//@ reason: Unlike `*` (which is both a unary dereference and a binary operator,
+//@ reason: requiring precedence care to disambiguate), `~` has NO binary
+//@ reason: counterpart in CeeLing at all, so adding it to unary_expression's
+//@ reason: choice list is unambiguous by construction -- no grammar conflict, no
+//@ reason: AST/checker change (ast_builder's single-character operator extraction
+//@ reason: already handles any one-char op; ast_emitter passes operator_str
+//@ reason: through verbatim, same as every other unary operator).
+//@ run: 65514 15 4
+//
+// `withMask` mirrors the actual NLEN check shape: `(~n) & 0xFFFF`.
+
+int main() {
+    int n = 21;
+    int withMask = (~n) & 65535;   // one's complement of 21, masked to 16 bits
+    int narrow = (~0) & 15;        // ~0 masked to 4 bits is all-ones = 15
+    int withAdd = ~0 + 5;          // ~0 == -1 in two's complement, so -1 + 5 = 4
+
+    std::cout << withMask << " " << narrow << " " << withAdd << std::endl;
+    return 0;
+}

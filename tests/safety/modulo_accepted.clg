@@ -1,0 +1,26 @@
+//@ expect: accept
+//@ reason: `%` (modulo) did not exist in CeeLing's grammar at all -- only `*`/`/`
+//@ reason: were in the multiplicative tier. Added while building `../zlib-cling`'s
+//@ reason: inflate slice, which needs it for adler32's running-sum reduction
+//@ reason: (`% 65521`) and the zlib container header's own checksum
+//@ reason: (`(cmf*256+flg) % 31 != 0`) -- both load-bearing, not optional. Same
+//@ reason: tier as `*`/`/` (matching C++ precedence), so `a + b % c` groups as
+//@ reason: `a + (b % c)`, and mechanically identical to every prior binary
+//@ reason: operator addition: ast_builder/EscapeHatchChecker/DanglingChecker are
+//@ reason: operator-text-agnostic, so only the grammar needed a change.
+//@ run: 1 5 12 0
+//
+// Proves precedence against `+` (`4 + 10 % 3` must be `4 + (10%3)` = 5, NOT
+// `(4+10) % 3` = 2) and a realistic checksum-style expression: a well-formed
+// zlib header's (CMF*256 + FLG) % 31 == 0 (120, 1 is a real zlib header pair).
+
+int main() {
+    int basic = 10 % 3;                     // 1
+    int withAdd = 4 + 10 % 3;               // 4 + (10 % 3) = 4 + 1 = 5
+    int precedence = 10 + 5 % 3;            // 10 + (5 % 3) = 10 + 2 = 12
+    int headerCheck = (120 * 256 + 1) % 31; // 0 -- a valid zlib header
+
+    std::cout << basic << " " << withAdd << " " << precedence << " "
+              << headerCheck << std::endl;
+    return 0;
+}
