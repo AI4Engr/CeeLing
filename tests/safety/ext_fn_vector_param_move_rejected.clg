@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ reason: `a` is moved into fastMemcmp8() exactly like any other
+//@ container/object-typed call argument; using `a` afterward is
+//@ use-after-move. Proves ext_fn call arguments are NOT exempt from the
+//@ move-tracking every other function call already gets -- an ext_fn is not
+//@ a hole that lets a container argument escape tracking.
+
+ext_fn int fastMemcmp8(std::vector<int> a, int offA, std::vector<int> b, int offB, int len);
+
+int main() {
+    std::vector<int> a;
+    a.push_back(1);
+    std::vector<int> b;
+    b.push_back(1);
+    int result = fastMemcmp8(a, 0, b, 0, 1);
+    a.push_back(2);      // ERROR: use of moved-from `a`
+    return 0;
+}

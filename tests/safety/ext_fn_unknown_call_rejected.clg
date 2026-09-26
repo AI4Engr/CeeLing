@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ reason: `mySqrt` was declared via ext_fn, but `myCube` was NEVER declared
+//@ (not via ext_fn, not via an ordinary function_declaration) -- proves
+//@ ext_fn is purely ADDITIVE to the known-callable set, not a mechanism that
+//@ widens what counts as "known" beyond each individual declaration it
+//@ actually makes. The presence of one legitimate ext_fn in a program must
+//@ not make an unrelated undeclared call any more trusted than
+//@ unknown_call_rejected.clg's plain baseline case.
+
+ext_fn double mySqrt(double x);
+
+int main() {
+    double y = myCube(4.0);   // ERROR: no ext_fn/function_declaration for myCube
+    std::cout << y << std::endl;
+    return 0;
+}

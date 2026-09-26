@@ -42,6 +42,7 @@ private:
     StatementPtr buildCommentStatement(TSNode node, const std::string& source);
     StatementPtr buildIncludeStatement(TSNode node, const std::string& source);
     StatementPtr buildFunctionDeclaration(TSNode node, const std::string& source);
+    StatementPtr buildExternFunctionDeclaration(TSNode node, const std::string& source);
     StatementPtr buildClassDeclaration(TSNode node, const std::string& source);
     StatementPtr buildEnumDeclaration(TSNode node, const std::string& source);
     // Desugars a namespace body into a flat list of top-level statements (see the

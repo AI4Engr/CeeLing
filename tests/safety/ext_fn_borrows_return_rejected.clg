@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ reason: `sliceOf` declares `borrows 0` -- its return aliases parameter 0
+//@ (the same shape DanglingChecker::FunctionSummary::returnBorrowsParam
+//@ tracks for an auto-derived summary, just hand-supplied here since ext_fn
+//@ has no body to infer it from). `b = sliceOf(a, 0)` registers `b` as an
+//@ observer of `a`; `a` is then moved again (`a.push_back(2)`), which must
+//@ kill `a` as an owner and make the observer `b` dangling on its next use.
+//@ Proves the hand-written borrow annotation feeds the SAME dangling
+//@ machinery an auto-derived summary would, not a separate, weaker path.
+
+ext_fn std::vector<int> sliceOf(std::vector<int> data, int start) borrows 0;
+
+int main() {
+    std::vector<int> a;
+    a.push_back(1);
+    std::vector<int> b = sliceOf(a, 0);
+    a.push_back(2);      // a is moved again -- b's owner is now gone
+    int x = b[0];         // ERROR: use of dangling observer `b`
+    return 0;
+}

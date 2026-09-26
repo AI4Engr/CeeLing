@@ -40,6 +40,7 @@ module.exports = grammar({
       $.variable_declaration,
       $.container_declaration,
       $.function_declaration,
+      $.ext_fn_declaration,
       $.return_statement,
       $.main_function,
       $.class_declaration,
@@ -53,6 +54,48 @@ module.exports = grammar({
       $.throw_statement,
       $.try_statement,
       $.expression_statement
+    ),
+
+    // `ext_fn ReturnType name(params) [borrows N];` -- a pure SIGNATURE
+    // declaration for a function whose real implementation is hand-written
+    // C++ living outside CeeLing's own analysis (linked in via an ordinary
+    // `#include`, exactly like imgui-cling's gfx_shim.h pattern -- see
+    // library_summary.cpp's isKnownQualifiedFreeFunction doc comment). This
+    // is CeeLing's escape hatch for "a little hand-written C++ at the
+    // bottom" (CLAUDE.md/TODO.md's "External primitive-only function
+    // declarations" gap) -- the source-level-keyword design the project
+    // owner chose over a project-local declaration file (`.ceeling_extern_fns`)
+    // specifically so the trust boundary is visible at the call site, not
+    // hidden in a sibling file that can silently drift out of sync.
+    //
+    // No body, ends in `;` -- reuses `parameter_list` verbatim (so
+    // `rejectObserverParams` keeps rejecting `ref` params here exactly like
+    // an ordinary function_declaration, no new grammar-level rejection
+    // needed). Leads with the `ext_fn` keyword for the SAME non-ambiguity
+    // reason `closure_expression` leads with `closure`: `function_declaration`
+    // has no leading keyword (starts directly with `$.type`), so a keyword
+    // prefix here is what keeps the two productions unambiguous at the same
+    // $.statement position with no `conflicts:` entry needed.
+    //
+    // `borrows N` is the ONLY new syntax beyond a bare signature: declares
+    // that the return value aliases (borrows from) parameter index N,
+    // matching DanglingChecker::FunctionSummary's own returnBorrowsParam
+    // field. Absent means fresh/owned, the overwhelmingly common case (a
+    // primitive/vector-returning helper like fastMemcmp8 needs no
+    // annotation at all). A trailing clause rather than a per-parameter
+    // decoration: only the RETURN can ever need a borrow annotation, since
+    // CeeLing bans `ref` parameters outright, so every parameter is always
+    // moved into the callee -- there is no per-parameter borrow state to
+    // decorate.
+    ext_fn_declaration: $ => seq(
+      'ext_fn',
+      $.type,
+      $.identifier,
+      '(',
+      optional($.parameter_list),
+      ')',
+      optional(seq('borrows', $.number)),
+      ';'
     ),
 
     // Declares a SPECIALIZATION of an EXISTING primary generic method (a

@@ -379,6 +379,8 @@ StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) 
         result = buildIncludeStatement(node, source);
     } else if (strcmp(node_type, "function_declaration") == 0) {
         result = buildFunctionDeclaration(node, source);
+    } else if (strcmp(node_type, "ext_fn_declaration") == 0) {
+        result = buildExternFunctionDeclaration(node, source);
     } else if (strcmp(node_type, "class_declaration") == 0) {
         result = buildClassDeclaration(node, source);
     } else if (strcmp(node_type, "enum_declaration") == 0) {
@@ -723,6 +725,101 @@ StatementPtr ASTBuilder::buildFunctionDeclaration(TSNode node, const std::string
 
     return std::make_unique<FunctionDeclaration>(returnType, funcName,
                                                  std::move(parameters), std::move(body));
+}
+
+StatementPtr ASTBuilder::buildExternFunctionDeclaration(TSNode node, const std::string& source) {
+    // ext_fn_declaration: 'ext_fn' type identifier "(" optional(parameter_list) ")"
+    //                     optional('borrows' number) ";"
+    // Unlike function_declaration, this production's FIRST child is the leading
+    // 'ext_fn' keyword itself (an anonymous token, but ts_node_child (unlike the
+    // tree-sitter CLI's pretty-printer, which hides anonymous nodes by default)
+    // still counts it) -- so type/name can't be read by fixed numeric index the
+    // way function_declaration's builder does. Matched by type name while
+    // iterating instead, the same way buildClosureExpression's own leading
+    // 'closure' keyword is handled.
+    std::string returnType;
+    std::string funcName;
+    bool sawReturnType = false;
+    std::vector<std::pair<std::string, std::string>> parameters;
+    int borrowsParam = -1;
+
+    uint32_t childCount = ts_node_child_count(node);
+    for (uint32_t i = 0; i < childCount; i++) {
+        TSNode child = ts_node_child(node, i);
+        const char* childType = ts_node_type(child);
+
+        if (strcmp(childType, "type") == 0 && !sawReturnType) {
+            returnType = getNodeText(child, source);
+            sawReturnType = true;
+        } else if (strcmp(childType, "identifier") == 0 && sawReturnType && funcName.empty()) {
+            funcName = getNodeText(child, source);
+        } else if (strcmp(childType, "parameter_list") == 0) {
+            rejectObserverParams(child);
+            uint32_t paramCount = ts_node_child_count(child);
+            std::string pendingType;
+            for (uint32_t j = 0; j < paramCount; j++) {
+                TSNode paramNode = ts_node_child(child, j);
+                const char* pt = ts_node_type(paramNode);
+                if (strcmp(pt, "type") == 0) {
+                    pendingType = getNodeText(paramNode, source);
+                } else if (strcmp(pt, "identifier") == 0 && !pendingType.empty()) {
+                    parameters.push_back({pendingType, getNodeText(paramNode, source)});
+                    pendingType.clear();
+                }
+            }
+        } else if (strcmp(childType, "number") == 0) {
+            // The optional `borrows N` clause's N -- the only number that can ever
+            // appear as a direct child of this production (parameter default
+            // values don't exist in this grammar), so no further disambiguation
+            // is needed.
+            borrowsParam = std::stoi(getNodeText(child, source));
+        } else if (strcmp(childType, "ERROR") == 0 || ts_node_is_missing(child)) {
+            rejectUnbuildableChild(child, source);
+        }
+    }
+
+    // v1 scope boundary (see TODO.md/CLAUDE.md's ext_fn design record): an
+    // external function's parameters/return must be primitive or
+    // std::vector<primitive> -- never a bare class name. Object-typed ext_fn
+    // signatures need a real hand-written borrow-summary syntax beyond a
+    // single `borrows N` return clause (e.g. which param a NON-return
+    // parameter borrows from another parameter), which does not exist yet.
+    // Conservative reject here, at the parse boundary, rather than letting an
+    // unsupported shape silently reach the checkers below and be mishandled.
+    auto isSupportedExternType = [](const std::string& type) {
+        if (isPrimitiveType(type)) return true;
+        if (isVectorType(type)) return isPrimitiveType(vectorElementType(type));
+        return false;
+    };
+    auto rejectUnsupportedType = [&](const std::string& type, const std::string& context) {
+        if (isSupportedExternType(type)) return;
+        std::ostringstream oss;
+        const TSPoint p = ts_node_start_point(node);
+        oss << "error[semantic/forbidden-construct]: ext_fn " << context << " type `"
+            << type << "` is not supported (line " << (p.row + 1) << ", column "
+            << (p.column + 1) << "). ext_fn signatures are restricted to primitive "
+               "types (int, float, double, bool, string, char) and "
+               "std::vector<primitive> for now -- a class-typed ext_fn parameter or "
+               "return needs a hand-written borrow-summary annotation that isn't "
+               "designed yet (see TODO.md's ext_fn entry).";
+        throw std::runtime_error(oss.str());
+    };
+    rejectUnsupportedType(returnType, "return");
+    for (const auto& [paramType, paramName] : parameters) {
+        rejectUnsupportedType(paramType, "parameter `" + paramName + "`");
+    }
+    if (borrowsParam >= static_cast<int>(parameters.size())) {
+        std::ostringstream oss;
+        const TSPoint p = ts_node_start_point(node);
+        oss << "error[semantic/forbidden-construct]: ext_fn `" << funcName
+            << "` declares `borrows " << borrowsParam << "` but has only "
+            << parameters.size() << " parameter(s) (line " << (p.row + 1)
+            << ", column " << (p.column + 1) << ").";
+        throw std::runtime_error(oss.str());
+    }
+
+    return std::make_unique<ExternFunctionDeclaration>(returnType, funcName,
+                                                        std::move(parameters), borrowsParam);
 }
 
 ExpressionPtr ASTBuilder::buildFunctionCall(TSNode node, const std::string& source) {

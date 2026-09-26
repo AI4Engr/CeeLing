@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ reason: the fastMemcmp8-shaped motivating case -- ext_fn with
+//@ std::vector<int> parameters and a plain int return. A container argument
+//@ passed into an ext_fn call is moved into the callee exactly like any
+//@ other object/container-typed call argument (CeeLing bans `ref`
+//@ parameters outright, so this is the universal default, not a special
+//@ ext_fn rule). This fixture only exercises the ACCEPT side (no reuse of
+//@ `a`/`b` after the call) -- see ext_fn_vector_param_move_rejected.clg for
+//@ the paired negative control proving the move is actually tracked, not
+//@ silently ignored.
+
+ext_fn int fastMemcmp8(std::vector<int> a, int offA, std::vector<int> b, int offB, int len);
+
+int main() {
+    std::vector<int> a;
+    a.push_back(1);
+    std::vector<int> b;
+    b.push_back(1);
+    int result = fastMemcmp8(a, 0, b, 0, 1);
+    std::cout << result << std::endl;
+    return 0;
+}

@@ -1,0 +1,21 @@
+//@ expect: reject
+//@ reason: an ext_fn parameter typed as a bare class name is outside v1's
+//@ scope (primitive types and std::vector<primitive> only) -- a class-typed
+//@ ext_fn signature needs a real hand-written borrow-summary annotation
+//@ beyond the single `borrows N` return clause (e.g. "this non-return
+//@ parameter is borrowed by the object in that parameter"), which does not
+//@ exist yet. ASTBuilder::buildExternFunctionDeclaration rejects this at
+//@ the parse boundary rather than letting an unsupported shape silently
+//@ reach the checkers below and be mishandled.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+ext_fn int inspect(Node n);   // ERROR: class-typed ext_fn parameter unsupported
+
+int main() {
+    return 0;
+}

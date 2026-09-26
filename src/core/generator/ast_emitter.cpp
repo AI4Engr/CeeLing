@@ -205,6 +205,9 @@ void AstEmitter::collectClassNames(const Program& program) {
                 functionParams_[qualified] = fn->parameters;
                 functionReturnType_[qualified] = fn->returnType;
             }
+        } else if (auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt.get())) {
+            functionParams_[extFn->name] = extFn->parameters;
+            functionReturnType_[extFn->name] = extFn->returnType;
         }
     }
     // Base-before-derived flattening. This is the highest-stakes of the four: unlike
@@ -932,6 +935,17 @@ void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
         // through from this, the ONLY free-function call site.
         emitFunction(fn->returnType, fn->name, fn->parameters, fn->body, out,
                      "", 0, false, false, false, fn->name);
+    } else if (auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt)) {
+        // ext_fn emits ONLY a forward declaration -- never a body. The real
+        // implementation is hand-written C++ the user links in separately
+        // (reached via an ordinary #include, exactly like imgui-cling's
+        // gfx_shim.h pattern -- see library_summary.cpp's
+        // isKnownQualifiedFreeFunction doc comment). CeeLing emits the trust
+        // boundary, never fabricates a body for it.
+        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+        std::string sig = buildFunctionSignature(extFn->returnType, extFn->name,
+                                                  extFn->parameters, "", false, false, false, extFn->name);
+        out << sig << ";\n\n";
     } else if (auto mn = dynamic_cast<const MainFunction*>(stmt)) {
         emitFunction(mn->returnType, "main", {}, mn->body, out);
     } else if (dynamic_cast<const IncludeStatement*>(stmt)) {
@@ -1233,6 +1247,15 @@ void AstEmitter::emitTopLevelHeader(const Statement* stmt, std::ostringstream& o
         varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
         std::string sig = buildFunctionSignature(fn->returnType, fn->name, fn->parameters,
                                                   "", false, false, false, fn->name);
+        out << sig << ";\n\n";
+    } else if (auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt)) {
+        // Identical shape to an ordinary FunctionDeclaration's header
+        // declaration above -- an ext_fn already IS just a signature, so
+        // header emission needs no special-casing beyond reusing the same
+        // buildFunctionSignature call.
+        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+        std::string sig = buildFunctionSignature(extFn->returnType, extFn->name, extFn->parameters,
+                                                  "", false, false, false, extFn->name);
         out << sig << ";\n\n";
     } else if (dynamic_cast<const MainFunction*>(stmt)) {
         // A header never declares main -- the definition lives only in the one .cpp

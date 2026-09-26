@@ -245,6 +245,33 @@
     }
   },
   {
+    "type": "ext_fn_declaration",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "number",
+          "named": true
+        },
+        {
+          "type": "parameter_list",
+          "named": true
+        },
+        {
+          "type": "type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "external_method_specialization",
     "named": true,
     "fields": {},
@@ -733,6 +760,10 @@
           "named": true
         },
         {
+          "type": "ext_fn_declaration",
+          "named": true
+        },
+        {
           "type": "external_method_specialization",
           "named": true
         },
@@ -1088,6 +1119,10 @@
     "named": false
   },
   {
+    "type": "borrows",
+    "named": false
+  },
+  {
     "type": "catch",
     "named": false
   },
@@ -1126,6 +1161,10 @@
   },
   {
     "type": "enum",
+    "named": false
+  },
+  {
+    "type": "ext_fn",
     "named": false
   },
   {

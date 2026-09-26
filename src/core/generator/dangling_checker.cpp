@@ -209,6 +209,19 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                 functionReturnType_[qualified] = fn->returnType;
                 summaries_[summaryKey("", qualified)] = summaries_[summaryKey("", fn->name)];
             }
+        } else if (auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt.get())) {
+            // No body to derive a summary FROM -- the summary is the hand-
+            // declared `borrows N` fact itself (or -1, fresh/owned, matching
+            // FunctionSummary's own default). Still registered into
+            // functionParams_/functionReturnType_ exactly like an ordinary
+            // FunctionDeclaration, since resolveCallReturnAlias and argument
+            // move-application key off those same maps regardless of which
+            // kind of declaration produced them.
+            functionParams_[extFn->name] = extFn->parameters;
+            functionReturnType_[extFn->name] = extFn->returnType;
+            FunctionSummary summary;
+            summary.returnBorrowsParam = extFn->returnBorrowsParam;
+            summaries_[summaryKey("", extFn->name)] = summary;
         }
     }
     // Base-before-derived again, for the same reason: `d.inheritedMethod(x)` has to

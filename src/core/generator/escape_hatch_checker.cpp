@@ -91,6 +91,15 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
                 knownFreeFunctions_.insert(fn->namespaceName + "::" + fn->name);
                 freeFunctionReturnType_[fn->namespaceName + "::" + fn->name] = fn->returnType;
             }
+        } else if (auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt.get())) {
+            // An ext_fn has no body for isKnownCallable to reason about beyond
+            // "is this name callable at all" -- same treatment as an ordinary
+            // FunctionDeclaration at THIS checker's level, which never looks
+            // past the name/arity here (DanglingChecker is what consults the
+            // hand-declared borrow summary; SmartPointerAnalyzer needs no
+            // ext_fn awareness since v1 is primitive/vector-of-primitive only).
+            knownFreeFunctions_.insert(extFn->name);
+            freeFunctionReturnType_[extFn->name] = extFn->returnType;
         }
     }
     // Same base-before-derived flattening as collectClasses: without it,

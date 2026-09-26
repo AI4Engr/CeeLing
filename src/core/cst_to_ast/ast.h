@@ -318,6 +318,50 @@ public:
     }
 };
 
+// `ext_fn ReturnType name(params) [borrows N];` -- a pure signature
+// declaration for a function whose real implementation is hand-written C++
+// living outside CeeLing's own analysis (see grammar.js's ext_fn_declaration
+// doc comment for the full design rationale). Deliberately has NO body field
+// at all -- that structural absence, not just a naming difference, is what
+// distinguishes it from FunctionDeclaration and is why every checker that
+// walks FunctionDeclaration bodies (SmartPointerAnalyzer, DanglingChecker's
+// deriveSummaryForBody) simply has nothing to do for this node: there is no
+// body to infer ownership/borrow behavior from, only the hand-declared
+// returnBorrowsParam fact below.
+class ExternFunctionDeclaration : public Statement {
+public:
+    std::string returnType;
+    std::string name;
+    std::vector<std::pair<std::string, std::string>> parameters;
+    // Index into `parameters` that the return value aliases (borrows from),
+    // or -1 if the return is always fresh/owned -- mirrors
+    // DanglingChecker::FunctionSummary::returnBorrowsParam exactly, since an
+    // ext_fn's hand-written summary IS a FunctionSummary, just supplied by
+    // the user instead of derived from a body.
+    int returnBorrowsParam = -1;
+
+    ExternFunctionDeclaration(const std::string& retType,
+                              const std::string& func_name,
+                              std::vector<std::pair<std::string, std::string>> params,
+                              int borrowsParam)
+        : returnType(retType), name(func_name),
+          parameters(std::move(params)), returnBorrowsParam(borrowsParam) {}
+
+    std::string toString() const override {
+        std::string result = "ext_fn " + returnType + " " + name + "(";
+        for (size_t i = 0; i < parameters.size(); ++i) {
+            if (i > 0) result += ", ";
+            result += parameters[i].first + " " + parameters[i].second;
+        }
+        result += ")";
+        if (returnBorrowsParam >= 0) {
+            result += " borrows " + std::to_string(returnBorrowsParam);
+        }
+        result += ";";
+        return result;
+    }
+};
+
 class MainFunction : public Statement {
 public:
     std::string returnType;
