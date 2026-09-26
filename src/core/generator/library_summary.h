@@ -107,6 +107,21 @@ bool isKnownQualifiedFreeFunction(const std::string& qualifiedName);
 // "cling::fileExists" (can the path be opened for reading at all -- lets a caller
 // distinguish "file not found" from "file opened fine but is empty", which
 // readFileToString's own return value alone cannot, since both cases return "").
+//
+// "cling::readFileToBytes" (whole-file slurp as std::vector<int>, one element per
+// byte, empty vector on any failure) is the binary-safe sibling of
+// readFileToString -- found necessary while building zlib-cling's inflate.clg:
+// readFileToString's std::ifstream is opened WITHOUT std::ios::binary, so on
+// Windows it performs CRLF translation, which silently corrupts arbitrary binary
+// data containing a literal 0x0D byte (confirmed: a real zlib-compressed stream
+// can and does contain 0x0D in its payload). A DIFFERENT helper rather than a
+// flag on the existing one because the return TYPE differs (string vs
+// vector<int>), which is a real overload-shape difference this allow-list has no
+// mechanism to express on a single name. Each byte is widened via
+// static_cast<unsigned char> before landing in the int, so callers never hit the
+// signed-char sign-extension footgun (0xFF must read back as 255, not -1) --
+// pushed into the shim itself rather than left for every .clg caller to remember
+// `& 255`.
 bool isKnownRuntimeHelper(const std::string& qualifiedName);
 
 // EXPLORATORY Eigen spike (see CeeLing/TODO.md's Eigen entry) -- a narrow,

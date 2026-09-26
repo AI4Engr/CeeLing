@@ -203,14 +203,16 @@ bool isKnownBorrowingMethod(const std::string& className, const std::string& met
 }
 
 bool isKnownRuntimeHelper(const std::string& qualifiedName) {
-    static const std::set<std::string> kKnown = {"cling::readFileToString", "cling::fileExists"};
+    static const std::set<std::string> kKnown = {"cling::readFileToString", "cling::fileExists",
+                                                  "cling::readFileToBytes"};
     return kKnown.count(qualifiedName) > 0;
 }
 
 std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used) {
     std::string out;
     bool needNamespace = used.count("cling::readFileToString") > 0 ||
-                          used.count("cling::fileExists") > 0;
+                          used.count("cling::fileExists") > 0 ||
+                          used.count("cling::readFileToBytes") > 0;
     if (needNamespace) out += "namespace cling {\n";
     if (used.count("cling::fileExists") > 0) {
         out +=
@@ -227,6 +229,19 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used) 
             "    std::stringstream ss;\n"
             "    ss << fin.rdbuf();\n"
             "    return ss.str();\n"
+            "}\n";
+    }
+    if (used.count("cling::readFileToBytes") > 0) {
+        out +=
+            "inline std::vector<int> readFileToBytes(const std::string& path) {\n"
+            "    std::ifstream fin(path, std::ios::binary);\n"
+            "    if (!fin) { return std::vector<int>(); }\n"
+            "    std::vector<int> bytes;\n"
+            "    char c;\n"
+            "    while (fin.get(c)) {\n"
+            "        bytes.push_back(static_cast<int>(static_cast<unsigned char>(c)));\n"
+            "    }\n"
+            "    return bytes;\n"
             "}\n";
     }
     if (needNamespace) out += "} // namespace cling\n";

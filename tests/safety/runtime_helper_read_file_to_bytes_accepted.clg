@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ reason: `cling::readFileToBytes` is the binary-safe sibling of
+//@ reason: `cling::readFileToString` -- found necessary while building
+//@ reason: `../zlib-cling`'s inflate.clg: `readFileToString`'s std::ifstream opens
+//@ reason: WITHOUT std::ios::binary, so on Windows it performs CRLF translation,
+//@ reason: which silently corrupts arbitrary binary data containing a literal
+//@ reason: 0x0D byte (confirmed: a real zlib-compressed stream can and does
+//@ reason: contain 0x0D in its payload). Returns std::vector<int>, one element
+//@ reason: per byte, widened via static_cast<unsigned char> so high-bit bytes
+//@ reason: read back correctly (0xFF -> 255, not -1) with no `& 255` needed by
+//@ reason: the caller. Same allow-list mechanism as readFileToString/fileExists
+//@ reason: (isKnownRuntimeHelper), so needs no new AST/checker machinery --
+//@ reason: EscapeHatchChecker's plain-call allow-list check and
+//@ reason: AstEmitter::collectUsedRuntimeHelpers are both name-agnostic lookups
+//@ reason: into the same set.
+//@ run: len=0
+//
+// A nonexistent path is used deliberately, same reasoning as
+// runtime_helper_read_file_to_string_accepted.clg: no auxiliary file needed (the
+// safety runner compiles/runs fixtures from a scratch tmp dir), and it proves the
+// documented failure behavior (empty vector, no crash/exception) is real.
+
+int main() {
+    std::vector<int> bytes = cling::readFileToBytes("this_file_does_not_exist_12345.zbin");
+    std::cout << "len=" << bytes.size() << std::endl;
+    return 0;
+}
