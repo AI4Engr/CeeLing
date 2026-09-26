@@ -1,0 +1,38 @@
+//@ expect: accept
+//@ reason: LEXER GUARD for the one real risk in adding `>>`: a nested generic type
+//@ reason: closes with two ADJACENT `>` tokens (`std::vector<std::vector<int>>`),
+//@ reason: and `generic_type` spells those as two separate anonymous `'>'`
+//@ reason: literals. Introducing an explicit `token('>>')` for right shift can
+//@ reason: steal them, breaking every nested container declaration in the
+//@ reason: language. Tree-sitter's lexer is parse-state-aware so this is not
+//@ reason: automatically fatal -- but it is the kind of thing that must be
+//@ reason: TESTED rather than assumed, and it needs a fixture where both forms
+//@ reason: appear in the SAME file so a future grammar change cannot satisfy one
+//@ reason: at the other's expense.
+//@ run: 1 5
+//
+// If `token('>>')` ever wins over the generic closers, this fixture stops parsing
+// entirely rather than failing subtly. Note container_field_via_member_access_
+// accepted.clg and vector_field_push_back_new_accepted.clg also exercise nested
+// generics, but neither contains a shift, so neither pins the interaction.
+//
+// Deliberately does NOT reach through the outer container (`grid[0].size()`):
+// `v[i].method()` is a separate, already-recorded open bug (see TODO.md's
+// "call to unknown function/method 'typeName'" entry -- EscapeHatchChecker
+// resolves a receiver class by NAME and a SubscriptExpression has none). Pulling
+// it in here would make this fixture fail for a reason that has nothing to do
+// with the lexer interaction it exists to pin.
+
+int main() {
+    std::vector<std::vector<int>> grid;
+    std::vector<int> row;
+    row.push_back(1);
+    row.push_back(2);
+    grid.push_back(row);
+
+    int n = grid.size();      // 1 -- the nested-generic container is really usable
+    int shifted = 40 >> 3;    // 5 -- `>>` in the same translation unit
+
+    std::cout << n << " " << shifted << std::endl;
+    return 0;
+}

@@ -519,6 +519,31 @@ std::string AstEmitter::fieldType(const std::string& cls, const std::string& nam
     return fi == ci->second.end() ? "" : fi->second;
 }
 
+bool AstEmitter::isStreamChain(const Expression* expr) const {
+    // Walk to the chain's leftmost leaf through nested `<<` nodes: `a << b << c`
+    // parses left-associatively as `((a << b) << c)`, so the stream (if any) is
+    // at the bottom-left. Only `<<` is followed -- a `>>` node is never stream
+    // insertion in CeeLing (there is no `istream` type), and stopping at any
+    // other operator is what keeps `(x + y) << 2` a shift.
+    const Expression* leaf = expr;
+    while (auto bin = dynamic_cast<const BinaryExpression*>(leaf)) {
+        if (bin->operator_str != "<<") break;
+        leaf = bin->left.get();
+    }
+    // `std::cout`/`std::cerr`/`std::clog` -- a ScopedIdentifier, emitted verbatim.
+    if (auto scoped = dynamic_cast<const ScopedIdentifier*>(leaf)) {
+        return scoped->qualifiedName == "std::cout" ||
+               scoped->qualifiedName == "std::cerr" ||
+               scoped->qualifiedName == "std::clog";
+    }
+    // An `ostream`-typed local/param, e.g. the `out` in a user-written free
+    // `ostream operator<<(ostream out, Foo f) { out << ...; }`.
+    if (auto id = dynamic_cast<const Identifier*>(leaf)) {
+        return ostreamVars_.count(id->name) > 0;
+    }
+    return false;
+}
+
 std::string AstEmitter::exprObjectClass(const Expression* expr) const {
     if (dynamic_cast<const ThisExpression*>(expr) != nullptr) {
         // `this` used as an explicit expression (`this.field`, `this[key]`,
@@ -1296,6 +1321,10 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
             // reference, std::ostream cannot be passed by value at all.
             sig += "std::ostream& " + pname;
             noteVar(pname, VarKind::Value);
+            // Remember it IS a stream, so `out << x` inside the body is emitted
+            // as a stream chain rather than as an integer shift (both are the
+            // same `<<` BinaryExpression now -- see isStreamChain).
+            ostreamVars_.insert(pname);
         } else if (isValueType(ptype)) {
             // Passed by value, like an ordinary primitive -- value types are meant
             // to be cheap to copy (e.g. an iterator wrapping a single Node handle).
@@ -1989,7 +2018,14 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
     if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
         // Stream `<<` chains are left-associative and need no grouping parens — emit them
         // flat (`std::cout << a << b`). Other operators keep parens to preserve grouping.
-        if (bin->operator_str == "<<") {
+        //
+        // Gated on isStreamChain, NOT on the operator text alone: `<<` is also
+        // integer shift now, and dropping parens from a shift silently changes
+        // what the arithmetic means. `(1 << 4) + 1` emitted `(1 << 4 + 1)` under
+        // the old text-only check, which C++ regroups as `1 << (4+1)` -- the
+        // program printed 32 where the source says 17, with no diagnostic. A
+        // shift falls through to the generic parenthesized form below instead.
+        if (bin->operator_str == "<<" && isStreamChain(bin)) {
             return emitExpression(bin->left.get()) + " << " + emitExpression(bin->right.get());
         }
         // `a == b`/`a != b` where BOTH operands are the SAME smart-pointer-

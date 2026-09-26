@@ -1,0 +1,45 @@
+//@ expect: accept
+//@ reason: `<<` has TWO meanings in CeeLing (integer shift; ostream insertion) and
+//@ reason: they share ONE grammar precedence tier -- not by preference but by
+//@ reason: necessity: giving them separate tiers makes `a & b << c` an
+//@ reason: unresolvable GLR conflict (the two `<<` alternatives straddle `&`, so
+//@ reason: neither precedence can win), which `tree-sitter generate` refuses
+//@ reason: outright. So one tier, and the distinction is made downstream:
+//@ reason: AstEmitter::isStreamChain walks to the chain's leftmost leaf and asks
+//@ reason: whether it is a stream, which decides GROUPING only; WHICH C++
+//@ reason: operator actually runs is left to C++'s own overload resolution on the
+//@ reason: operand types. This fixture proves both meanings coexist in one file,
+//@ reason: including a shift nested INSIDE a stream chain -- the case where the
+//@ reason: two meanings appear in a single expression and the walk must not
+//@ reason: mistake the inner shift for part of the outer stream chain.
+//@ run: 16 shifted=16 nested=32 8
+//
+// Everything is printed on ONE line deliberately: the runner reads a single
+// `//@ run:` line (grep -m1) and compares it to the program's whole stdout, so a
+// fixture that prints several lines can never match.
+//
+// The `ostream`-typed-variable path is covered separately by
+// operator_stream_insertion_accepted.clg (a free `operator<<(ostream out, Foo f)`
+// whose body streams into `out`); isStreamChain recognizes that leftmost leaf via
+// ostreamVars_, not just std::cout/cerr/clog.
+
+int main() {
+    int a = 8;
+
+    // Plain shift, assigned out -- no stream anywhere.
+    int s = a << 1;
+
+    // One chain, four things proven (comments kept OUTSIDE the expression -- a
+    // comment interleaved between `<<` operands does not parse, which is a
+    // pre-existing limitation unrelated to shift):
+    //   * `s`            -- a shift computed earlier, streamed as a plain value
+    //   * `(a << 1)`     -- a shift as a direct OPERAND of the stream chain; the
+    //                       chain stays flat and paren-free, the shift keeps its
+    //                       own grouping
+    //   * `(a << 1) + 16`-- a shift nested deeper, mixed with arithmetic
+    //   * `(64 >> 3)`    -- a RIGHT shift in stream position, so both directions
+    //                       are exercised there
+    std::cout << s << " shifted=" << (a << 1) << " nested=" << (a << 1) + 16
+              << " " << (64 >> 3) << std::endl;
+    return 0;
+}

@@ -1626,6 +1626,19 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
             // (the left is always the stream itself); a bare Identifier is
             // required here (mirrors promoteArgsAgainstParams's own
             // resolution granularity).
+            //
+            // `<<` is ALSO integer shift now (one shared grammar tier -- see
+            // grammar.js), so this no longer sees stream chains exclusively. No
+            // stream-vs-shift test is needed to stay correct, though: reaching
+            // the promotion below requires the program to declare a free
+            // `operator<<` whose SECOND parameter is a known CLASS type, and an
+            // Identifier right operand whose own declared type matches it. A
+            // shift's operands are integers, so it fails `classNames.find` and
+            // falls straight through. The "left is always the stream" remark
+            // above is therefore still true of every case that gets PAST these
+            // guards, rather than of every `<<` node reaching this branch.
+            // AstEmitter::isStreamChain is where the distinction is actually
+            // made, because there it changes the emitted output.
             if (bin->operator_str == "<<") {
                 const auto opParamsIt = calleeParams.freeFunctions.find("operator<<");
                 if (opParamsIt != calleeParams.freeFunctions.end() && opParamsIt->second.size() == 2) {

@@ -1,0 +1,32 @@
+//@ expect: accept
+//@ reason: bitwise shift `<<`/`>>` is the language feature `../zlib-cling` was
+//@ reason: blocked on outright -- DEFLATE is a bit-oriented format, so every
+//@ reason: symbol read and written is a shift. Before the shared shift tier
+//@ reason: existed, `a >> c` had no `>>` token at all and mis-lexed as two `>`
+//@ reason: comparisons, emitting `((a > this) > c)` -- a phantom `this` the user
+//@ reason: never wrote, which g++ then rejected with "invalid use of 'this' in
+//@ reason: non-member function", an error pointing at generated C++ rather than
+//@ reason: at the .clg line. In other positions (`int b = zz >> 5;`) it was
+//@ reason: instead a hard parse error, so the failure mode was inconsistent.
+//@ run: 4 16 5 256 1
+//
+// Proves both shift directions parse, emit, compile and evaluate correctly, and
+// that a mask expression works as a shift operand (`1 << (zz & 31)`) -- the shape
+// real bit-reader code is built from (see zlib-rs inflate/bitreader.rs).
+
+int main() {
+    int a = 8;
+    int c = 1;
+    int zz = 40;
+    int mask = 31;
+
+    int right = a >> c;            // 8 >> 1 == 4
+    int left = a << c;             // 8 << 1 == 16
+    int wide = zz >> 3;            // 40 >> 3 == 5
+    int masked = 1 << (zz & mask); // 40 & 31 == 8, so 1 << 8 == 256
+    int zero = a >> 3;             // 8 >> 3 == 1
+
+    std::cout << right << " " << left << " " << wide << " " << masked << " "
+              << zero << std::endl;
+    return 0;
+}

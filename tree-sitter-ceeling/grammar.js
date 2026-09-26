@@ -470,21 +470,45 @@ module.exports = grammar({
     binary_expression: $ => choice(
       // Multiplicative `* /`: highest of the arithmetic group, left-associative,
       // matching C++ precedence (tighter than `+ -`).
-      prec.left(8, seq($.expression, choice('*', '/'), $.expression)),
+      prec.left(9, seq($.expression, choice('*', '/'), $.expression)),
       // Arithmetic `+ -`: left-associative, so `a + b + c` chains. Operands are
       // full expressions (not just primaries), enabling nesting like `(a + b) - c`.
-      prec.left(7, seq($.expression, choice('+', '-'), $.expression)),
+      prec.left(8, seq($.expression, choice('+', '-'), $.expression)),
       // Comparison/equality: below arithmetic (so `a + b == c` groups as `(a+b) == c`).
-      prec.left(6, seq($.expression, choice('==', '!=', '<', '>', '<=', '>='), $.expression)),
-      // Bitwise AND: below comparison, above bitwise OR -- matching real C++
-      // precedence exactly (`flags & Foo == 0` must group as `flags & (Foo ==
-      // 0)` in CeeLing the same way it does in the C++ it transpiles to, or
-      // generated code silently means something different than the source).
-      // Scope deliberately narrow: only `&`/`|` (GUI-style flag combination/
-      // testing) -- no `^`/`~`/`<<`/`>>` (bitwise shift would collide with
-      // `<<`'s existing stream-output meaning below, with no mechanism today
-      // to disambiguate by operand type; not needed for the narrow use case
-      // this was added for).
+      prec.left(7, seq($.expression, choice('==', '!=', '<', '>', '<=', '>='), $.expression)),
+      // Shift `<< >>` AND stream output `a << b << c` -- ONE shared tier, by
+      // necessity. `<<` has two meanings in CeeLing (integer shift; ostream
+      // insertion) and they cannot live at two different precedence tiers:
+      // tree-sitter's GLR then hits a genuinely unresolvable conflict on
+      // `a & b << c` (the two `<<` alternatives straddle `&`, so neither
+      // precedence can win) -- confirmed by `tree-sitter generate` refusing
+      // the two-tier version outright. So both meanings share this tier, and
+      // the distinction is made downstream, not by the parser:
+      //   * WHICH MEANING is emitted -- AstEmitter checks whether the chain's
+      //     leftmost leaf is a stream (std::cout/cerr/clog or an `ostream`-typed
+      //     variable). Stream chains emit flat and paren-free
+      //     (`std::cout << a << b`); everything else emits ordinary grouped
+      //     output (`(a << b)`), which is what makes `(1 << 4) + 1` mean 17.
+      //   * WHICH OPERATOR RESOLVES -- left entirely to C++'s own overload
+      //     resolution on the operand types: `int << int` is a shift,
+      //     `ostream << T` is insertion. CeeLing needs no operand-type analysis.
+      //
+      // Tier placement (6) is C++'s own: below arithmetic, so `a << b + c`
+      // groups as `a << (b+c)` (and `std::cout << a + b` as `<< (a+b)`, the
+      // behavior the old precedence-1 stream tier existed to get), and above
+      // comparison, so `a >> b == c` groups as `(a >> b) == c`. It sits ABOVE
+      // bitwise `&`/`|` below, unlike C++ -- real shift code parenthesizes its
+      // masks anyway (`1 << (x & 7)`, see zlib-rs's inflate/bitreader.rs), so
+      // this costs nothing in practice and leaves the `&`/`|` tiers unmoved.
+      // Both tokens are tokenized explicitly so they never mis-lex as two
+      // `<`/`>` comparisons -- that mis-lex is exactly what made `a >> c`
+      // silently emit `((a > this) > c)` before this tier existed.
+      prec.left(6, seq($.expression, choice(token('<<'), token('>>')), $.expression)),
+      // Bitwise AND: above bitwise OR -- matching real C++ precedence relative
+      // to `|` (`a & b | c` groups as `(a & b) | c`). Scope deliberately
+      // narrow: only `&`/`|` here -- no `^`/`~` (not needed by any current
+      // consumer; `~` would additionally need a new unary_expression
+      // alternative). Shift `<<`/`>>` lives one tier ABOVE, see above.
       prec.left(5, seq($.expression, '&', $.expression)),
       // Bitwise OR: below bitwise AND (matching C++: `a & b | c` groups as
       // `(a & b) | c`), above logical &&/||.
@@ -493,11 +517,14 @@ module.exports = grammar({
       // matching C++ precedence (&& binds tighter than ||).
       prec.left(3, seq($.expression, '&&', $.expression)),
       // Logical OR: loosest of the boolean/comparison group.
-      prec.left(2, seq($.expression, '||', $.expression)),
-      // Stream output `a << b << c`: n-ary left-associative chaining, precedence 1
-      // (below arithmetic, matching C++ so `std::cout << a + b` groups as `<< (a+b)`).
-      // `<<` is tokenized explicitly so it never mis-lexes as two `<` comparisons.
-      prec.left(1, seq($.expression, token('<<'), $.expression))
+      //
+      // NOTE stream output `<<` used to live below here at its own precedence-1
+      // tier. It now shares the shift tier above -- see that tier's comment for
+      // why two tiers for one token is impossible. One user-visible consequence:
+      // a stream operand that is itself a loose boolean expression now needs
+      // explicit parens (`std::cout << (a || b)`), since `<<` binds tighter
+      // than `||` as it does in real C++.
+      prec.left(2, seq($.expression, '||', $.expression))
     ),
 
     // Unary prefix operators: `!x`, `-x`, `*x` (dereference, e.g. an iterator's
@@ -505,13 +532,15 @@ module.exports = grammar({
     // range-for's `++it` desugaring and would need a disambiguating dummy-`int`
     // parameter shape nothing here requires). Higher precedence than any binary
     // operator -- kept one tier above binary_expression's own highest tier
-    // (currently `* /` at 8; bumped from 6 when bitwise `&`/`|` were inserted
-    // below comparison, so this had to move from 7 to 9 to preserve the
-    // invariant, not just get left behind at the old number). `*` here is
+    // (currently `* /` at 9; bumped from 6 when bitwise `&`/`|` were inserted
+    // below comparison, then 7->9 and now 9->10 when bitwise shift was
+    // inserted and the arithmetic/comparison group shifted up to make room --
+    // this must move with that group to preserve the invariant, not get left
+    // behind at the old number). `*` here is
     // unambiguous against binary_expression's multiplication rule (`a * b`)
     // -- a leading `*` can only be prefix since binary `*` requires an
     // already-parsed left operand first.
-    unary_expression: $ => prec(9, seq(
+    unary_expression: $ => prec(10, seq(
       choice('!', '-', '*', '++'),
       $.expression
     )),

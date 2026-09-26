@@ -205,6 +205,22 @@ private:
     // If `expr` is a bare identifier naming a container-typed local/param, return
     // its declared type string (e.g. "std::vector<Node>"); else "".
     std::string containerVarType(const Expression* expr) const;
+    // Is `expr` a STREAM-INSERTION `<<` chain (as opposed to an integer shift)?
+    // Both are the same `<<` BinaryExpression since CeeLing's grammar gives the
+    // token one shared precedence tier (two tiers is an unresolvable GLR conflict
+    // -- see grammar.js's shift tier comment), so the distinction is made here, by
+    // walking LEFT down nested `<<` nodes to the chain's leftmost leaf and asking
+    // whether that leaf is a stream: `std::cout`/`std::cerr`/`std::clog`, or an
+    // `ostream`-typed local/param (see ostreamVars_).
+    //
+    // This drives GROUPING, and getting it wrong is silently wrong arithmetic, not
+    // just ugly output: stream chains must emit flat and paren-free
+    // (`std::cout << a << b`), while a shift must emit ordinary parenthesized
+    // output, or the user's own parens are dropped and C++ regroups -- which is
+    // exactly how `(1 << 4) + 1` used to emit `(1 << 4 + 1)` and evaluate to 32
+    // instead of 17. It does NOT decide which C++ operator runs; that is left to
+    // C++'s own overload resolution on the operand types.
+    bool isStreamChain(const Expression* expr) const;
     // Is `expr` a call (`recv.method(...)`, receiver resolvable via exprObjectClass)
     // to a method with a `@ptr shared` return hint? A local declared from such a
     // call's result must ITSELF be shared_ptr (its C++ initializer is already a
@@ -309,6 +325,15 @@ private:
     // "std::vector<Node>"), so a call-argument receiver can be checked against the
     // library allow-list's share-vs-move rules (see library_summary.h).
     std::map<std::string, std::string> containerVarType_;
+    // Names of `ostream`-typed locals/params (see isOstreamType). Needed because
+    // `<<` is overloaded between stream insertion and integer shift: a chain whose
+    // leftmost leaf is one of these (or std::cout/cerr/clog) is a stream chain and
+    // emits flat and paren-free, while every other `<<` emits ordinary grouped
+    // output. Tracked as a name set rather than via varClass_/containerVarType_
+    // because `ostream` is neither a class type nor a container -- the parameter
+    // branch that recognizes it (isOstreamType, ast_emitter.cpp) previously
+    // recorded only VarKind::Value and dropped the type name entirely.
+    std::set<std::string> ostreamVars_;
     // Per-class field name -> declared type (for `this->` and nested `->` resolution).
     std::map<std::string, std::map<std::string, std::string>> classFields_;
     std::string currentClass_;  // class whose method is being emitted ("" = free fn)

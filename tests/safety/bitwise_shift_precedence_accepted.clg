@@ -1,0 +1,39 @@
+//@ expect: accept
+//@ reason: REGRESSION GUARD for a silent miscompilation that shipped. AstEmitter
+//@ reason: special-cased `<<` to emit WITHOUT grouping parens -- correct for
+//@ reason: `std::cout << a << b` (flat stream chains read naturally), but it
+//@ reason: dropped the user's OWN parens from a shift: `(1 << 4) + 1` emitted
+//@ reason: `(1 << 4 + 1)`, which C++ regroups as `1 << (4+1)`. The program
+//@ reason: printed 32 where the source plainly says 17 -- wrong arithmetic,
+//@ reason: compiles clean, no diagnostic. The paren-dropping is now gated on
+//@ reason: AstEmitter::isStreamChain rather than on the operator text alone.
+//@ reason: For a language whose contract is "if it compiles, it means what it
+//@ reason: says", a silent regrouping is the worst available failure mode, so
+//@ reason: BOTH groupings are asserted here, not just the fixed one.
+//@ run: 17 32 5 1 40
+//
+// Each line below pins one precedence relationship. If the shift tier is ever
+// moved, renumbered, or re-merged with another tier, at least one of these
+// changes value.
+
+int main() {
+    int one = 1;
+    int four = 4;
+
+    // The bug, verbatim: explicit parens must survive. 16 + 1 == 17, NOT 32.
+    int parens = (one << four) + one;
+    // Without parens, C++ binds `+` tighter than `<<`: 1 << 5 == 32.
+    int noParens = one << four + one;
+    // Shift binds tighter than comparison, so this is (40 >> 3) == 5, not
+    // 40 >> (3 == 5).
+    int cmpOperand = 40 >> 3;
+    // A comparison whose left side is a shift: (8 >> 3) == 1 is true.
+    int cmp = 0;
+    if ((8 >> 3) == 1) { cmp = 1; }
+    // Shift binds looser than arithmetic: 2 + 3 == 5, so 5 << 3 == 40.
+    int arith = 2 + 3 << 3;
+
+    std::cout << parens << " " << noParens << " " << cmpOperand << " " << cmp
+              << " " << arith << std::endl;
+    return 0;
+}
