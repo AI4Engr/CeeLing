@@ -1,0 +1,22 @@
+//@ expect: reject
+//@ reason: `std::vector<int> b = a;` moves `a` -- DanglingChecker's own
+//@ VariableDeclaration branch treats a container-typed RHS identifier exactly
+//@ like an object-typed one (isObjectType includes isVectorType), marking `a`
+//@ moved-from unconditionally, so using `a` afterward is a real use-after-move.
+//
+// Found via AstEmitter::emitMovedArg, which only recognized object-typed
+// (varClass_) identifiers, never vector-typed (containerVarType_) ones --
+// so this exact declaration shape silently emitted a plain COPY of `a`
+// instead of std::move(a) even though the checker had already committed to
+// treating it as a move. This is the VariableDeclaration analog of
+// vector_moved_into_call_rejected.clg's call-argument case; see also
+// vector_field_assignment_still_usable_accepted.clg for the shape that must
+// NOT move (a bare-name field store, which shares/links rather than moving).
+
+int main() {
+    std::vector<int> a;
+    a.push_back(1);
+    std::vector<int> b = a;
+    std::cout << a.size() << std::endl;  // ERROR: a was moved into b
+    return 0;
+}

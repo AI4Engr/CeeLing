@@ -1603,6 +1603,35 @@ std::string AstEmitter::emitMovedArg(const Expression* arg,
             }
             return "std::move(" + id->name + ")";
         }
+        // std::vector<T>-typed local or parameter (containerVarType_ is only
+        // ever populated for isVectorType -- see its five populating sites --
+        // so this branch never fires for a map or any other type), in a
+        // DECLARATION or CALL-ARGUMENT position (never an assignment target
+        // -- selectAssignmentRhs decides that separately, see its own
+        // comment on why a field-assignment RHS must NOT reach this branch):
+        // DanglingChecker treats a vector identifier exactly like an object
+        // local in both of those positions -- isObjectType
+        // (dangling_checker.cpp) includes isVectorType, and
+        // applyCallArgMoves' final `if (std::string src =
+        // asObjectLocalName(...)) movedFrom_.insert(src);` fallthrough (and
+        // the matching VariableDeclaration branch) mark the source
+        // unconditionally moved-from once it reaches either position -- the
+        // same guarantee the varClass_ branch above already relies on. This
+        // branch was missing entirely, so `Node b = f(bytes);`-style
+        // declarations and `f(bytes)`-style call arguments (`bytes` a
+        // vector) silently emitted a COPY of the whole container instead of
+        // a move.
+        //
+        // A read-only-container-classified argument at a CALL site never
+        // reaches this branch: the call-argument loop's
+        // argNeedsExplicitCopyForReadOnlyContainerParam check and the
+        // read-only continue in applyCallArgMoves are keyed on the CALLEE's
+        // parameter classification for THIS call, so those call sites
+        // `continue`/emit their own copy before ever calling emitMovedArg.
+        if (auto ctIt = containerVarType_.find(id->name);
+            ctIt != containerVarType_.end() && !isCurrentField(id->name)) {
+            return "std::move(" + id->name + ")";
+        }
     }
     if (!targetParam.first.empty()) {
         if (auto neww = dynamic_cast<const NewExpression*>(arg)) {
@@ -1681,8 +1710,25 @@ std::string AstEmitter::selectAssignmentRhs(const AssignmentStatement* assign, c
         // weak_ptr has no operator=(nullptr_t); default-construct instead (an empty
         // weak_ptr, the same meaning as "nullptr" for the other smart-pointer kinds).
         rhs = "{}";
-    } else if (memberTarget) {
-        // `a.b = obj;` links/shares into a field — it does not consume `obj`.
+    } else if (memberTarget || isCurrentField(assign->variable)) {
+        // `a.b = obj;` OR a bare identifier naming a field with implicit `this`
+        // (`data = bytes;`) links/shares into a field -- it does not consume
+        // `obj`/`bytes` (DanglingChecker's own AssignmentStatement branch
+        // gives a bare field store this exact "link, don't move" semantics --
+        // see its `isBareFieldStore` handling -- precisely so a linked-list
+        // node can be attached to a field and used again right after; a
+        // container-typed RHS is no different in kind from an object-typed
+        // one here). This must stay emitExpression (a plain copy), never
+        // emitMovedArg -- calling emitMovedArg here would std::move a
+        // container the checker has explicitly promised stays live after
+        // this statement, silently breaking that promise (found via a direct
+        // probe while implementing the containerVarType_ branch in
+        // emitMovedArg below: `data = bytes; std::cout << bytes.size();`
+        // compiled and ran with bytes already moved-from, printing 0 instead
+        // of the real size, with no rejection from the checker -- exactly
+        // the "checker allows it, emitter breaks it" failure mode, not a
+        // move-then-use gap the checker could ever have caught after the
+        // fact).
         rhs = emitExpression(assign->expression.get());
     } else if (!ptrVar.empty() && isValueType(varClass_.count(ptrVar) ? varClass_.at(ptrVar) : "")) {
         // `x = a;` where `x` is a value-type class: a plain copy, like any
@@ -1690,7 +1736,8 @@ std::string AstEmitter::selectAssignmentRhs(const AssignmentStatement* assign, c
         // pointers, there's nothing to move).
         rhs = emitExpression(assign->expression.get());
     } else {
-        // `x = a;` transfers ownership of an object local.
+        // `x = a;` transfers ownership of an object local (x is a plain
+        // local/parameter, NOT a field -- excluded above).
         rhs = emitMovedArg(assign->expression.get());
     }
     return rhs;
@@ -1779,11 +1826,28 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
                 << " = " << rhs << ";\n";
         } else {
             noteVar(decl->identifier, VarKind::Value);
-            if (isVectorType(decl->type)) {
+            // A std::vector<T> RHS goes through emitMovedArg (its
+            // containerVarType_ branch), same as every other declaration
+            // shape above -- `std::vector<int> b = a;` moves `a` exactly
+            // like `Node b = a;` moves `a` above (DanglingChecker's
+            // VariableDeclaration branch marks a vector-typed RHS identifier
+            // moved-from unconditionally, isObjectType includes
+            // isVectorType). Scoped to isVectorType only, matching
+            // emitMovedArg's own containerVarType_ branch and this
+            // session's other vector-only changes (reserve/copyWithin) --
+            // isMapType is a separate, unaudited type this fix does not
+            // touch. A non-vector RHS (a primitive, a literal, a call, a
+            // subscript, ...) is unaffected: emitMovedArg falls through to a
+            // plain emitExpression for anything that isn't a bare identifier
+            // matching containerVarType_/varClass_.
+            const bool rhsIsVector = isVectorType(decl->type);
+            if (rhsIsVector) {
                 containerVarType_[decl->identifier] = decl->type;
             }
+            std::string rhs = rhsIsVector ? emitMovedArg(decl->expression.get())
+                                          : emitExpression(decl->expression.get());
             out << pad << cppTypeFor(decl->type, decl->identifier) << " " << decl->identifier << " = "
-                << emitExpression(decl->expression.get()) << ";\n";
+                << rhs << ";\n";
         }
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
         // Left-hand side: a member target (`a.b = ...`) is emitted via the member-access

@@ -1,0 +1,41 @@
+//@ expect: accept
+//@ reason: `data = bytes;` (a bare-name field store, implicit `this`) links/shares
+//@ into a field -- it does NOT consume `bytes`, exactly like an object-typed
+//@ bare field store (field_stores_owner_accepted.clg's precedent). Using `bytes`
+//@ afterward is ordinary, safe reuse, not a use-after-move.
+//@ run: 2
+//
+// Positive control for vector_moved_into_declaration_rejected.clg's move case
+// and vector_moved_into_call_rejected.clg's call-argument move case: a
+// container-typed field assignment must NOT be treated the same way. Found
+// while fixing AstEmitter::emitMovedArg to recognize vector-typed identifiers
+// (see that fixture's own reason): the first version of the fix moved
+// EVERY container-typed identifier reachable from emitMovedArg, including
+// through this exact field-assignment shape, which DanglingChecker's own
+// isBareFieldStore handling has always treated as a link/share, not a move
+// (see dangling_checker.cpp's AssignmentStatement branch) -- generating
+// `this->data = std::move(bytes);` there compiled and ran, silently printing
+// 0 instead of the real element count, with the checker never rejecting it
+// (this is not a move-then-use gap a checker could catch after the fact --
+// the checker's own model says `bytes` stays live, so the emitter breaking
+// that promise is invisible to it). The //@ run: assertion below is the
+// actual regression guard: it fails loudly (prints 0) if this ever regresses.
+
+class Holder {
+public:
+    std::vector<int> data;
+
+    void take(std::vector<int> bytes) {
+        data = bytes;
+        std::cout << bytes.size() << std::endl;
+    }
+};
+
+int main() {
+    Holder h = new Holder();
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    h.take(v);
+    return 0;
+}
