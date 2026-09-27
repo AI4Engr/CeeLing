@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ reason: `reserve` on a vector of objects is rejected, matching resize's own
+//@ reason: restriction (vector_resize_class_rejected.clg) -- v1 has no
+//@ reason: motivating case for reserving capacity on an object-element
+//@ reason: vector, so it stays out of scope rather than reasoning through
+//@ reason: whether it would actually be safe (it likely would be, since
+//@ reason: reserve never constructs or destroys an element -- but nothing
+//@ reason: needs it yet).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> nodes;
+    nodes.reserve(3);   // ERROR: reserve on a vector of objects
+    return 0;
+}

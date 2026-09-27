@@ -26,6 +26,14 @@ std::string vectorElementType(const std::string& type);
 // `assign(n, value)`, which also has an iterator overload -- and
 // `v.assign(v.begin(), v.end())` (iterators into the same vector) is
 // undefined behavior. resize has no iterator form at all.
+//
+// `reserve` is likewise restricted to primitive-element vectors (see
+// EscapeHatchChecker::isKnownCallable), for the same reason resize is, even
+// though reserve itself never constructs a NEW element (it only grows
+// capacity, never size()) -- kept symmetric with resize/copyWithin rather
+// than allowing it only for object elements, since v1 has no motivating case
+// for reserve on an object-typed vector and the container-argument
+// restriction is already the established pattern on this page.
 bool isKnownVectorMethod(const std::string& methodName);
 
 // Does calling `methodName` on a vector MOVE its argument at position `argIndex`
@@ -41,6 +49,20 @@ bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex);
 // threat #4)? `push_back` and `resize` may reallocate; `pop_back` and a
 // shrinking `resize` destroy elements. `insert`/`erase` will extend this set
 // once they exist. `size`/`begin`/`end` are read-only and never invalidate.
+//
+// `reserve` is DELIBERATELY excluded, even though a call that actually grows
+// capacity can reallocate the same underlying buffer resize's own case does:
+// CeeLing has no way for anything to hold a reference/iterator into a
+// container across a statement boundary in the first place (no raw
+// pointers, no iterators escaping a loop, `ref` containers are always
+// `const&` and never independently invalidatable this way) -- the ONLY
+// thing threat #4 protects against here is "this call changes size()/the
+// element values out from under an existing observer", which reserve can
+// never do (size() and every element's value are unchanged; only capacity
+// grows). Treating it as invalidating would be over-conservative for no
+// safety benefit, and would incorrectly block reserve's own motivating use
+// (pre-sizing an output buffer before a decode loop) from being called
+// right before a loop that then reads the vector's `.size()`.
 bool vectorMethodInvalidatesReferences(const std::string& methodName);
 
 // Is `type` CeeLing's `string` primitive (bare keyword, or `std::string`/`string`

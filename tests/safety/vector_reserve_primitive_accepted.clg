@@ -1,0 +1,44 @@
+//@ expect: accept
+//@ reason: `reserve(n)` on vectors of primitive elements -- a local vector<int>
+//@ reason: (reserve, then push_back past the reserved amount to confirm the
+//@ reason: vector is still fully usable), a vector<byte> field reserved inside
+//@ reason: a method (the zlib-cling output-buffer-pre-size shape this exists
+//@ reason: for). reserve is allowed only for primitive elements (see
+//@ reason: vector_reserve_class_rejected.clg), matching resize's own
+//@ reason: restriction, though for a different reason (v1 scope, not a
+//@ reason: null-smart-pointer/owner-duplication hazard -- see
+//@ reason: isKnownVectorMethod's own comment). Unlike resize/push_back,
+//@ reserve does NOT invalidate observers (vectorMethodInvalidatesReferences
+//@ reason: excludes it deliberately -- reserve changes neither size() nor any
+//@ reason: element's value, only capacity).
+//@ run: 3 1 0 1 2
+
+class Buffer {
+public:
+    std::vector<byte> data;
+    Buffer() {
+    }
+    void prepare(int hint) {
+        data.reserve(hint);
+    }
+};
+
+int main() {
+    std::vector<int> v;
+    v.reserve(2);
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);   // past the reserved amount -- still works
+    Buffer b = new Buffer();
+    b.prepare(16);
+    b.data.push_back(0);
+    b.data.push_back(1);
+    // Widen through int locals before printing -- ostream has an unsigned
+    // char overload that prints it as a raw CHARACTER, not a number (the same
+    // gotcha zlib-cling's own byte-typed buffers hit -- see its inflate.clg/
+    // deflate.clg main() comments for the identical fix).
+    int b0 = b.data[0] + 0;
+    int b1 = b.data[1] + 0;
+    std::cout << v.size() << " " << v[0] << " " << b0 << " " << b1 << " " << v[1] << std::endl;
+    return 0;
+}

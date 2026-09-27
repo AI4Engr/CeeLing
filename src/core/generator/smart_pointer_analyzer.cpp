@@ -2586,6 +2586,11 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnlyContainer(
                     // is begin()/end() (an iterator can outlive a reallocation
                     // -- see CLAUDE.md threat #4 -- so treated conservatively
                     // as disqualifying too, not modeled as a form of read).
+                    // `reserve` falls in here too (not modeled as a read) --
+                    // conservative, not a safety requirement (it changes
+                    // neither size() nor any element), just not yet worth a
+                    // dedicated case since nothing calls reserve() on a
+                    // parameter it also wants classified read-only.
                     if (member->member == "size") return false;
                     return true;
                 }
