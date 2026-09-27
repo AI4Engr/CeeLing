@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ reason: `ref` on an ext_fn parameter is only supported for primitive
+//@ types (mutable out-param) and std::vector<primitive> (read-only borrow)
+//@ -- a class-typed parameter is already outside v1's ext_fn scope
+//@ (ext_fn_class_param_rejected.clg) regardless of `ref`, and adding `ref`
+//@ does not unlock it. Object-typed ext_fn signatures still need a real
+//@ hand-written borrow-summary design that does not exist yet.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+ext_fn int inspect(ref Node n);   // ERROR: class-typed ext_fn parameter unsupported, `ref` or not
+
+int main() {
+    return 0;
+}

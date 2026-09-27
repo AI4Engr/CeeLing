@@ -1,5 +1,6 @@
 #pragma once
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 #include <variant>
@@ -339,6 +340,12 @@ public:
     // ext_fn's hand-written summary IS a FunctionSummary, just supplied by
     // the user instead of derived from a body.
     int returnBorrowsParam = -1;
+    // Indices into `parameters` declared `ref` (pass-by-reference instead of
+    // by value). ext_fn-only: `ref` stays hard-rejected in every other
+    // parameter list (rejectObserverParams). A container ref lowers to
+    // `const T&` (read-only borrow); a primitive ref lowers to `T&` (mutable
+    // out-param) -- see the type-decides-meaning table in TODO.md's ext_fn entry.
+    std::set<size_t> refParams;
 
     ExternFunctionDeclaration(const std::string& retType,
                               const std::string& func_name,
@@ -351,6 +358,7 @@ public:
         std::string result = "ext_fn " + returnType + " " + name + "(";
         for (size_t i = 0; i < parameters.size(); ++i) {
             if (i > 0) result += ", ";
+            if (refParams.count(i)) result += "ref ";
             result += parameters[i].first + " " + parameters[i].second;
         }
         result += ")";

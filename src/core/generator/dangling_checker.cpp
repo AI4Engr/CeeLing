@@ -222,6 +222,10 @@ void DanglingChecker::deriveSummaries(const Program& program) {
             FunctionSummary summary;
             summary.returnBorrowsParam = extFn->returnBorrowsParam;
             summaries_[summaryKey("", extFn->name)] = summary;
+            // `ref` params are borrowed for the call's duration, not moved --
+            // see applyCallArgMoves's outParamIdx-shaped exemption, which
+            // skips inserting these indices into movedFrom_.
+            externRefParams_[extFn->name] = extFn->refParams;
         }
     }
     // Base-before-derived again, for the same reason: `d.inheritedMethod(x)` has to
@@ -523,9 +527,20 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
             outParamIdx = it->second;
         }
     }
+    // ext_fn `ref` arguments (see externRefParams_) are borrowed for the
+    // call's duration, not moved -- same exemption shape as outParamIdx
+    // above. ext_fn is always a free function, so this only applies on the
+    // plain-call path (receiverType empty, function_name set).
+    const std::set<size_t>* refParams = nullptr;
+    if (receiverType.empty()) {
+        if (auto it = externRefParams_.find(call->function_name); it != externRefParams_.end()) {
+            refParams = &it->second;
+        }
+    }
 
     for (size_t i = 0; i < call->arguments.size(); ++i) {
         if (i == outParamIdx) continue;
+        if (refParams != nullptr && refParams->count(i)) continue;
         if (receiverIsVector && vectorMethodSharesArg(methodName, i)) {
             // A container's element pointer kind is decided once, across every
             // push_back call site targeting it (SmartPointerAnalyzer::

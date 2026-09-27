@@ -741,6 +741,7 @@ StatementPtr ASTBuilder::buildExternFunctionDeclaration(TSNode node, const std::
     std::string funcName;
     bool sawReturnType = false;
     std::vector<std::pair<std::string, std::string>> parameters;
+    std::set<size_t> refParams;
     int borrowsParam = -1;
 
     uint32_t childCount = ts_node_child_count(node);
@@ -754,17 +755,26 @@ StatementPtr ASTBuilder::buildExternFunctionDeclaration(TSNode node, const std::
         } else if (strcmp(childType, "identifier") == 0 && sawReturnType && funcName.empty()) {
             funcName = getNodeText(child, source);
         } else if (strcmp(childType, "parameter_list") == 0) {
-            rejectObserverParams(child);
+            // Unlike every other parameter_list site, ext_fn deliberately
+            // accepts `ref` here (see the type-decides-meaning table in
+            // TODO.md's ext_fn entry) -- rejectObserverParams is skipped only
+            // for this declaration kind; the other five call sites keep the
+            // global `ref`-as-parameter ban intact.
             uint32_t paramCount = ts_node_child_count(child);
             std::string pendingType;
+            bool pendingIsRef = false;
             for (uint32_t j = 0; j < paramCount; j++) {
                 TSNode paramNode = ts_node_child(child, j);
                 const char* pt = ts_node_type(paramNode);
-                if (strcmp(pt, "type") == 0) {
+                if (strcmp(pt, "observer_qualifier") == 0) {
+                    pendingIsRef = true;
+                } else if (strcmp(pt, "type") == 0) {
                     pendingType = getNodeText(paramNode, source);
                 } else if (strcmp(pt, "identifier") == 0 && !pendingType.empty()) {
+                    if (pendingIsRef) refParams.insert(parameters.size());
                     parameters.push_back({pendingType, getNodeText(paramNode, source)});
                     pendingType.clear();
+                    pendingIsRef = false;
                 }
             }
         } else if (strcmp(childType, "number") == 0) {
@@ -808,6 +818,30 @@ StatementPtr ASTBuilder::buildExternFunctionDeclaration(TSNode node, const std::
     for (const auto& [paramType, paramName] : parameters) {
         rejectUnsupportedType(paramType, "parameter `" + paramName + "`");
     }
+    // `ref` is further restricted beyond the plain-value check above: a class
+    // type is already rejected by rejectUnsupportedType, so what remains to
+    // reject here is nothing extra for vector/primitive -- both are valid
+    // `ref` targets (container -> const&, primitive -> &, see the
+    // type-decides-meaning table). This loop exists to produce a clear,
+    // grep-able error for the one shape that would otherwise silently fall
+    // through: a `ref` on a type rejectUnsupportedType already let past
+    // (there is none today, since only primitive/vector<primitive> survive
+    // that check), and to be the obvious extension point if a future
+    // `ref`-incompatible-but-otherwise-supported type is ever added.
+    for (size_t i = 0; i < parameters.size(); ++i) {
+        if (!refParams.count(i)) continue;
+        const auto& [paramType, paramName] = parameters[i];
+        if (isPrimitiveType(paramType)) continue;
+        if (isVectorType(paramType) && isPrimitiveType(vectorElementType(paramType))) continue;
+        std::ostringstream oss;
+        const TSPoint p = ts_node_start_point(node);
+        oss << "error[semantic/forbidden-construct]: ext_fn `ref` parameter `"
+            << paramName << "` has unsupported type `" << paramType
+            << "` (line " << (p.row + 1) << ", column " << (p.column + 1)
+            << "). `ref` is only supported on primitive types (mutable "
+               "out-param) and std::vector<primitive> (read-only borrow).";
+        throw std::runtime_error(oss.str());
+    }
     if (borrowsParam >= static_cast<int>(parameters.size())) {
         std::ostringstream oss;
         const TSPoint p = ts_node_start_point(node);
@@ -818,8 +852,10 @@ StatementPtr ASTBuilder::buildExternFunctionDeclaration(TSNode node, const std::
         throw std::runtime_error(oss.str());
     }
 
-    return std::make_unique<ExternFunctionDeclaration>(returnType, funcName,
-                                                        std::move(parameters), borrowsParam);
+    auto decl = std::make_unique<ExternFunctionDeclaration>(returnType, funcName,
+                                                             std::move(parameters), borrowsParam);
+    decl->refParams = std::move(refParams);
+    return decl;
 }
 
 ExpressionPtr ASTBuilder::buildFunctionCall(TSNode node, const std::string& source) {

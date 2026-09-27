@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ reason: `ref std::vector<int>` on an ext_fn parameter lowers to `const
+//@ std::vector<int>&` -- a read-only borrow for the call's duration, not a
+//@ move. `a`/`b` must stay usable AFTER the call. Contrast this with
+//@ ext_fn_vector_param_move_rejected.clg, which rejects the identical
+//@ post-call reuse for the by-value (no `ref`) version of the same
+//@ signature -- that contrast is the proof borrowing actually took effect
+//@ here, not that move-tracking silently stopped working.
+
+ext_fn int compare256(ref std::vector<int> a, int offA, ref std::vector<int> b, int offB, int maxLen);
+
+int main() {
+    std::vector<int> a;
+    a.push_back(1);
+    std::vector<int> b;
+    b.push_back(1);
+    int result = compare256(a, 0, b, 0, 1);
+    a.push_back(2);   // OK: `a` was borrowed (ref), not moved
+    b.push_back(2);   // OK: `b` was borrowed (ref), not moved
+    std::cout << result << std::endl;
+    return 0;
+}

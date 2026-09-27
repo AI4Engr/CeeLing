@@ -272,6 +272,15 @@ private:
     static std::string outParamKey(const std::string& ownerClass, const std::string& methodName) {
         return ownerClass + "::" + methodName;
     }
+    // ext_fn name -> indices of its `ref` parameters (see
+    // ExternFunctionDeclaration::refParams in ast.h). applyCallArgMoves
+    // consults this, exactly like outParamIndex_ above, to skip inserting a
+    // `ref` argument into movedFrom_ -- the argument is borrowed for the
+    // call's duration, not moved, so it stays a live, usable owner
+    // afterward. ext_fn is always a free function (never a method), so this
+    // is keyed by plain name only, unlike outParamIndex_'s (class, method)
+    // key.
+    std::map<std::string, std::set<size_t>> externRefParams_;
 
     std::string currentClass_;  // enclosing class of the body being checked ("" = free fn)
     std::set<std::string> objectLocals_;   // object-typed owners live in current body

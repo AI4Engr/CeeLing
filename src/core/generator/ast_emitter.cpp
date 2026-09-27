@@ -943,8 +943,10 @@ void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
         // isKnownQualifiedFreeFunction doc comment). CeeLing emits the trust
         // boundary, never fabricates a body for it.
         varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+        currentExternRefParams_ = extFn->refParams;
         std::string sig = buildFunctionSignature(extFn->returnType, extFn->name,
                                                   extFn->parameters, "", false, false, false, extFn->name);
+        currentExternRefParams_.clear();
         out << sig << ";\n\n";
     } else if (auto mn = dynamic_cast<const MainFunction*>(stmt)) {
         emitFunction(mn->returnType, "main", {}, mn->body, out);
@@ -1254,8 +1256,10 @@ void AstEmitter::emitTopLevelHeader(const Statement* stmt, std::ostringstream& o
         // header emission needs no special-casing beyond reusing the same
         // buildFunctionSignature call.
         varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+        currentExternRefParams_ = extFn->refParams;
         std::string sig = buildFunctionSignature(extFn->returnType, extFn->name, extFn->parameters,
                                                   "", false, false, false, extFn->name);
+        currentExternRefParams_.clear();
         out << sig << ";\n\n";
     } else if (dynamic_cast<const MainFunction*>(stmt)) {
         // A header never declares main -- the definition lives only in the one .cpp
@@ -1366,6 +1370,21 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
             sig += smartPointerType(ptype, pname) + "<" + ptype + "> " + pname;
             noteVar(pname, VarKind::SmartPtr);
             varClass_[pname] = ptype;
+        } else if (currentExternRefParams_.count(i)) {
+            // ext_fn `ref` parameter (see ExternFunctionDeclaration::refParams
+            // and currentExternRefParams_'s comment in the header): a
+            // container is a read-only borrow (const&, cannot reallocate --
+            // no iterator-invalidation hazard), a primitive is a mutable
+            // out-param (&, an int has no provenance so writing it back can't
+            // dangle). ast_builder.cpp already rejected every other type at
+            // parse time, so only these two shapes reach here.
+            if (isVectorType(ptype)) {
+                sig += "const " + cppTypeFor(ptype, pname) + "& " + pname;
+                containerVarType_[pname] = ptype;
+            } else {
+                sig += cppTypeFor(ptype, pname) + "& " + pname;
+            }
+            noteVar(pname, VarKind::Value);
         } else {
             sig += cppTypeFor(ptype, pname) + " " + pname;
             noteVar(pname, VarKind::Value);

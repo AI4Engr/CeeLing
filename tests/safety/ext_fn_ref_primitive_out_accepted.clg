@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ reason: `ref int` on an ext_fn parameter lowers to `int&` -- a mutable
+//@ out-param. A primitive has no provenance/lifetime, so writing back
+//@ through the reference cannot dangle (unlike a mutable container
+//@ reference, which stays forbidden -- see ext_fn_ref_vector_accepted.clg's
+//@ read-only const& treatment). Lets one ext_fn return two values: the
+//@ ordinary return plus a written-back out-param.
+
+ext_fn int decodeChunk(std::vector<int> data, int offset, ref int bytesConsumed);
+
+int main() {
+    std::vector<int> data;
+    data.push_back(42);
+    int consumed = 0;
+    int result = decodeChunk(data, 0, consumed);
+    std::cout << result << consumed << std::endl;
+    return 0;
+}

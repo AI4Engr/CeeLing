@@ -325,6 +325,15 @@ private:
     // "std::vector<Node>"), so a call-argument receiver can be checked against the
     // library allow-list's share-vs-move rules (see library_summary.h).
     std::map<std::string, std::string> containerVarType_;
+    // ext_fn-only: indices of the CURRENT signature's `ref` parameters (see
+    // ExternFunctionDeclaration::refParams in ast.h for the full design
+    // rationale). Consulted by buildFunctionSignature's primitive/vector
+    // branch to lower index i to `const T&` (container) or `T&` (primitive)
+    // instead of by-value. Populated and cleared at each of the three
+    // ExternFunctionDeclaration emit sites, mirroring how varKinds_ etc. are
+    // reset per-signature; empty for every non-ext_fn signature, so ordinary
+    // functions/methods are completely unaffected.
+    std::set<size_t> currentExternRefParams_;
     // Names of `ostream`-typed locals/params (see isOstreamType). Needed because
     // `<<` is overloaded between stream insertion and integer shift: a chain whose
     // leftmost leaf is one of these (or std::cout/cerr/clog) is a stream chain and
