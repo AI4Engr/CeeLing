@@ -156,20 +156,26 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     readOnlyMethodContainerParams_.clear();
     heapPureFreeFunctions_.clear();
     heapPureMethods_.clear();
+    lastUseFieldAssignedParams_.clear();
+    lastUseMethodFieldAssignedParams_.clear();
 
     // Independent of everything else below -- reads only the raw Program, writes
     // only valueTypeClasses_/readOnlyFreeFunctionParams_/readOnlyMethodParams_/
     // readOnlyContainerParams_/readOnlyMethodContainerParams_/
-    // heapPureFreeFunctions_/heapPureMethods_ -- so they can run first with no
+    // heapPureFreeFunctions_/heapPureMethods_/lastUseFieldAssignedParams_/
+    // lastUseMethodFieldAssignedParams_ -- so they can run first with no
     // ordering dependency between each other. classifyReadOnlyContainerParams
     // does not depend on classifyHeapPureFunctions's result (they answer
     // different questions -- "is this param never mutated through" vs. "can
     // this function invalidate a caller's OWN container/object"), so order
-    // between the two does not matter.
+    // between the two does not matter. classifyLastUseFieldAssignedParams is
+    // likewise independent -- a pure per-function/method scan with no fixed
+    // point and no dependency on any other classification's result.
     classifyValueTypeClasses(program);
     classifyReadOnlyFreeFunctionParams(program);
     classifyReadOnlyContainerParams(program);
     classifyHeapPureFunctions(program);
+    classifyLastUseFieldAssignedParams(program);
 
     firstPassCollectReferences(program);
     if (!source.empty()) {
@@ -2964,6 +2970,158 @@ void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& progra
             }
         }
     }
+}
+
+bool SmartPointerAnalyzer::exprReferencesName(const Expression* expr, const std::string& name) const {
+    if (expr == nullptr) return false;
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        return id->name == name;
+    }
+    if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+        return exprReferencesName(bin->left.get(), name) || exprReferencesName(bin->right.get(), name);
+    }
+    if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+        return exprReferencesName(un->operand.get(), name);
+    }
+    if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        return exprReferencesName(sub->object.get(), name) || exprReferencesName(sub->index.get(), name);
+    }
+    if (auto mem = dynamic_cast<const MemberAccess*>(expr)) {
+        return exprReferencesName(mem->object.get(), name);
+    }
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        if (exprReferencesName(call->callee.get(), name)) return true;
+        for (const auto& arg : call->arguments) {
+            if (exprReferencesName(arg.get(), name)) return true;
+        }
+        return false;
+    }
+    if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
+        for (const auto& arg : neww->arguments) {
+            if (exprReferencesName(arg.get(), name)) return true;
+        }
+        return false;
+    }
+    if (dynamic_cast<const ClosureExpression*>(expr) != nullptr) {
+        // A closure captures by NAME (see ClosureExpression::captures), not
+        // by reference -- but bodyIsLastUseFieldAssignment treats a closure
+        // ANYWHERE as an unconditional "give up" (see its own doc comment),
+        // so this never needs to inspect the capture list: any
+        // ClosureExpression reachable from a statement after the candidate
+        // assignment already disqualifies the whole function, whether or
+        // not it happens to capture `name`.
+        return true;
+    }
+    // Number/StringLiteral/CharLiteral/ThisExpression/ScopedIdentifier: none
+    // can reference a bare local/parameter name.
+    return false;
+}
+
+// See the header comment for the exact scope (straight-line bodies only,
+// exactly one candidate assignment, no closures anywhere).
+bool SmartPointerAnalyzer::bodyIsLastUseFieldAssignment(const std::vector<StatementPtr>& body,
+                                                          const std::string& paramName) const {
+    int candidateIndex = -1;
+    for (size_t i = 0; i < body.size(); ++i) {
+        const Statement* stmt = body[i].get();
+        if (dynamic_cast<const IfStatement*>(stmt) != nullptr ||
+            dynamic_cast<const WhileStatement*>(stmt) != nullptr ||
+            dynamic_cast<const ForStatement*>(stmt) != nullptr ||
+            dynamic_cast<const TryStatement*>(stmt) != nullptr) {
+            return false;
+        }
+        if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+            // The candidate shape: a bare-name target (`fieldName = ...;`,
+            // target == null -- see AssignmentStatement's own comment;
+            // whether that name is actually a FIELD, as opposed to a plain
+            // local variable, is deliberately NOT checked here -- see this
+            // function's own header comment for why that's the emitter's
+            // job, not this classification's) whose target name differs
+            // from paramName itself (excludes the degenerate `bytes =
+            // bytes;`) and whose RHS is exactly the bare identifier
+            // `paramName`. Any other shape (a member-access target like
+            // `this->x = paramName;`/`a.b = paramName;`, or any RHS other
+            // than a bare identifier) is NOT a candidate -- it still needs
+            // the containment check below, same as any other statement,
+            // since it may well reference paramName without being the one
+            // assignment we're allowed to move at.
+            const bool targetIsBareNameOtherThanParam =
+                assign->target == nullptr && assign->variable != paramName;
+            auto rhsId = dynamic_cast<const Identifier*>(assign->expression.get());
+            if (targetIsBareNameOtherThanParam && rhsId != nullptr && rhsId->name == paramName) {
+                if (candidateIndex != -1) return false;  // more than one -- ambiguous, give up
+                candidateIndex = static_cast<int>(i);
+                continue;  // the assignment's own RHS use doesn't disqualify itself
+            }
+            // Not the candidate shape -- still check both target and RHS
+            // for an ordinary reference (e.g. `x = paramName + 1;` uses
+            // paramName without being movable, and must still disqualify a
+            // LATER candidate the same as any other use).
+            if (exprReferencesName(assign->target.get(), paramName) ||
+                exprReferencesName(assign->expression.get(), paramName)) {
+                if (candidateIndex != -1) return false;  // used again after the candidate
+            }
+            continue;
+        }
+        if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+            if (exprReferencesName(decl->expression.get(), paramName) && candidateIndex != -1) return false;
+            continue;
+        }
+        if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+            if (exprReferencesName(exprStmt->expression.get(), paramName) && candidateIndex != -1) return false;
+            continue;
+        }
+        if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+            if (exprReferencesName(ret->expression.get(), paramName) && candidateIndex != -1) return false;
+            continue;
+        }
+        if (auto th = dynamic_cast<const ThrowStatement*>(stmt)) {
+            if (exprReferencesName(th->expression.get(), paramName) && candidateIndex != -1) return false;
+            continue;
+        }
+        // Any other statement kind this v1 doesn't specifically recognize
+        // (ContainerDeclaration, nested class/function declarations, ...)
+        // is conservatively treated as an unconditional "give up" -- matching
+        // the same discipline the if/while/for/try check above already
+        // applies structurally.
+        return false;
+    }
+    return candidateIndex != -1;
+}
+
+void SmartPointerAnalyzer::classifyLastUseFieldAssignedParams(const Program& program) {
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            for (const auto& [ptype, pname] : fn->parameters) {
+                if (!isVectorType(ptype) || !isPrimitiveType(vectorElementType(ptype))) continue;
+                if (bodyIsLastUseFieldAssignment(fn->body, pname)) {
+                    lastUseFieldAssignedParams_.insert(fn->name + "::" + pname);
+                }
+            }
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+                if (method == nullptr || !method->specializationArg.empty()) continue;
+                for (const auto& [ptype, pname] : method->parameters) {
+                    if (!isVectorType(ptype) || !isPrimitiveType(vectorElementType(ptype))) continue;
+                    if (bodyIsLastUseFieldAssignment(method->body, pname)) {
+                        lastUseMethodFieldAssignedParams_.insert(cls->name + "::" + method->name + "::" + pname);
+                    }
+                }
+            }
+        }
+    }
+}
+
+bool SmartPointerAnalyzer::isLastUseFieldAssignedParam(const std::string& fnName,
+                                                         const std::string& paramName) const {
+    return lastUseFieldAssignedParams_.count(fnName + "::" + paramName) > 0;
+}
+
+bool SmartPointerAnalyzer::isLastUseMethodFieldAssignedParam(const std::string& className,
+                                                               const std::string& methodName,
+                                                               const std::string& paramName) const {
+    return lastUseMethodFieldAssignedParams_.count(className + "::" + methodName + "::" + paramName) > 0;
 }
 
 bool SmartPointerAnalyzer::bodyHasImpurity(const std::vector<StatementPtr>& body, const std::string& currentClass,

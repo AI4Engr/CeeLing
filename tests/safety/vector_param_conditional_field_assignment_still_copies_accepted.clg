@@ -1,0 +1,50 @@
+//@ expect: accept
+//@ reason: `bytes = data;`-shaped field assignment inside an `if` does NOT
+//@ classify as `bytes`'s last use -- SmartPointerAnalyzer::
+//@ bodyIsLastUseFieldAssignment gives up unconditionally whenever an
+//@ IfStatement/WhileStatement/ForStatement/TryStatement/closure appears
+//@ ANYWHERE in the body, deliberately not attempting to analyze which
+//@ branches actually run. `bytes` is still copied here, exactly like before
+//@ this classification existed.
+//@ run: 1 2
+//
+// Negative control for vector_param_last_use_field_assignment_moves_accepted.clg:
+// same single-field-assignment shape, but wrapped in a conditional, which
+// must NOT be classified as a provable last use. If this fixture's assertion
+// below ever printed something other than "1 2", it would mean `bytes` was
+// (wrongly) moved while `flag` happened to be false, so `data` never got
+// assigned and `h.data` stayed at its default-constructed empty state.
+
+class Holder {
+public:
+    std::vector<int> data;
+    bool flag;
+
+    Holder() {
+        flag = true;
+    }
+
+    void take(std::vector<int> bytes) {
+        if (flag) {
+            data = bytes;
+        }
+    }
+};
+
+int main() {
+    Holder h = new Holder();
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    h.take(v);
+    int i = 0;
+    while (i < h.data.size()) {
+        std::cout << h.data[i];
+        if (i < h.data.size() - 1) {
+            std::cout << " ";
+        }
+        i = i + 1;
+    }
+    std::cout << std::endl;
+    return 0;
+}

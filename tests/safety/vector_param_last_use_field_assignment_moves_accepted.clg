@@ -1,0 +1,59 @@
+//@ expect: accept
+//@ reason: `bytes` is a std::vector<int> parameter whose ENTIRE body is the one
+//@ statement `data = bytes;` -- SmartPointerAnalyzer::classifyLastUseFieldAssignedParams
+//@ proves this is provably `bytes`'s last use (no statement after it references
+//@ `bytes` again, and the body is straight-line: no if/while/for/try/closure
+//@ anywhere), so the emitter moves it instead of copying the whole vector.
+//@ run: 3
+//
+// The motivating case (zlib-cling's `pushAll(std::vector<byte> bytes) { input
+// = bytes; }`): DanglingChecker's general field-store model
+// (vector_field_assignment_still_usable_accepted.clg) correctly keeps `bytes`
+// live after a field store IN GENERAL (a linked-list node is routinely reused
+// right after being attached to a field) -- but that generality was needlessly
+// conservative for the common case where the parameter is never touched again.
+// This classification is a STRICTLY NARROWER, additional proof on top of the
+// general rule, not a relaxation of it: it only fires when the specific body
+// being compiled provably has no later use, proven by a straight-line scan
+// (see the analyzer's own doc comment for why anything more complex than
+// straight-line control flow gives up rather than trying to analyze it).
+// The //@ run: assertion below is the actual behavioral guard -- it would
+// still print 3 whether this moves or copies (a move that read stale/emptied
+// data instead of the real elements would be a distinct, more severe bug this
+// assertion also catches); the sibling test
+// vector_field_assignment_still_usable_accepted.clg is what pins "still used
+// afterward must not move" specifically, and CLAUDE.md/TODO.md's own commit
+// records confirm via inspecting `this->data = std::move(bytes);` in the
+// generated C++ that this fixture's underlying shape does move (a compiling,
+// correct-output accept fixture cannot on its own distinguish a real move
+// from a lucky-because-lucky copy, the same reason
+// vector_field_assignment_still_usable_accepted.clg's own reason explains).
+
+class Holder {
+public:
+    std::vector<int> data;
+
+    void take(std::vector<int> bytes) {
+        data = bytes;
+    }
+
+    int sum() {
+        int total = 0;
+        int i = 0;
+        while (i < data.size()) {
+            total = total + data[i];
+            i = i + 1;
+        }
+        return total;
+    }
+};
+
+int main() {
+    Holder h = new Holder();
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    h.take(v);
+    std::cout << h.sum() << std::endl;
+    return 0;
+}

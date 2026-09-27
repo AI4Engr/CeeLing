@@ -166,6 +166,31 @@ public:
     // Same, for a class method.
     bool isHeapPureMethod(const std::string& className, const std::string& methodName) const;
 
+    // Is free function `fnName`'s `std::vector<primitive>` parameter
+    // `paramName` safely MOVED (not copied) at the one bare-name field
+    // assignment (`data = paramName;`) that stores it, because that
+    // assignment is PROVABLY paramName's last use in the body? This is a
+    // narrower, orthogonal question from isReadOnlyContainerParam above: a
+    // read-only container is never moved anywhere (bound by `const&`
+    // instead); this classification is for the opposite shape -- a
+    // parameter whose ENTIRE body usage is "hand it to one field, and
+    // never touch it again" (zlib-cling's `pushAll(std::vector<byte>
+    // bytes) { input = bytes; }` is the motivating case: DanglingChecker's
+    // own bare-field-store handling treats `data = bytes;` as a link/share
+    // that leaves `bytes` live afterward -- correct in general (a linked-
+    // list node is routinely used again right after being attached to a
+    // field), but needlessly conservative for the common case where the
+    // parameter genuinely never IS used again). See
+    // classifyLastUseFieldAssignedParams for the scan and its deliberately
+    // narrow scope (straight-line bodies only -- any if/while/for/try/
+    // closure anywhere in the body means "give up", not "analyze the
+    // branches").
+    bool isLastUseFieldAssignedParam(const std::string& fnName, const std::string& paramName) const;
+
+    // Same classification for a class method's own parameter.
+    bool isLastUseMethodFieldAssignedParam(const std::string& className, const std::string& methodName,
+                                             const std::string& paramName) const;
+
 private:
     // Classifies value-type classes (see isValueTypeClass) by scanning every
     // ClassDeclaration's members for operator*/operator++/operator!= method
@@ -335,6 +360,47 @@ private:
                           std::set<std::string> localNames, const std::set<std::string>& pureSoFar,
                           const std::set<std::string>& primitiveFieldNames) const;
 
+    // Classifies which std::vector<primitive> parameters are safely MOVED at
+    // their one bare-name field-assignment statement (see
+    // isLastUseFieldAssignedParam's own doc comment for the motivating case
+    // and how this differs from the read-only classification). Not a fixed
+    // point -- purely a per-function/method scan, independent of every other
+    // function's own classification, since "is this the last use in MY body"
+    // never depends on what any callee does.
+    void classifyLastUseFieldAssignedParams(const Program& program);
+    // Scans `body` (straight-line only -- see below) for a single bare-name
+    // field-assignment statement (`fieldName = paramName;`, no `this->`/`.`
+    // on the LHS, matching CeeLing's field-write syntax) whose RHS is
+    // exactly the bare identifier `paramName`, and confirms no statement
+    // AFTER that one references `paramName` again. Returns true only if:
+    // exactly one such assignment exists (zero or more-than-one both give up
+    // -- more than one field assignment from the same parameter is not
+    // "one last use", it's an ambiguous shape this v1 does not attempt to
+    // reason about), and every statement in `body` is one of
+    // VariableDeclaration/AssignmentStatement/ExpressionStatement/
+    // ReturnStatement/ThrowStatement -- an IfStatement/WhileStatement/
+    // ForStatement/TryStatement ANYWHERE in the body (not just after the
+    // candidate assignment) means "give up", not "analyze the branches":
+    // this is deliberately far more conservative than
+    // paramUseDisqualifiesReadOnlyContainer's per-use walk, trading recall
+    // for a much smaller, easier-to-audit implementation, since the
+    // motivating shape (zlib-cling's pushAll) is a single-statement body
+    // and there is no evidence yet that a more general analysis is worth
+    // building. A ClosureExpression anywhere (captures `paramName` by name,
+    // not by reference, but still counts as "used") also gives up, checked
+    // the same way.
+    bool bodyIsLastUseFieldAssignment(const std::vector<StatementPtr>& body,
+                                        const std::string& paramName) const;
+    // Does the (expression) subtree contain a bare reference to `paramName`,
+    // OR a ClosureExpression that captures `paramName` by name, OR a nested
+    // ClosureExpression at all (conservatively treated as a use, regardless
+    // of its own capture list, matching bodyIsLastUseFieldAssignment's
+    // "closure anywhere gives up" rule)? Pure containment check -- unlike
+    // paramUseDisqualifiesReadOnlyContainer, this never distinguishes a
+    // "read" from a "write": ANY occurrence after the candidate assignment
+    // disqualifies the move, full stop.
+    bool exprReferencesName(const Expression* expr, const std::string& name) const;
+
     void scanSource(const std::string& source);
     void parseAnnotationLine(const std::string& trimmedLine, int lineNumber);
     void registerReference(const std::string& scopeName, const std::string& className,
@@ -413,6 +479,13 @@ private:
     // isHeapPureFreeFunction/isHeapPureMethod).
     std::set<std::string> heapPureFreeFunctions_;
     std::set<std::string> heapPureMethods_;
+
+    // Same key shapes as readOnlyContainerParams_/readOnlyMethodContainerParams_
+    // above, for the last-use-field-assignment classification (see
+    // isLastUseFieldAssignedParam/isLastUseMethodFieldAssignedParam and
+    // classifyLastUseFieldAssignedParams).
+    std::set<std::string> lastUseFieldAssignedParams_;
+    std::set<std::string> lastUseMethodFieldAssignedParams_;
 };
 
 } // namespace cling

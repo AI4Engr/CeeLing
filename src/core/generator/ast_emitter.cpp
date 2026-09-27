@@ -1729,7 +1729,29 @@ std::string AstEmitter::selectAssignmentRhs(const AssignmentStatement* assign, c
         // the "checker allows it, emitter breaks it" failure mode, not a
         // move-then-use gap the checker could ever have caught after the
         // fact).
-        rhs = emitExpression(assign->expression.get());
+        //
+        // EXCEPT: if the RHS is a bare identifier naming one of THIS
+        // function/method's own std::vector<primitive> parameters, and
+        // SmartPointerAnalyzer::classifyLastUseFieldAssignedParams has
+        // proven this exact assignment is that parameter's provable last
+        // use in the body (isLastUseFieldAssignedParam/
+        // isLastUseMethodFieldAssignedParam), moving it here is safe even
+        // though the checker's own general field-store model doesn't need
+        // it to be -- this is a STRICTLY NARROWER, additional guarantee on
+        // top of the checker's, not a relaxation of it (the checker's
+        // "stays live" promise is about what CAN happen; this classification
+        // separately proves nothing DOES happen afterward in THIS specific
+        // body). Motivating case: zlib-cling's `pushAll(std::vector<byte>
+        // bytes) { input = bytes; }`, whose whole body is this one
+        // statement -- `bytes` provably has no use after it, so copying the
+        // whole buffer here was always wasted work.
+        auto rhsId = dynamic_cast<const Identifier*>(assign->expression.get());
+        const bool rhsIsLastUseParam = rhsId != nullptr && currentParamNames_.count(rhsId->name) > 0 &&
+            (currentClass_.empty() ? analyzer_.isLastUseFieldAssignedParam(currentFunctionName_, rhsId->name)
+                                    : analyzer_.isLastUseMethodFieldAssignedParam(currentClass_, currentFunctionName_,
+                                                                                   rhsId->name));
+        rhs = rhsIsLastUseParam ? emitMovedArg(assign->expression.get())
+                                  : emitExpression(assign->expression.get());
     } else if (!ptrVar.empty() && isValueType(varClass_.count(ptrVar) ? varClass_.at(ptrVar) : "")) {
         // `x = a;` where `x` is a value-type class: a plain copy, like any
         // other value-type site -- never moved (value types aren't smart
