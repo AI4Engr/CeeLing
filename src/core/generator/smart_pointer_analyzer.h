@@ -129,6 +129,43 @@ public:
     bool isReadOnlyMethodParam(const std::string& className, const std::string& methodName,
                                 const std::string& paramName) const;
 
+    // Is free function `fnName`'s parameter `paramName` a READ-ONLY CONTAINER
+    // (`std::vector<primitive>`)? A separate, stricter classification from
+    // isReadOnlyFreeFunctionParam above (object-typed params): a container
+    // parameter is read-only only if every use is a subscript READ, `.size()`,
+    // the container of a range-for, or passed on bare to another already-
+    // read-only container parameter (or an `ext_fn` `ref` parameter) -- NOT
+    // "any non-disqualifying use", since a container has mutating METHOD
+    // CALLS (`push_back`/`pop_back`/`resize`) that the object-typed rule's
+    // receiver-of-a-method-call case would otherwise wave through as a mere
+    // "read" (dispatch). See classifyReadOnlyContainerParams. Motivated by
+    // zlib-cling's `decodeSymbol`, which copies four ~512-entry vectors on
+    // every decoded symbol purely because CeeLing has no reference-parameter
+    // syntax; measured 9.7x on zlib-cling's decompressor from passing those
+    // four by `const&` alone.
+    bool isReadOnlyContainerParam(const std::string& fnName, const std::string& paramName) const;
+
+    // Same classification for a class method's own container parameter --
+    // separate query for the same (class, method, param) triple-keying
+    // reason isReadOnlyMethodParam is separate from isReadOnlyFreeFunctionParam.
+    bool isReadOnlyMethodContainerParam(const std::string& className, const std::string& methodName,
+                                          const std::string& paramName) const;
+
+    // Is EVERY body statement of free function `fnName` (transitively,
+    // through every callee it invokes) free of container reallocation/
+    // destruction and of replacing an object/container field or variable
+    // that is not its own local? This is what makes `const&` binding safe
+    // for a NON-local argument (a field, or a chained field access): if the
+    // callee is heap-pure, nothing it does can invalidate the reference the
+    // caller's own field/vector is bound through. Writing a PRIMITIVE field
+    // is fine (it cannot change or destroy a vector) -- only object/container
+    // field/variable assignment and container-mutating method calls
+    // disqualify. See classifyHeapPureFunctions.
+    bool isHeapPureFreeFunction(const std::string& fnName) const;
+
+    // Same, for a class method.
+    bool isHeapPureMethod(const std::string& className, const std::string& methodName) const;
+
 private:
     // Classifies value-type classes (see isValueTypeClass) by scanning every
     // ClassDeclaration's members for operator*/operator++/operator!= method
@@ -247,6 +284,57 @@ private:
                                        const std::string& currentClass,
                                        const std::set<std::string>& okCallees) const;
 
+    // Container counterpart of classifyReadOnlyFreeFunctionParams -- a
+    // SEPARATE fixed point (not folded into the one above) because the
+    // per-use rule genuinely differs: a container's mutating method calls
+    // (push_back/pop_back/resize) must disqualify, where the object-typed
+    // rule's "receiver of a method call is a mere read" case would wrongly
+    // let them through. Runs independently; does not depend on or feed
+    // classifyReadOnlyFreeFunctionParams's own sets.
+    void classifyReadOnlyContainerParams(const Program& program);
+    // Does expression `expr` use the bare identifier `paramName` (a
+    // container-parameter candidate) in a way that disqualifies read-only
+    // status? Disqualifying: assignment target, a subscript WRITE
+    // (`paramName[i] = x`), a mutating method call receiver (push_back/
+    // pop_back/resize), begin()/end(), being copied into a local/field/
+    // return, closure capture, or passed bare to a callee parameter that is
+    // not itself already read-only (container or ext_fn ref). A subscript
+    // READ, `.size()`, and the container of a range-for are the genuine-read
+    // evidence (see bodyContainerHasGenuineRead) and never disqualify.
+    bool paramUseDisqualifiesReadOnlyContainer(const Expression* expr, const std::string& paramName,
+                                                 const std::string& currentClass,
+                                                 const std::set<std::string>& okContainerCallees) const;
+
+    // Classifies which free functions/methods are HEAP-PURE (see
+    // isHeapPureFreeFunction). A separate fixed point over the same
+    // functions/methods: heap-purity of a function depends on the
+    // heap-purity of everything it calls (a pure-looking function that
+    // calls an impure one is itself impure), so this iterates to a fixed
+    // point the same way the read-only classifications do, just with the
+    // opposite monotonic direction (starts "assume pure", removes on
+    // evidence of impurity or an impure callee, until nothing changes).
+    void classifyHeapPureFunctions(const Program& program);
+    // Does statement list `body` (within function `fnName`/method
+    // `currentClass::methodName`) contain an impurity: a container-mutating
+    // method call on anything but body-local container, an assignment that
+    // replaces an object/container field or non-local variable, or a call to
+    // a function/method not in `pureSoFar` (fixed-point set, "fnName" for
+    // free functions / "Class::method" for methods)? `localNames` is the set
+    // of names this body itself declared (VariableDeclaration) -- mutating
+    // THOSE is fine, they cannot alias caller state. `primitiveFieldNames` is
+    // the enclosing class's own primitive-typed field names (empty for a
+    // free function) -- a BARE reassignment of one of these (CeeLing field
+    // writes are bare names, e.g. `bitBuffer = bitBuffer >> n;`, not
+    // `this->bitBuffer = ...`) is fine: a primitive has no provenance, so
+    // writing one cannot change or destroy a container/object the caller can
+    // see (confirmed necessary via a real gap: zlib-cling's dropBits/
+    // needBits/bits, which only ever touch primitive bitBuffer/bitsUsed
+    // fields this way, were wrongly classified impure without this,
+    // defeating decodeSymbol's own call-site reference passing entirely).
+    bool bodyHasImpurity(const std::vector<StatementPtr>& body, const std::string& currentClass,
+                          std::set<std::string> localNames, const std::set<std::string>& pureSoFar,
+                          const std::set<std::string>& primitiveFieldNames) const;
+
     void scanSource(const std::string& source);
     void parseAnnotationLine(const std::string& trimmedLine, int lineNumber);
     void registerReference(const std::string& scopeName, const std::string& className,
@@ -315,6 +403,16 @@ private:
     std::set<std::string> readOnlyFreeFunctionParams_;
     // "className::methodName::paramName" -> read-only (see isReadOnlyMethodParam).
     std::set<std::string> readOnlyMethodParams_;
+
+    // Same key shapes as above, for the container classification (see
+    // isReadOnlyContainerParam/isReadOnlyMethodContainerParam).
+    std::set<std::string> readOnlyContainerParams_;
+    std::set<std::string> readOnlyMethodContainerParams_;
+
+    // "fnName" / "className::methodName" -> heap-pure (see
+    // isHeapPureFreeFunction/isHeapPureMethod).
+    std::set<std::string> heapPureFreeFunctions_;
+    std::set<std::string> heapPureMethods_;
 };
 
 } // namespace cling

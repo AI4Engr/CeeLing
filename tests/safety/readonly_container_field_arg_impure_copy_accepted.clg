@@ -1,0 +1,43 @@
+//@ expect: accept
+//@ reason: a FIELD passed to a read-only-container parameter of a METHOD
+//@ reason: that is NOT heap-pure (it mutates that SAME field, reached via
+//@ reason: `this`, BEFORE reading its parameter) gets an EXPLICIT COPY of
+//@ reason: the field at the call site, not a live reference -- proven by
+//@ reason: the returned sum reflecting the SNAPSHOT taken at call time (3,
+//@ reason: the 2 elements present when growThenSum was CALLED), not the
+//@ reason: post-growth contents it reads through `this->data` afterward.
+//@ reason: Had `snapshot` been bound by reference instead of copied, the
+//@ reason: growing push_back on `this->data` (the SAME underlying vector)
+//@ reason: could reallocate its backing store out from under `snapshot`
+//@ reason: before the read loop ever runs -- exactly the iterator/reference
+//@ reason: invalidation CLAUDE.md threat #4 exists to prevent, which is why
+//@ reason: the heap-purity gate exists at all.
+//@ run: 3
+
+class Box {
+public:
+    std::vector<int> data;
+    Box() {
+    }
+    // NOT heap-pure: mutates `data` (push_back, reached via `this`) BEFORE
+    // reading its own `snapshot` argument, inside a method that takes
+    // `data` as a read-only-container argument.
+    int growThenSum(std::vector<int> snapshot) {
+        data.push_back(99);
+        int total = 0;
+        int i = 0;
+        while (i < snapshot.size()) {
+            total = total + snapshot[i];
+            i = i + 1;
+        }
+        return total;
+    }
+};
+
+int main() {
+    Box b = new Box();
+    b.data.push_back(1);
+    b.data.push_back(2);
+    std::cout << b.growThenSum(b.data) << std::endl;
+    return 0;
+}

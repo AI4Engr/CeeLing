@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ reason: positive control -- a free function that WRITES through a
+//@ reason: subscript on its vector<int> parameter (`data[i] = ...`) is not
+//@ reason: read-only, even though a subscript READ (`data[i]`) is exactly
+//@ reason: the genuine-read evidence the classification requires. Proves
+//@ reason: the read-vs-write subscript distinction is enforced: `v` is
+//@ reason: genuinely consumed by zeroFirst(v) and must reject after.
+
+void zeroFirst(std::vector<int> data) {
+    data[0] = 0;
+}
+
+int main() {
+    std::vector<int> v;
+    v.push_back(5);
+    zeroFirst(v);
+    std::cout << v[0] << std::endl;   // ERROR: v was moved into zeroFirst(v)
+    return 0;
+}

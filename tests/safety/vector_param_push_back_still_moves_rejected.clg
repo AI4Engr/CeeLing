@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ reason: positive control -- a free function that MUTATES its vector<int>
+//@ reason: parameter (push_back) is not read-only, disqualified by the
+//@ reason: container-specific rule (a mutating method call on the bare
+//@ reason: parameter disqualifies, unlike the object-typed rule where a
+//@ reason: method-call receiver is treated as a mere read). Proves the
+//@ reason: container classification doesn't over-correct: `v` is genuinely
+//@ reason: consumed by grow(v) and must reject after.
+
+void grow(std::vector<int> data) {
+    data.push_back(99);
+}
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    grow(v);
+    std::cout << v[0] << std::endl;   // ERROR: v was moved into grow(v)
+    return 0;
+}

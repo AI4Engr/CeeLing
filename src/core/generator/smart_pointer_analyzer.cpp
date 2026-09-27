@@ -151,12 +151,25 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     classesNeedingSharedFromThis_.clear();
     valueTypeClasses_.clear();
     readOnlyFreeFunctionParams_.clear();
+    readOnlyMethodParams_.clear();
+    readOnlyContainerParams_.clear();
+    readOnlyMethodContainerParams_.clear();
+    heapPureFreeFunctions_.clear();
+    heapPureMethods_.clear();
 
     // Independent of everything else below -- reads only the raw Program, writes
-    // only valueTypeClasses_/readOnlyFreeFunctionParams_ -- so they can run
-    // first with no ordering dependency.
+    // only valueTypeClasses_/readOnlyFreeFunctionParams_/readOnlyMethodParams_/
+    // readOnlyContainerParams_/readOnlyMethodContainerParams_/
+    // heapPureFreeFunctions_/heapPureMethods_ -- so they can run first with no
+    // ordering dependency between each other. classifyReadOnlyContainerParams
+    // does not depend on classifyHeapPureFunctions's result (they answer
+    // different questions -- "is this param never mutated through" vs. "can
+    // this function invalidate a caller's OWN container/object"), so order
+    // between the two does not matter.
     classifyValueTypeClasses(program);
     classifyReadOnlyFreeFunctionParams(program);
+    classifyReadOnlyContainerParams(program);
+    classifyHeapPureFunctions(program);
 
     firstPassCollectReferences(program);
     if (!source.empty()) {
@@ -2514,6 +2527,643 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
     }
 }
 
+bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnlyContainer(
+    const Expression* expr, const std::string& paramName, const std::string& currentClass,
+    const std::set<std::string>& okContainerCallees) const {
+    if (expr == nullptr) return false;
+    // A bare occurrence of paramName disqualifies UNLESS the immediate
+    // context (subscript read, .size() receiver, range-for container, or an
+    // already-read-only callee argument) recognizes and clears it below --
+    // this function is only ever called on positions that are NOT one of
+    // those recognized contexts (see the callers: assignment RHS/target,
+    // return, call arguments other than the recognized bare-to-read-only-
+    // callee case, binary/unary operands), matching how
+    // paramUseDisqualifiesReadOnly treats a bare Identifier as always
+    // disqualifying in the positions IT is called from.
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        return id->name == paramName;
+    }
+    if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+        return paramUseDisqualifiesReadOnlyContainer(bin->left.get(), paramName, currentClass, okContainerCallees) ||
+               paramUseDisqualifiesReadOnlyContainer(bin->right.get(), paramName, currentClass, okContainerCallees);
+    }
+    if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+        return paramUseDisqualifiesReadOnlyContainer(un->operand.get(), paramName, currentClass, okContainerCallees);
+    }
+    if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        // A subscript READ (`paramName[i]` used as a value) never
+        // disqualifies -- the caller only descends into a subscript's INDEX
+        // expression here (see bodyDisqualifiesContainer's AssignmentStatement
+        // target handling, which checks a subscript TARGET separately and
+        // never reaches this branch for `paramName[i] = x`). Still recurse
+        // into a nested object (`m[paramName[i]]`) and the index itself.
+        if (auto id = dynamic_cast<const Identifier*>(sub->object.get()); id != nullptr && id->name == paramName) {
+            return paramUseDisqualifiesReadOnlyContainer(sub->index.get(), paramName, currentClass,
+                                                          okContainerCallees);
+        }
+        return paramUseDisqualifiesReadOnlyContainer(sub->object.get(), paramName, currentClass,
+                                                      okContainerCallees) ||
+               paramUseDisqualifiesReadOnlyContainer(sub->index.get(), paramName, currentClass, okContainerCallees);
+    }
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        // `paramName.method(...)` -- the receiver.
+        if (call->callee) {
+            if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+                if (auto recvId = dynamic_cast<const Identifier*>(member->object.get());
+                    recvId != nullptr && recvId->name == paramName) {
+                    // `.size()` is a genuine read, never disqualifying.
+                    // Every other method on a container in CeeLing's
+                    // allow-list (isKnownVectorMethod) either mutates
+                    // (push_back/pop_back/resize -- disqualify unconditionally,
+                    // even called on a body-local copy of paramName's contents
+                    // makes no sense since paramName IS the receiver here) or
+                    // is begin()/end() (an iterator can outlive a reallocation
+                    // -- see CLAUDE.md threat #4 -- so treated conservatively
+                    // as disqualifying too, not modeled as a form of read).
+                    if (member->member == "size") return false;
+                    return true;
+                }
+                // A nested receiver (`paramName.field.method()`) is a
+                // MemberAccess object -- not descended into here, matching
+                // paramUseDisqualifiesReadOnly's own MemberAccess handling:
+                // reading a field through paramName never disqualifies.
+            }
+        }
+        for (size_t i = 0; i < call->arguments.size(); ++i) {
+            auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
+            if (argId != nullptr && argId->name == paramName && !call->callee) {
+                // Bare paramName passed to a free function/method's own
+                // parameter at this position -- OK if that target parameter
+                // is itself already known read-only-container (fixed point,
+                // same key shapes as classifyReadOnlyContainerParams builds)
+                // OR an ext_fn `ref` parameter (externRefParams_ is
+                // DanglingChecker's, not this analyzer's -- ext_fn calls are
+                // always free functions with no receiver, recognized here by
+                // name never colliding with a CeeLing-authored function,
+                // matched via the same "fnName::argIndex" key
+                // classifyReadOnlyContainerParams uses for ordinary free
+                // functions, since an ext_fn's `refParams` are registered
+                // into that SAME free-function parameter list at parse time
+                // -- see ExternFunctionDeclaration in ast.h).
+                const std::string methodKey =
+                    currentClass + "::" + call->function_name + "::" + std::to_string(i);
+                const std::string freeKey = call->function_name + "::" + std::to_string(i);
+                if ((!currentClass.empty() && okContainerCallees.count(methodKey) > 0) ||
+                    okContainerCallees.count(freeKey) > 0) {
+                    continue;
+                }
+            }
+            if (paramUseDisqualifiesReadOnlyContainer(call->arguments[i].get(), paramName, currentClass,
+                                                       okContainerCallees)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    // MemberAccess (paramName.field -- not a container-typed field access
+    // question this pass handles), NewExpression, literals: never
+    // disqualifying on their own.
+    return false;
+}
+
+void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& program) {
+    // Genuine-read evidence, mirroring classifyReadOnlyFreeFunctionParams's
+    // own positive-evidence requirement (see that function's header comment
+    // for why an unused parameter must NOT classify as read-only): a
+    // subscript READ, `.size()`, or being the container of a range-for.
+    // `okContainerCallees`/`currentClass` are threaded through so a bare
+    // paramName passed to an ALREADY-classified-read-only-container callee
+    // parameter counts as a genuine read here too, not merely a
+    // non-disqualifying use -- mirrors the object-typed rule's own
+    // FunctionCall case in classifyReadOnlyFreeFunctionParams (needed for
+    // the identical reason: `sumTwice(data) { return sumAll(data) + 0; }`
+    // never touches `data.field`/`data[i]` itself, only sumAll does, so
+    // without this sumTwice would fail the genuine-read requirement forever
+    // despite being exactly as read-only as sumAll).
+    std::function<bool(const Expression*, const std::string&, const std::string&, const std::set<std::string>&)>
+        exprHasGenuineReadContainer = [&](const Expression* expr, const std::string& paramName,
+                                          const std::string& currentClass,
+                                          const std::set<std::string>& okContainerCallees) -> bool {
+        if (expr == nullptr) return false;
+        if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+            if (auto id = dynamic_cast<const Identifier*>(sub->object.get()); id != nullptr &&
+                id->name == paramName) {
+                return true;
+            }
+            return exprHasGenuineReadContainer(sub->object.get(), paramName, currentClass, okContainerCallees) ||
+                   exprHasGenuineReadContainer(sub->index.get(), paramName, currentClass, okContainerCallees);
+        }
+        if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+            if (call->callee) {
+                if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+                    if (auto id = dynamic_cast<const Identifier*>(member->object.get());
+                        id != nullptr && id->name == paramName && member->member == "size") {
+                        return true;
+                    }
+                }
+            }
+            for (size_t i = 0; i < call->arguments.size(); ++i) {
+                auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
+                if (argId != nullptr && argId->name == paramName && !call->callee) {
+                    const std::string methodKey =
+                        currentClass + "::" + call->function_name + "::" + std::to_string(i);
+                    const std::string freeKey = call->function_name + "::" + std::to_string(i);
+                    if ((!currentClass.empty() && okContainerCallees.count(methodKey) > 0) ||
+                        okContainerCallees.count(freeKey) > 0) {
+                        return true;
+                    }
+                }
+                if (exprHasGenuineReadContainer(call->arguments[i].get(), paramName, currentClass,
+                                                 okContainerCallees)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+            return exprHasGenuineReadContainer(bin->left.get(), paramName, currentClass, okContainerCallees) ||
+                   exprHasGenuineReadContainer(bin->right.get(), paramName, currentClass, okContainerCallees);
+        }
+        if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+            return exprHasGenuineReadContainer(un->operand.get(), paramName, currentClass, okContainerCallees);
+        }
+        return false;
+    };
+    std::function<bool(const std::vector<StatementPtr>&, const std::string&, const std::string&,
+                        const std::set<std::string>&)>
+        bodyHasGenuineRead = [&](const std::vector<StatementPtr>& body, const std::string& paramName,
+                                  const std::string& currentClass,
+                                  const std::set<std::string>& okContainerCallees) -> bool {
+        for (const auto& stmtPtr : body) {
+            const Statement* stmt = stmtPtr.get();
+            if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+                if (exprHasGenuineReadContainer(ret->expression.get(), paramName, currentClass, okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+                if (exprHasGenuineReadContainer(decl->expression.get(), paramName, currentClass,
+                                                 okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+                if (exprHasGenuineReadContainer(assign->expression.get(), paramName, currentClass,
+                                                 okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+                if (exprHasGenuineReadContainer(exprStmt->expression.get(), paramName, currentClass,
+                                                 okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
+                if (exprHasGenuineReadContainer(ifs->condition.get(), paramName, currentClass, okContainerCallees)) {
+                    return true;
+                }
+                if (bodyHasGenuineRead(ifs->body, paramName, currentClass, okContainerCallees)) return true;
+                if (bodyHasGenuineRead(ifs->elseBody, paramName, currentClass, okContainerCallees)) return true;
+            } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+                if (exprHasGenuineReadContainer(whiles->condition.get(), paramName, currentClass,
+                                                 okContainerCallees)) {
+                    return true;
+                }
+                if (bodyHasGenuineRead(whiles->body, paramName, currentClass, okContainerCallees)) return true;
+            } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+                // The container of a range-for IS the genuine read itself
+                // (`for (x : paramName)`) -- a bare-identifier container,
+                // unlike every other position, is the evidence, not a
+                // disqualification (checked by NOT calling
+                // paramUseDisqualifiesReadOnlyContainer on fors->container
+                // in bodyDisqualifiesContainer below either).
+                if (auto id = dynamic_cast<const Identifier*>(fors->container.get());
+                    id != nullptr && id->name == paramName) {
+                    return true;
+                }
+                if (exprHasGenuineReadContainer(fors->container.get(), paramName, currentClass,
+                                                 okContainerCallees)) {
+                    return true;
+                }
+                if (bodyHasGenuineRead(fors->body, paramName, currentClass, okContainerCallees)) return true;
+            } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
+                if (exprHasGenuineReadContainer(throwStmt->expression.get(), paramName, currentClass,
+                                                 okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
+                if (bodyHasGenuineRead(trys->body, paramName, currentClass, okContainerCallees)) return true;
+                if (bodyHasGenuineRead(trys->catchBody, paramName, currentClass, okContainerCallees)) return true;
+            }
+        }
+        return false;
+    };
+    std::function<bool(const std::vector<StatementPtr>&, const std::string&, const std::string&,
+                        const std::set<std::string>&)>
+        bodyDisqualifiesContainer = [&](const std::vector<StatementPtr>& body, const std::string& paramName,
+                                         const std::string& currentClass,
+                                         const std::set<std::string>& okContainerCallees) -> bool {
+        for (const auto& stmtPtr : body) {
+            const Statement* stmt = stmtPtr.get();
+            if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+                // Returning paramName itself (bare identifier) hands the
+                // container out past the call -- disqualifies exactly like
+                // any other escape. paramUseDisqualifiesReadOnlyContainer's
+                // bare-Identifier base case already covers this.
+                if (paramUseDisqualifiesReadOnlyContainer(ret->expression.get(), paramName, currentClass,
+                                                           okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+                // `Foo x = paramName;` (or `= paramName[i]`, which is fine --
+                // paramUseDisqualifiesReadOnlyContainer's subscript-read
+                // handling only recognizes paramName as an OBJECT/INDEX
+                // position, and a bare paramName RHS still hits the
+                // bare-Identifier base case) copies/moves the whole
+                // container out -- disqualifies.
+                if (paramUseDisqualifiesReadOnlyContainer(decl->expression.get(), paramName, currentClass,
+                                                           okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnlyContainer(assign->expression.get(), paramName, currentClass,
+                                                           okContainerCallees)) {
+                    return true;
+                }
+                if (assign->target != nullptr) {
+                    // `paramName[i] = x;` (SubscriptExpression target) is a
+                    // WRITE -- disqualifies even though a subscript READ does
+                    // not. Checked directly here (not via
+                    // paramUseDisqualifiesReadOnlyContainer, whose subscript
+                    // handling is read-shaped) since this is the one position
+                    // a subscript's meaning flips.
+                    if (auto sub = dynamic_cast<const SubscriptExpression*>(assign->target.get())) {
+                        if (auto id = dynamic_cast<const Identifier*>(sub->object.get());
+                            id != nullptr && id->name == paramName) {
+                            return true;
+                        }
+                    }
+                    if (paramUseDisqualifiesReadOnlyContainer(assign->target.get(), paramName, currentClass,
+                                                               okContainerCallees)) {
+                        return true;
+                    }
+                } else if (assign->variable == paramName) {
+                    // Reassigning the parameter itself (`paramName = other;`,
+                    // no ->target, bare-name LHS) discards the caller's
+                    // container entirely -- disqualifies. (A plain read-only
+                    // container param is never itself the LHS in any
+                    // legitimate read-only use.)
+                    return true;
+                }
+            } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnlyContainer(exprStmt->expression.get(), paramName, currentClass,
+                                                           okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnlyContainer(ifs->condition.get(), paramName, currentClass,
+                                                           okContainerCallees)) {
+                    return true;
+                }
+                if (bodyDisqualifiesContainer(ifs->body, paramName, currentClass, okContainerCallees)) return true;
+                if (bodyDisqualifiesContainer(ifs->elseBody, paramName, currentClass, okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnlyContainer(whiles->condition.get(), paramName, currentClass,
+                                                           okContainerCallees)) {
+                    return true;
+                }
+                if (bodyDisqualifiesContainer(whiles->body, paramName, currentClass, okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+                // The range-for's OWN container position is the genuine-read
+                // case (see bodyHasGenuineRead) -- do not disqualify a bare
+                // paramName container here, only a more complex expression's
+                // sub-parts (e.g. `for (x : paramName.field)`, unaffected
+                // either way since MemberAccess never disqualifies).
+                bool bareContainer = false;
+                if (auto id = dynamic_cast<const Identifier*>(fors->container.get());
+                    id != nullptr && id->name == paramName) {
+                    bareContainer = true;
+                }
+                if (!bareContainer && paramUseDisqualifiesReadOnlyContainer(fors->container.get(), paramName,
+                                                                            currentClass, okContainerCallees)) {
+                    return true;
+                }
+                if (bodyDisqualifiesContainer(fors->body, paramName, currentClass, okContainerCallees)) return true;
+            } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
+                if (paramUseDisqualifiesReadOnlyContainer(throwStmt->expression.get(), paramName, currentClass,
+                                                           okContainerCallees)) {
+                    return true;
+                }
+            } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
+                if (bodyDisqualifiesContainer(trys->body, paramName, currentClass, okContainerCallees)) return true;
+                if (bodyDisqualifiesContainer(trys->catchBody, paramName, currentClass, okContainerCallees)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    // Seed with every ext_fn's `ref` container parameters -- static facts,
+    // not part of the fixed point (an ext_fn has no body to classify FROM,
+    // its ref-ness is hand-declared). Registered under the plain
+    // "fnName::argIndex" key, the same shape an ordinary free function's
+    // entry uses, since an ext_fn IS a free function as far as a caller's
+    // bare-argument-passed-onward check is concerned.
+    std::set<std::string> extFnRefCallees;
+    for (const auto& stmt : program.statements) {
+        auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt.get());
+        if (extFn == nullptr) continue;
+        for (size_t idx : extFn->refParams) {
+            if (idx < extFn->parameters.size() && isVectorType(extFn->parameters[idx].first)) {
+                extFnRefCallees.insert(extFn->name + "::" + std::to_string(idx));
+            }
+        }
+    }
+
+    // Fixed point, mirroring classifyReadOnlyFreeFunctionParams's own driver
+    // shape exactly (see its header comment for the termination argument).
+    std::set<std::string> classified;         // "fnName::paramName"
+    std::set<std::string> classifiedMethods;  // "ClassName::methodName::paramName"
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        std::set<std::string> okContainerCallees = extFnRefCallees;
+        for (const auto& stmt : program.statements) {
+            if (auto fn2 = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+                for (size_t i = 0; i < fn2->parameters.size(); ++i) {
+                    if (classified.count(fn2->name + "::" + fn2->parameters[i].second) > 0) {
+                        okContainerCallees.insert(fn2->name + "::" + std::to_string(i));
+                    }
+                }
+            } else if (auto cls2 = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+                for (const auto& member : cls2->members) {
+                    auto method2 = dynamic_cast<const MethodDeclaration*>(member.get());
+                    if (method2 == nullptr) continue;
+                    for (size_t i = 0; i < method2->parameters.size(); ++i) {
+                        const std::string key =
+                            cls2->name + "::" + method2->name + "::" + method2->parameters[i].second;
+                        if (classifiedMethods.count(key) > 0) {
+                            okContainerCallees.insert(cls2->name + "::" + method2->name + "::" +
+                                                       std::to_string(i));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (const auto& stmt : program.statements) {
+            if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+                for (const auto& [ptype, pname] : fn->parameters) {
+                    const std::string classifiedKey = fn->name + "::" + pname;
+                    if (classified.count(classifiedKey) > 0) continue;
+                    // v1 scope: std::vector<primitive> only (matches ext_fn
+                    // `ref`'s own container restriction -- no ownership/
+                    // aliasing ambiguity a primitive element could introduce).
+                    if (!isVectorType(ptype) || !isPrimitiveType(vectorElementType(ptype))) continue;
+                    if (!bodyDisqualifiesContainer(fn->body, pname, "", okContainerCallees) &&
+                        bodyHasGenuineRead(fn->body, pname, "", okContainerCallees)) {
+                        classified.insert(classifiedKey);
+                        changed = true;
+                    }
+                }
+            } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+                for (const auto& member : cls->members) {
+                    auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+                    if (method == nullptr || !method->specializationArg.empty()) continue;
+                    for (const auto& [ptype, pname] : method->parameters) {
+                        const std::string classifiedKey = cls->name + "::" + method->name + "::" + pname;
+                        if (classifiedMethods.count(classifiedKey) > 0) continue;
+                        if (!isVectorType(ptype) || !isPrimitiveType(vectorElementType(ptype))) continue;
+                        if (!bodyDisqualifiesContainer(method->body, pname, cls->name, okContainerCallees) &&
+                            bodyHasGenuineRead(method->body, pname, cls->name, okContainerCallees)) {
+                            classifiedMethods.insert(classifiedKey);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (const auto& key : classified) {
+        readOnlyContainerParams_.insert(key);
+    }
+    for (const auto& key : classifiedMethods) {
+        readOnlyMethodContainerParams_.insert(key);
+    }
+    // Dual-register under the qualified name too, same reasoning as
+    // classifyReadOnlyFreeFunctionParams's own trailing block.
+    for (const auto& stmt : program.statements) {
+        auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get());
+        if (fn == nullptr || fn->namespaceName.empty()) continue;
+        for (const auto& [ptype, pname] : fn->parameters) {
+            if (classified.count(fn->name + "::" + pname) > 0) {
+                readOnlyContainerParams_.insert(fn->namespaceName + "::" + fn->name + "::" + pname);
+            }
+        }
+    }
+}
+
+bool SmartPointerAnalyzer::bodyHasImpurity(const std::vector<StatementPtr>& body, const std::string& currentClass,
+                                            std::set<std::string> localNames,
+                                            const std::set<std::string>& pureSoFar,
+                                            const std::set<std::string>& primitiveFieldNames) const {
+    // Does a bare identifier name a LOCAL this body itself declared (via
+    // VariableDeclaration)? Mutating a body-local is fine -- it cannot alias
+    // anything the caller can see, since CeeLing has no way to hand out a
+    // reference to a local (no `ref` params, closures capture by value).
+    auto isLocal = [&](const std::string& name) { return localNames.count(name) > 0; };
+
+    std::function<bool(const Expression*)> callIsImpure = [&](const Expression* expr) -> bool {
+        auto call = dynamic_cast<const FunctionCall*>(expr);
+        if (call == nullptr) return false;
+        for (const auto& a : call->arguments) {
+            if (callIsImpure(a.get())) return true;
+        }
+        if (call->callee) {
+            auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+            if (member != nullptr) {
+                auto recvId = dynamic_cast<const Identifier*>(member->object.get());
+                // A mutating container method (push_back/pop_back/resize) on
+                // anything but a body-local container is an impurity: it can
+                // reallocate/destroy elements of a container the CALLER can
+                // still see (its own local, a field reached through `this`,
+                // or a container reached through a parameter).
+                if (vectorMethodInvalidatesReferences(member->member)) {
+                    if (recvId == nullptr || !isLocal(recvId->name)) return true;
+                    return false;
+                }
+                // A call on a receiver that is itself a non-local object
+                // (`obj.method()`, `field.method()`) -- conservatively
+                // impure unless the receiver's class is known and that
+                // SPECIFIC method is already classified heap-pure. A bare
+                // receiver Identifier that IS local recurses no further (its
+                // own body was already checked when IT was classified).
+                if (recvId != nullptr && isLocal(recvId->name)) return false;
+                // this-implicit or field/chained receiver: resolve via
+                // classFields_ is out of scope for a purely structural,
+                // Program-only pass (no type resolution here) -- treat
+                // conservatively as impure. This only affects the RECEIVER
+                // case (`x.foo()`); a same-class implicit-this call
+                // (`foo()`, call->callee null) is handled below instead.
+                return true;
+            }
+            return true;  // unrecognized callee shape: conservatively impure
+        }
+        // Implicit-this method call or free-function call
+        // (`foo(...)`/`this.foo(...)` -- call->callee is null either way,
+        // matching every other pass in this file's own established
+        // disambiguation comment). Pure only if already classified pure this
+        // round (fixed point) -- method-scoped key tried first.
+        const std::string methodKey = currentClass + "::" + call->function_name;
+        const std::string freeKey = call->function_name;
+        if ((!currentClass.empty() && pureSoFar.count(methodKey) > 0) || pureSoFar.count(freeKey) > 0) {
+            return false;
+        }
+        return true;
+    };
+
+    for (const auto& stmtPtr : body) {
+        const Statement* stmt = stmtPtr.get();
+        if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
+            if (callIsImpure(ret->expression.get())) return true;
+        } else if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+            if (callIsImpure(decl->expression.get())) return true;
+            localNames.insert(decl->identifier);
+        } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
+            if (callIsImpure(assign->expression.get())) return true;
+            if (assign->target != nullptr) {
+                // `x.field = ...` / `x[i] = ...` -- impure unless `x` is a
+                // body-local (see isLocal's own reasoning: a local's storage
+                // is never visible to the caller).
+                const Expression* root = assign->target.get();
+                std::string rootName;
+                if (auto mem = dynamic_cast<const MemberAccess*>(root)) {
+                    if (auto id = dynamic_cast<const Identifier*>(mem->object.get())) rootName = id->name;
+                } else if (auto sub = dynamic_cast<const SubscriptExpression*>(root)) {
+                    if (auto id = dynamic_cast<const Identifier*>(sub->object.get())) rootName = id->name;
+                }
+                if (rootName.empty() || !isLocal(rootName)) {
+                    // `this->field = ...` has no bare-identifier root (member
+                    // object is a ThisExpression, not an Identifier) --
+                    // rootName stays empty, correctly falling into "impure"
+                    // (assigning through `this` is never a body-local).
+                    return true;
+                }
+            } else if (!isLocal(assign->variable) && primitiveFieldNames.count(assign->variable) == 0) {
+                // Bare `name = ...` reassigning something NOT declared in
+                // this body and NOT a known-primitive field -- a parameter,
+                // or (CeeLing field writes ARE bare names, e.g. `bitBuffer =
+                // bitBuffer >> n;`, not `this->bitBuffer = ...`) a
+                // non-primitive field. Assigning a NEW object/container to
+                // replace what a parameter used to point at cannot itself
+                // dangle anything (CeeLing's move semantics mean the
+                // caller's own local is already consumed/moved-from by this
+                // point if the parameter were object-typed) -- but it also
+                // means this parameter no longer aliases what the caller
+                // passed in for the REST of the body, which is exactly the
+                // "not heap-pure" question this pass exists to answer
+                // conservatively. Treated as impure to stay conservative;
+                // not a case any of the motivating call sites (deflate/
+                // inflate accumulator fields) actually need to pass.
+                return true;
+            }
+        } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
+            if (callIsImpure(exprStmt->expression.get())) return true;
+        } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
+            if (callIsImpure(ifs->condition.get())) return true;
+            if (bodyHasImpurity(ifs->body, currentClass, localNames, pureSoFar, primitiveFieldNames)) return true;
+            if (bodyHasImpurity(ifs->elseBody, currentClass, localNames, pureSoFar, primitiveFieldNames)) return true;
+        } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
+            if (callIsImpure(whiles->condition.get())) return true;
+            if (bodyHasImpurity(whiles->body, currentClass, localNames, pureSoFar, primitiveFieldNames)) return true;
+        } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
+            if (callIsImpure(fors->container.get())) return true;
+            std::set<std::string> innerLocals = localNames;
+            innerLocals.insert(fors->loopVarName);
+            if (bodyHasImpurity(fors->body, currentClass, innerLocals, pureSoFar, primitiveFieldNames)) return true;
+        } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
+            if (callIsImpure(throwStmt->expression.get())) return true;
+        } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
+            if (bodyHasImpurity(trys->body, currentClass, localNames, pureSoFar, primitiveFieldNames)) return true;
+            if (bodyHasImpurity(trys->catchBody, currentClass, localNames, pureSoFar, primitiveFieldNames)) return true;
+        }
+    }
+    return false;
+}
+
+void SmartPointerAnalyzer::classifyHeapPureFunctions(const Program& program) {
+    // Opposite monotonic direction from the read-only fixed points above:
+    // starts by assuming every free function/method is pure, then removes
+    // any whose OWN body has an impurity (checked against the current
+    // pureSoFar set, so a function calling an impure one loses purity too)
+    // until nothing changes -- same termination argument (bounded by the
+    // number of functions+methods, each round must remove at least one to
+    // continue).
+    std::set<std::string> pureFree;
+    std::set<std::string> pureMethods;  // "ClassName::methodName"
+    // Per-class primitive field names -- see bodyHasImpurity's own doc
+    // comment for why a bare-name reassignment needs this (CeeLing field
+    // writes are bare names, not `this->field = ...`).
+    std::map<std::string, std::set<std::string>> primitiveFieldsByClass;
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            pureFree.insert(fn->name);
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            auto& primitiveFields = primitiveFieldsByClass[cls->name];
+            for (const auto& member : cls->members) {
+                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    pureMethods.insert(cls->name + "::" + method->name);
+                } else if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                    if (isPrimitiveType(field->type)) primitiveFields.insert(field->identifier);
+                }
+            }
+        }
+    }
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        std::set<std::string> pureSoFar = pureFree;
+        for (const auto& m : pureMethods) pureSoFar.insert(m);
+
+        for (const auto& stmt : program.statements) {
+            if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+                if (pureFree.count(fn->name) == 0) continue;  // already removed
+                std::set<std::string> localNames;
+                for (const auto& [ptype, pname] : fn->parameters) localNames.insert(pname);
+                if (bodyHasImpurity(fn->body, "", localNames, pureSoFar, {})) {
+                    pureFree.erase(fn->name);
+                    changed = true;
+                }
+            } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+                for (const auto& member : cls->members) {
+                    auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+                    if (method == nullptr) continue;
+                    const std::string key = cls->name + "::" + method->name;
+                    if (pureMethods.count(key) == 0) continue;
+                    std::set<std::string> localNames;
+                    for (const auto& [ptype, pname] : method->parameters) localNames.insert(pname);
+                    const auto& primitiveFields = primitiveFieldsByClass[cls->name];
+                    if (bodyHasImpurity(method->body, cls->name, localNames, pureSoFar, primitiveFields)) {
+                        pureMethods.erase(key);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    heapPureFreeFunctions_ = std::move(pureFree);
+    // Split the combined "ClassName::methodName" keys back into
+    // heapPureMethods_'s own storage (kept in the same combined-key shape
+    // isHeapPureMethod's query already builds, so no split is actually
+    // needed -- store verbatim).
+    heapPureMethods_ = std::move(pureMethods);
+}
+
 bool SmartPointerAnalyzer::isReadOnlyFreeFunctionParam(const std::string& fnName,
                                                         const std::string& paramName) const {
     return readOnlyFreeFunctionParams_.count(fnName + "::" + paramName) > 0;
@@ -2522,6 +3172,25 @@ bool SmartPointerAnalyzer::isReadOnlyFreeFunctionParam(const std::string& fnName
 bool SmartPointerAnalyzer::isReadOnlyMethodParam(const std::string& className, const std::string& methodName,
                                                   const std::string& paramName) const {
     return readOnlyMethodParams_.count(className + "::" + methodName + "::" + paramName) > 0;
+}
+
+bool SmartPointerAnalyzer::isReadOnlyContainerParam(const std::string& fnName,
+                                                     const std::string& paramName) const {
+    return readOnlyContainerParams_.count(fnName + "::" + paramName) > 0;
+}
+
+bool SmartPointerAnalyzer::isReadOnlyMethodContainerParam(const std::string& className,
+                                                           const std::string& methodName,
+                                                           const std::string& paramName) const {
+    return readOnlyMethodContainerParams_.count(className + "::" + methodName + "::" + paramName) > 0;
+}
+
+bool SmartPointerAnalyzer::isHeapPureFreeFunction(const std::string& fnName) const {
+    return heapPureFreeFunctions_.count(fnName) > 0;
+}
+
+bool SmartPointerAnalyzer::isHeapPureMethod(const std::string& className, const std::string& methodName) const {
+    return heapPureMethods_.count(className + "::" + methodName) > 0;
 }
 
 void SmartPointerAnalyzer::firstPassCollectReferences(const Program& program) {

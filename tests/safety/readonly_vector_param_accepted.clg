@@ -1,0 +1,30 @@
+//@ expect: accept
+//@ reason: a free function whose body only ever READS its vector<int>
+//@ reason: parameter (subscript reads, .size()) is inferred READ-ONLY and
+//@ reason: lowered to `const std::vector<int>&` -- the caller's argument
+//@ reason: survives the call. Purely structural, no annotation. Motivated
+//@ reason: by zlib-cling's decodeSymbol, which copied four ~512-entry
+//@ reason: vectors on every decoded symbol purely because CeeLing had no
+//@ reason: reference-parameter syntax; passing those four by const& alone
+//@ reason: measured 9.7x faster decompression.
+//@ run: 6 1 2 3
+
+int sumAll(std::vector<int> data) {
+    int total = 0;
+    int i = 0;
+    while (i < data.size()) {
+        total = total + data[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    int s = sumAll(v);
+    std::cout << s << " " << v[0] << " " << v[1] << " " << v[2] << std::endl;
+    return 0;
+}

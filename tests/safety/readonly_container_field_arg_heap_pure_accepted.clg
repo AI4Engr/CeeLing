@@ -1,0 +1,45 @@
+//@ expect: accept
+//@ reason: a FIELD passed to a read-only-container parameter of a
+//@ reason: heap-pure free function compiles and runs correctly when passed
+//@ reason: by reference (verified separately by inspecting the generated
+//@ reason: C++: sumAll's parameter lowers to `const std::vector<int>&`,
+//@ reason: and `b.sumField()`'s call to `sumAll(data)` -- `data` a field
+//@ reason: access -- passes the field directly rather than constructing an
+//@ reason: explicit copy, since sumAll is heap-pure). A reference and a
+//@ reason: copy give the same answer here (nothing mutates the field mid-
+//@ reason: call) -- this fixture proves the reference path is CORRECT, not
+//@ reason: that it was actually chosen; see the shim/deflate_shim.h-style
+//@ reason: measurement for the actual performance claim.
+//@ run: 6
+
+int sumAll(std::vector<int> data) {
+    int total = 0;
+    int i = 0;
+    while (i < data.size()) {
+        total = total + data[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+class Box {
+public:
+    std::vector<int> data;
+    Box() {
+    }
+    void append(int x) {
+        data.push_back(x);
+    }
+    int sumField() {
+        return sumAll(data);
+    }
+};
+
+int main() {
+    Box b = new Box();
+    b.append(1);
+    b.append(2);
+    b.append(3);
+    std::cout << b.sumField() << std::endl;
+    return 0;
+}

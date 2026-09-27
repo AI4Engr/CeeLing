@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ reason: positive control -- a free function whose vector<int> parameter
+//@ reason: is never used at all has zero disqualifying uses, but "no
+//@ reason: evidence it's consumed" is not "read-only": the classification
+//@ reason: requires at least one genuine read (subscript read, .size(), or
+//@ reason: range-for container) before granting read-only status, mirroring
+//@ reason: the object-typed rule's own positive-evidence requirement (see
+//@ reason: move_then_use.clg). `v` is genuinely consumed by sink(v) and
+//@ reason: must reject after.
+
+void sink(std::vector<int> data) {
+}
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    sink(v);
+    std::cout << v[0] << std::endl;   // ERROR: v was moved into sink(v)
+    return 0;
+}

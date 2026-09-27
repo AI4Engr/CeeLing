@@ -138,6 +138,25 @@ private:
     // ("", "") if unknown/not an object parameter.
     std::pair<std::string, std::string> calleeParam(const FunctionCall& call, size_t argIndex) const;
 
+    // Does call argument `argIndex` need an EXPLICIT COPY instead of the
+    // plain reference emitMovedArg would otherwise emit? Returns the
+    // argument's own CeeLing container type string (e.g. "std::vector<int>")
+    // if so (truthy via non-empty, doubling as the type to construct the
+    // copy from), "" otherwise. True exactly when: the target parameter at
+    // `argIndex` is classified read-only-container (so it lowers to
+    // `const&`, meaning the callee sees the caller's live vector, not a
+    // snapshot); the argument is NOT a caller local/by-value-parameter
+    // (those can never be reached by the callee mid-call, since CeeLing has
+    // no references to locals outside `ext_fn`); and the callee is not
+    // proven heap-pure (see SmartPointerAnalyzer::isHeapPureFreeFunction/
+    // isHeapPureMethod) -- i.e. it might mutate/replace a container or
+    // object the field's OWN storage depends on during the call. `receiverClass`/
+    // `methodName` are the SAME values already resolved at the call site
+    // (empty receiverClass means a plain free-function call).
+    std::string argNeedsExplicitCopyForReadOnlyContainerParam(const FunctionCall& call, size_t argIndex,
+                                                                const std::string& receiverClass,
+                                                                const std::string& methodName) const;
+
     void emitTopLevel(const Statement* stmt, std::ostringstream& out);
     // Header-mode counterparts of emitTopLevel/emitClass: same traversal and type
     // lowering, but member/method/function bodies are replaced with `;`.

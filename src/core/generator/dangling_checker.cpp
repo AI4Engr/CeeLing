@@ -541,6 +541,34 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
     for (size_t i = 0; i < call->arguments.size(); ++i) {
         if (i == outParamIdx) continue;
         if (refParams != nullptr && refParams->count(i)) continue;
+        // Inferred read-only container parameter (see
+        // SmartPointerAnalyzer::classifyReadOnlyContainerParams and
+        // ast_emitter.cpp's matching const& emission) -- borrowed for the
+        // call's duration, not moved, exactly like the ext_fn `ref`
+        // exemption above and the outParamIdx exemption before it. Resolved
+        // by callee name/argument index only (not by the ARGUMENT's own
+        // type), since the classification is a property of the callee's
+        // parameter, independent of what expression the caller happens to
+        // pass -- matching how outParamIdx/refParams are resolved above.
+        if (analyzer_ != nullptr && i < call->arguments.size()) {
+            const std::vector<std::pair<std::string, std::string>>* calleeParams = nullptr;
+            if (receiverType.empty()) {
+                if (auto it = functionParams_.find(call->function_name); it != functionParams_.end()) {
+                    calleeParams = &it->second;
+                }
+            } else if (auto clsIt = classMethodParams_.find(receiverType); clsIt != classMethodParams_.end()) {
+                if (auto mIt = clsIt->second.find(methodName); mIt != clsIt->second.end()) {
+                    calleeParams = &mIt->second;
+                }
+            }
+            if (calleeParams != nullptr && i < calleeParams->size()) {
+                const std::string& pname = (*calleeParams)[i].second;
+                const bool isReadOnlyContainer = receiverType.empty()
+                    ? analyzer_->isReadOnlyContainerParam(call->function_name, pname)
+                    : analyzer_->isReadOnlyMethodContainerParam(receiverType, methodName, pname);
+                if (isReadOnlyContainer) continue;
+            }
+        }
         if (receiverIsVector && vectorMethodSharesArg(methodName, i)) {
             // A container's element pointer kind is decided once, across every
             // push_back call site targeting it (SmartPointerAnalyzer::

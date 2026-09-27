@@ -508,6 +508,61 @@ std::pair<std::string, std::string> AstEmitter::calleeParam(const FunctionCall& 
     return isClassType(ptype) ? std::make_pair(ptype, pname) : std::pair<std::string, std::string>{};
 }
 
+std::string AstEmitter::argNeedsExplicitCopyForReadOnlyContainerParam(const FunctionCall& call, size_t argIndex,
+                                                                       const std::string& receiverClass,
+                                                                       const std::string& methodName) const {
+    // Resolve the target parameter's own declared type at argIndex, mirroring
+    // calleeParam's own lookup (kept separate rather than widening
+    // calleeParam's contract, which is documented class-type-only).
+    const std::vector<std::pair<std::string, std::string>>* params = nullptr;
+    if (!receiverClass.empty()) {
+        auto clsIt = classMethodParams_.find(receiverClass);
+        if (clsIt == classMethodParams_.end()) return "";
+        auto paramIt = clsIt->second.find(methodName);
+        if (paramIt == clsIt->second.end()) {
+            paramIt = clsIt->second.find(overloadKey(methodName, call.arguments.size()));
+        }
+        if (paramIt == clsIt->second.end()) return "";
+        params = &paramIt->second;
+    } else {
+        auto paramIt = functionParams_.find(call.function_name);
+        if (paramIt == functionParams_.end()) return "";
+        params = &paramIt->second;
+    }
+    if (argIndex >= params->size()) return "";
+    const auto& [ptype, pname] = (*params)[argIndex];
+    if (!isVectorType(ptype)) return "";
+    const bool isReadOnlyContainer = receiverClass.empty()
+        ? analyzer_.isReadOnlyContainerParam(call.function_name, pname)
+        : analyzer_.isReadOnlyMethodContainerParam(receiverClass, methodName, pname);
+    if (!isReadOnlyContainer) return "";
+
+    // Is the argument a caller LOCAL or by-value PARAMETER (never a field
+    // access)? Those can never be reached mid-call by the callee (no
+    // references to locals outside ext_fn, closures capture by value), so a
+    // live reference is always safe regardless of the callee's purity.
+    const Expression* arg = call.arguments[argIndex].get();
+    if (auto id = dynamic_cast<const Identifier*>(arg)) {
+        if (!isCurrentField(id->name)) return "";  // local/param -- reference is safe
+    } else if (dynamic_cast<const ThisExpression*>(arg) == nullptr &&
+               dynamic_cast<const MemberAccess*>(arg) == nullptr) {
+        // Anything else that is not a field/this/member chain (a nested call
+        // result, a literal, ...) is not a live alias to begin with -- no
+        // copy needed either way; emitMovedArg's existing fallthrough
+        // handles it.
+        return "";
+    }
+
+    // Argument is a field access (or `this` itself, though a container is
+    // never bound to `this` directly). Safe to pass by reference only if the
+    // callee is proven heap-pure.
+    const bool calleeIsPure = receiverClass.empty() ? analyzer_.isHeapPureFreeFunction(call.function_name)
+                                                     : analyzer_.isHeapPureMethod(receiverClass, methodName);
+    if (calleeIsPure) return "";
+
+    return ptype;  // needs an explicit copy -- return the type to construct it from
+}
+
 bool AstEmitter::isCurrentField(const std::string& name) const {
     if (currentClass_.empty()) return false;
     auto it = classFields_.find(currentClass_);
@@ -1393,6 +1448,26 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
                 sig += cppTypeFor(ptype, pname) + "& " + pname;
             }
             noteVar(pname, VarKind::Value);
+        } else if (isVectorType(ptype) &&
+                   (ownerClass.empty() ? analyzer_.isReadOnlyContainerParam(name, pname)
+                                       : analyzer_.isReadOnlyMethodContainerParam(ownerClass, methodName, pname))) {
+            // Inferred read-only container parameter (see
+            // SmartPointerAnalyzer::classifyReadOnlyContainerParams) -- the
+            // language-level fix for the by-value-container-copy cost the
+            // ext_fn `ref` mechanism above only fixes for hand-declared
+            // externs. Lowered exactly like an ext_fn `ref` container:
+            // `const T&`, never a mutable `T&` (a mutable container
+            // reference stays forbidden everywhere -- reallocation would
+            // invalidate every existing observer, CLAUDE.md threat #4).
+            // Call-site emission (emitMovedArg) must NOT move this argument
+            // even when the callee is "not heap-pure" for a NON-local
+            // argument -- that impurity gate controls whether the CALL SITE
+            // passes a live reference or an explicit copy, not whether the
+            // CALLEE's own parameter type here is a reference; the
+            // parameter is always `const&` once classified read-only.
+            sig += "const " + cppTypeFor(ptype, pname) + "& " + pname;
+            noteVar(pname, VarKind::Value);
+            containerVarType_[pname] = ptype;
         } else {
             sig += cppTypeFor(ptype, pname) + " " + pname;
             noteVar(pname, VarKind::Value);
@@ -2345,6 +2420,22 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
                 } else {
                     s += emitMovedArg(call->arguments[i].get(), calleeParam(*call, i));
                 }
+                continue;
+            }
+            if (const std::string argContainerType =
+                    argNeedsExplicitCopyForReadOnlyContainerParam(*call, i, receiverClass, methodName);
+                !argContainerType.empty()) {
+                // See the function's own doc comment: a NON-local argument
+                // (field access) bound to a read-only container parameter of
+                // a callee that is not proven heap-pure gets an explicit
+                // copy instead of the plain identifier/field-access
+                // reference emitMovedArg would otherwise emit -- preserving
+                // by-value semantics exactly (the callee cannot observe
+                // anything the (possibly impure) call does to the field
+                // afterward, matching what by-value copying already
+                // guaranteed before this parameter was ever classified
+                // read-only).
+                s += cppTypeFor(argContainerType, "") + "(" + emitExpression(call->arguments[i].get()) + ")";
                 continue;
             }
             s += emitMovedArg(call->arguments[i].get(), calleeParam(*call, i));
