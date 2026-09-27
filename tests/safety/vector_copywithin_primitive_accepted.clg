@@ -1,0 +1,65 @@
+//@ expect: accept
+//@ reason: `v.copyWithin(dstStart, srcStart, len)` on a primitive-element vector
+//@ reason: (int and byte), covering the ordinary non-overlapping case, a
+//@ reason: partially-overlapping case memmove's own semantics cover correctly
+//@ reason: (destination range partially covers the source range, but every
+//@ reason: source element is still real, pre-existing data -- NOT the
+//@ reason: DEFLATE-style self-repeating case, see
+//@ reason: vector_copywithin_self_overlap_documents_no_repeat_accepted.clg for
+//@ reason: why that shape is explicitly out of scope), and a vector field
+//@ reason: (the zlib-cling match-copy shape this exists for).
+//@ run: 1 2 3 1 2 3 5 9 9 9 10 11
+
+class Buffer {
+public:
+    std::vector<byte> data;
+    Buffer() {
+    }
+    void fill() {
+        data.push_back(5);
+        data.push_back(9);
+    }
+    // Grows by duplicating the last element (distance == 1, len == 1 -- the
+    // one self-overlap shape that IS safe with memmove: copying a single
+    // element never has a "read what was just written" step, since there's
+    // only one source element and it's read before anything is written).
+    void duplicateLast() {
+        int last = data.size() - 1;
+        data.resize(data.size() + 1, 0);
+        data.copyWithin(last + 1, last, 1);
+    }
+}
+
+int main() {
+    // Non-overlapping: [1,2,3,0,0,0] -> copy [0,3) to [3,6) -> [1,2,3,1,2,3].
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    v.resize(6, 0);
+    v.copyWithin(3, 0, 3);
+
+    // Partially overlapping, but every source element is real pre-existing
+    // data (not a value copyWithin itself just wrote): [8,9,10,11,0] -> copy
+    // [1,4) (real values 9,10,11) to [0,3) -> [9,10,11,11,0]. This is the
+    // ordinary "shift left" case memmove is specified to get right.
+    std::vector<int> w;
+    w.push_back(8);
+    w.push_back(9);
+    w.push_back(10);
+    w.push_back(11);
+    w.resize(5, 0);
+    w.copyWithin(0, 1, 3);
+
+    Buffer b = new Buffer();
+    b.fill();
+    b.duplicateLast();
+    int b0 = b.data[0] + 0;
+    int b1 = b.data[1] + 0;
+    int b2 = b.data[2] + 0;
+
+    std::cout << v[0] << " " << v[1] << " " << v[2] << " " << v[3] << " " << v[4] << " " << v[5] << " "
+              << b0 << " " << b1 << " " << b2 << " "
+              << w[0] << " " << w[1] << " " << w[2] << std::endl;
+    return 0;
+}

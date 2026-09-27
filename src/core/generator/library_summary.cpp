@@ -78,7 +78,7 @@ std::string vectorElementType(const std::string& type) {
 
 bool isKnownVectorMethod(const std::string& methodName) {
     static const std::set<std::string> kKnown = {"push_back", "pop_back", "size", "begin", "end", "resize",
-                                                   "reserve"};
+                                                   "reserve", "copyWithin"};
     return kKnown.count(methodName) > 0;
 }
 

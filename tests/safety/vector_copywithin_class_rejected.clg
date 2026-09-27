@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ reason: `copyWithin` on a vector of objects is rejected, matching
+//@ reason: resize/reserve's own restriction (vector_resize_class_rejected.clg,
+//@ reason: vector_reserve_class_rejected.clg) -- its codegen computes a byte
+//@ reason: count from the element type (len * sizeof(T)), which is
+//@ reason: meaningless for an object element, and there is no motivating
+//@ reason: case for it there regardless.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> nodes;
+    nodes.push_back(new Node(1));
+    nodes.copyWithin(0, 0, 1);   // ERROR: copyWithin on a vector of objects
+    return 0;
+}

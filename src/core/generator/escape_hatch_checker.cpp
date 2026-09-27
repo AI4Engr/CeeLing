@@ -245,9 +245,10 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         // `v.push_back(x)` where `v`'s declared type is `std::vector<T>`.
         const std::string declaredType = resolveDeclaredType(member->object.get());
         if (isVectorType(declaredType)) {
-            // resize/reserve only on primitive-element vectors -- see
-            // isKnownVectorMethod's comment in library_summary.h.
-            if (member->member == "resize" || member->member == "reserve") {
+            // resize/reserve/copyWithin only on primitive-element vectors --
+            // see isKnownVectorMethod's comment in library_summary.h.
+            if (member->member == "resize" || member->member == "reserve" ||
+                member->member == "copyWithin") {
                 return isPrimitiveType(vectorElementType(declaredType));
             }
             return isKnownVectorMethod(member->member);
@@ -483,6 +484,18 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                              "(int, byte, char, ...), matching `resize`'s own restriction -- "
                              "v1 has no motivating case for reserving capacity on an "
                              "object-element vector.";
+                }
+            }
+            if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get());
+                calleeMember != nullptr && calleeMember->member == "copyWithin") {
+                const std::string recvType = resolveDeclaredType(calleeMember->object.get());
+                if (isVectorType(recvType)) {
+                    e.message = "`copyWithin` on `" + recvType + "`: element type is not primitive";
+                    e.help = "`copyWithin` is only allowed on vectors of primitive elements "
+                             "(int, byte, char, ...), matching `resize`/`reserve`'s own "
+                             "restriction -- its codegen computes a byte count from the "
+                             "element type (len * sizeof(T)), which is meaningless for an "
+                             "object element.";
                 }
             }
             errors_.push_back(e);

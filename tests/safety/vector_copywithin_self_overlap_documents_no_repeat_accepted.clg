@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ reason: DOCUMENTS a deliberate limitation, not a bug: copyWithin(dstStart,
+//@ reason: srcStart, len) where dstStart < srcStart + len (a self-overlapping
+//@ reason: range where the source region overlaps memory copyWithin will
+//@ reason: itself write into) does NOT produce a self-repeating/run-length
+//@ reason: pattern -- it has exactly Rust slice::copy_within's semantics
+//@ reason: (std::memmove), which reads len real elements starting at
+//@ reason: srcStart and writes them once, with no repetition. A caller
+//@ reason: wanting DEFLATE's run-length-style repeat (match distance shorter
+//@ reason: than match length, e.g. distance=2 length=5 on "AB" must yield
+//@ reason: "ABABA") must detect that shape itself and use a different
+//@ reason: strategy -- copyWithin makes no attempt to handle it. This was a
+//@ reason: real bug caught before shipping (a direct probe expecting
+//@ reason: [1,2,1,2,1,2,1] got [1,2,1,2,0,0,0] instead), not a hypothetical.
+//@ run: 1 2 1 2 0 0 0
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.resize(7, 0);
+    // distance (dstStart - srcStart) = 2, len = 5: a DEFLATE-shaped
+    // self-overlapping repeat. The CORRECT DEFLATE-semantics answer would be
+    // [1,2,1,2,1,2,1] (the 2-element pattern repeated to fill 5 slots) --
+    // copyWithin does NOT do this; see the expect: accept run: assertion
+    // above for the real (memmove) answer.
+    v.copyWithin(2, 0, 5);
+    std::cout << v[0] << " " << v[1] << " " << v[2] << " " << v[3] << " " << v[4] << " " << v[5] << " "
+              << v[6] << std::endl;
+    return 0;
+}

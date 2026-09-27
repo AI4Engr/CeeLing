@@ -15,6 +15,7 @@ std::string AstEmitter::emit(const Program& program) {
     classNames_.clear();
     varKinds_.clear();
     usedRuntimeHelpers_.clear();
+    usesCopyWithin_ = false;
     collectClassNames(program);
     collectUsedRuntimeHelpers(program);
 
@@ -32,6 +33,10 @@ std::string AstEmitter::emit(const Program& program) {
         for (const char* hdr : {"#include <fstream>", "#include <sstream>"}) {
             if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
         }
+    }
+    if (usesCopyWithin_) {
+        // std::memmove -- see the FunctionCall branch's copyWithin codegen.
+        if (emittedIncludes.insert("#include <cstring>").second) out << "#include <cstring>\n";
     }
     for (const auto& stmt : program.statements) {
         // Only THIS file's own #include lines -- an external declaration's includes
@@ -402,6 +407,17 @@ void AstEmitter::collectUsedRuntimeHelpers(const Program& program) {
             for (const auto& arg : call->arguments) visitExpr(arg.get());
             if (call->callee) {
                 visitExpr(call->callee.get());
+                // v.copyWithin(...) anywhere in the program means the
+                // std::memmove-based codegen (emitExpression's FunctionCall
+                // branch) will be emitted somewhere, so <cstring> is needed.
+                // Not gated on the receiver actually being a vector here --
+                // that's checked again at the real emission site, and a
+                // false positive here only costs one unused #include, never
+                // a missing one.
+                if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+                    member != nullptr && member->member == "copyWithin") {
+                    usesCopyWithin_ = true;
+                }
             } else if (isKnownRuntimeHelper(call->function_name)) {
                 usedRuntimeHelpers_.insert(call->function_name);
             }
@@ -2339,6 +2355,11 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         std::string receiverName;
         std::string receiverClass;
         std::string methodName;
+        std::string recvText;  // receiver's own emitted text, kept outside the
+                                // MemberAccess branch's scope -- copyWithin's
+                                // codegen below needs it standalone (not
+                                // fused into `prefix`, which is
+                                // "recvText.copyWithin" by the time this runs).
         if (auto m = dynamic_cast<const MemberAccess*>(call->callee.get())) {
             // Method call `recv.method(args)` -> `recv (-> or .) method(args)`, or
             // `recv (-> or .) method<T>(args)` when the call carries a type argument
@@ -2347,6 +2368,7 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             // isKnownCallable, resolveCallReturnAlias) are a separate, analysis-only
             // mechanism and must agree in spirit but not literally emit anything here.
             const std::string recv = emitExpression(m->object.get());
+            recvText = recv;
             const std::string mClass = exprObjectClass(m->object.get());
             const std::string op = (mClass.empty() || isValueType(mClass)) ? "." : "->";
             prefix = recv + op + m->member;
@@ -2407,6 +2429,30 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             }
         }
         const bool receiverIsVector = isVectorType(receiverContainerType);
+        // v.copyWithin(dstStart, srcStart, len): std::vector has no member
+        // of this shape, so (unlike every other vector method on this page,
+        // which is a plain pass-through) this needs its own codegen --
+        // std::memmove into the receiver's own .data(). Exactly Rust
+        // slice::copy_within's semantics, not a self-repeating/run-length
+        // primitive -- see isKnownVectorMethod's own doc comment in
+        // library_summary.h for why a self-overlapping DEFLATE-style
+        // back-reference (match distance shorter than match length) is
+        // OUT OF SCOPE for this call and must be handled by the caller
+        // before ever calling copyWithin. Guarded on isPrimitiveType(element)
+        // the same way resize/reserve are (see
+        // EscapeHatchChecker::isKnownCallable) -- checked again here, not
+        // just trusted from the escape-hatch pass, since this codegen
+        // computes a byte COUNT from the element type (`len * sizeof(T)`)
+        // that would be meaningless for an object element.
+        if (receiverIsVector && methodName == "copyWithin" && call->arguments.size() == 3 &&
+            isPrimitiveType(vectorElementType(receiverContainerType))) {
+            const std::string elemType = cppTypeFor(vectorElementType(receiverContainerType), "");
+            const std::string dst = emitExpression(call->arguments[0].get());
+            const std::string src = emitExpression(call->arguments[1].get());
+            const std::string len = emitExpression(call->arguments[2].get());
+            return "std::memmove(" + recvText + ".data() + (" + dst + "), " +
+                   recvText + ".data() + (" + src + "), (" + len + ") * sizeof(" + elemType + "))";
+        }
         const bool elementIsShared = receiverIsVector && analyzer_.containerElementIsShared(receiverName);
         size_t argOutParamIdx = call->arguments.size();  // sentinel: no out-parameter
         if (!receiverClass.empty()) {

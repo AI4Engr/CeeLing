@@ -34,6 +34,42 @@ std::string vectorElementType(const std::string& type);
 // than allowing it only for object elements, since v1 has no motivating case
 // for reserve on an object-typed vector and the container-argument
 // restriction is already the established pattern on this page.
+//
+// `copyWithin(dstStart, srcStart, len)` -- Rust `slice::copy_within`'s exact
+// shape and semantics, not a novel one: there is no real std::vector method
+// by this name, so AstEmitter's FunctionCall branch generates a
+// std::memmove call for it instead of a plain pass-through (the one method
+// on this page that needs its own codegen). Copies `len` elements from
+// `srcStart` to `dstStart` within the SAME vector.
+//
+// memmove correctly handles ranges that overlap in the ORDINARY sense (the
+// destination range partially covers the source range, e.g. copying
+// [0,5) to [2,7)) -- it is specified to behave as if the source were read
+// into a temporary buffer first, then written out, so partial overlap of
+// that kind is always safe. It does NOT and CANNOT produce a
+// self-repeating pattern: copyWithin(dstStart=2, srcStart=0, len=5) with
+// only 2 real source elements does NOT yield [a,b,a,b,a] (repeating the
+// 2-element pattern to fill 5 slots) -- it reads the 5 SOURCE elements
+// (2 real ones plus 3 elements of whatever was already at [2,5), since
+// that's what "read len elements starting at srcStart" means when
+// dstStart < srcStart + len) and writes them to the destination, once,
+// with no further repetition. Confirmed via direct probe before writing
+// this comment (a real, not hypothetical, bug caught before it shipped):
+// this is EXACTLY DEFLATE's back-reference shape when the match distance
+// is SHORTER than the match length (a run-length-style repeat, e.g.
+// distance=2 length=5 on "AB" must yield "ABABA") -- copyWithin is the
+// wrong primitive for that case. A caller needing that self-repeating
+// behavior must detect `dist < len` itself and fall back to a different
+// strategy (e.g. an explicit per-element loop, or repeated calls to
+// copyWithin with a growing prefix) -- copyWithin itself makes no attempt
+// to detect or handle this, exactly like Rust's copy_within doesn't either
+// (it has the identical memmove-based semantics and the identical
+// limitation).
+//
+// Restricted to primitive elements, same reasoning as resize/reserve: it
+// computes a byte count from the element type, which is meaningless for
+// an object element, and there is no motivating case for it there yet
+// regardless.
 bool isKnownVectorMethod(const std::string& methodName);
 
 // Does calling `methodName` on a vector MOVE its argument at position `argIndex`

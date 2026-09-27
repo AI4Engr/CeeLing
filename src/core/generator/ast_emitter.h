@@ -322,6 +322,13 @@ private:
     // buffer-then-decide-preamble shape.
     std::set<std::string> usedRuntimeHelpers_;
     void collectUsedRuntimeHelpers(const Program& program);
+    // Set by collectUsedRuntimeHelpers alongside usedRuntimeHelpers_ (same
+    // single pass, no separate scan): does the program call `.copyWithin(...)`
+    // on ANY vector-typed receiver anywhere? Its generated codegen
+    // (emitExpression's FunctionCall branch) lowers to std::memmove, so
+    // `#include <cstring>` is only emitted when this is true -- matching
+    // usedRuntimeHelpers_'s own "only include what's actually used" discipline.
+    bool usesCopyWithin_ = false;
     // Emits an ExternalSpecializationMarker's declaration+definition at its
     // own top-level source position -- see the marker's comment in ast.h for
     // why this position (not "after the target class") is the only one
