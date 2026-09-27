@@ -1123,6 +1123,10 @@
     "named": false
   },
   {
+    "type": "byte",
+    "named": false
+  },
+  {
     "type": "catch",
     "named": false
   },

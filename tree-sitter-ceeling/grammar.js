@@ -212,6 +212,13 @@ module.exports = grammar({
                // shape is inexpressible by construction (the same escape-by-
                // construction philosophy CLAUDE.md uses for raw pointers
                // generally), not something a checker rejects after the fact.
+      'byte',  // a pure VALUE type, unsigned 8-bit -- the unsigned counterpart
+               // to `char` (which is SIGNED in generated C++ on this project's
+               // toolchain), added so a `vector<byte>` byte-buffer's
+               // index/arithmetic never silently goes negative the way
+               // `vector<char>` can. Lowered to C++ `unsigned char` in
+               // cppTypeFor (ast_emitter.cpp) -- the one primitive whose
+               // CeeLing spelling is NOT identical to its C++ spelling.
       $.generic_type,        // std::vector<T> (Phase 2.6 containers)
       $.scoped_identifier,  // qualified names like std::vector (Phase 2.6 containers)
       $.identifier  // Add support for custom types (class names)

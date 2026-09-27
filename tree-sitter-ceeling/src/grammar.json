@@ -447,6 +447,10 @@
           "value": "char"
         },
         {
+          "type": "STRING",
+          "value": "byte"
+        },
+        {
           "type": "SYMBOL",
           "name": "generic_type"
         },

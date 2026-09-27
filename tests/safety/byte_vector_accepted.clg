@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ reason: std::vector<byte> must emit std::vector<unsigned char>, exercising
+//@ reason: cppTypeFor's recursive vector-element branch with `byte` as the
+//@ reason: element -- the same code path vector_of_string_element_type_
+//@ reason: accepted.clg already proved for `string`, now proved for the new
+//@ reason: primitive whose CeeLing spelling differs from its C++ spelling.
+//@ reason: This is the container shape zlib-cling's input/output buffers
+//@ reason: would use if migrated from vector<int> to vector<byte> (a
+//@ reason: separate, not-yet-done follow-up -- see CeeLing's TODO.md).
+//@ run: 3 72 101
+
+int main() {
+    std::vector<byte> buf;
+    buf.push_back(72);
+    buf.push_back(101);
+    buf.push_back(108);
+    int first = buf[0] + 0;
+    int second = buf[1] + 0;
+    std::cout << buf.size() << " " << first << " " << second << std::endl;
+    return 0;
+}

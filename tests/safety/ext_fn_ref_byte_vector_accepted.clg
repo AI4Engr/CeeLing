@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ reason: ext_fn `ref std::vector<byte>` -- confirms the ext_fn `ref`
+//@ reason: mechanism (pass-by-reference, no copy) composes with the new
+//@ reason: `byte` primitive with zero additional code, since refParams'
+//@ reason: type-decides-meaning check (isVectorType(paramType) &&
+//@ reason: isPrimitiveType(vectorElementType(paramType))) is itself
+//@ reason: type-name-agnostic. The argument must stay usable AFTER the call
+//@ reason: (borrowed, not moved) -- this is the direct enabler for
+//@ reason: zlib-cling's eventual compare256 retry over a real byte buffer.
+
+ext_fn int compare256(ref std::vector<byte> a, int offA, ref std::vector<byte> b, int offB, int maxLen);
+
+int main() {
+    std::vector<byte> a;
+    a.push_back(1);
+    std::vector<byte> b;
+    b.push_back(1);
+    int result = compare256(a, 0, b, 0, 1);
+    a.push_back(2);   // OK: `a` was borrowed (ref), not moved
+    b.push_back(2);   // OK: `b` was borrowed (ref), not moved
+    std::cout << result << std::endl;
+    return 0;
+}

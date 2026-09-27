@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ reason: `byte` (unsigned 8-bit, lowers to C++ `unsigned char`) as a plain
+//@ reason: VALUE type -- declaration, integer-literal assignment, arithmetic,
+//@ reason: and a bitwise op. Added because plain `char` is SIGNED in
+//@ reason: generated C++ on this project's toolchain: a byte value above 127
+//@ reason: reads back negative, silently corrupting code that uses it as a
+//@ reason: table index or in unsigned arithmetic (found while investigating
+//@ reason: zlib-cling's compare256 SIMD shim). This fixture's value (200) is
+//@ reason: specifically chosen to be > 127 -- proving the arithmetic result
+//@ reason: stays unsigned/correct, not the sign-extended negative `char`
+//@ reason: would silently produce. Printed via `int` locals (not the `byte`
+//@ reason: values directly) because C++'s ostream has an `unsigned char`
+//@ reason: overload that prints it as a raw CHARACTER, not a number -- a
+//@ reason: real, confirmed C++ behavior this fixture works around the same
+//@ reason: way any hand-written C++ using unsigned char must.
+//@ run: 200 100
+
+int main() {
+    byte b = 200;
+    byte shifted = b >> 1;
+    int bAsInt = b + 0;
+    int shiftedAsInt = shifted + 0;
+    std::cout << bAsInt << " " << shiftedAsInt << std::endl;
+    return 0;
+}

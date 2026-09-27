@@ -127,7 +127,7 @@ std::string mapValueType(const std::string& type) {
 
 bool isPrimitiveType(const std::string& type) {
     static const std::set<std::string> kKnown = {
-        "int", "float", "double", "bool", "string", "std::string", "char"};
+        "int", "float", "double", "bool", "string", "std::string", "char", "byte"};
     return kKnown.count(type) > 0;
 }
 

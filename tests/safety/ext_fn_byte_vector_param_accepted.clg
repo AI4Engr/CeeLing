@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ reason: ext_fn with a std::vector<byte> parameter (by value) -- confirms
+//@ reason: `byte` flows through isSupportedExternType/isPrimitiveType
+//@ reason: unchanged, since both are type-name-set-driven rather than
+//@ reason: enumerating specific primitives. No ext_fn-side code needed
+//@ reason: touching for this to work.
+
+ext_fn int sumFirstTwo(std::vector<byte> data);
+
+int main() {
+    std::vector<byte> data;
+    data.push_back(10);
+    data.push_back(20);
+    int result = sumFirstTwo(data);
+    std::cout << result << std::endl;
+    return 0;
+}
