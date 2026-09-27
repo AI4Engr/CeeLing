@@ -245,6 +245,11 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         // `v.push_back(x)` where `v`'s declared type is `std::vector<T>`.
         const std::string declaredType = resolveDeclaredType(member->object.get());
         if (isVectorType(declaredType)) {
+            // resize only on primitive-element vectors -- see
+            // isKnownVectorMethod's comment in library_summary.h.
+            if (member->member == "resize") {
+                return isPrimitiveType(vectorElementType(declaredType));
+            }
             return isKnownVectorMethod(member->member);
         }
         if (isStringType(declaredType)) {
@@ -458,6 +463,17 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                      "silently trusted (CLAUDE.md \"default-reject, never default-allow\"). "
                      "Define `" + calleeName + "` in CeeLing source, or call an existing "
                      "CeeLing function/method instead.";
+            if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get());
+                calleeMember != nullptr && calleeMember->member == "resize") {
+                const std::string recvType = resolveDeclaredType(calleeMember->object.get());
+                if (isVectorType(recvType)) {
+                    e.message = "`resize` on `" + recvType + "`: element type is not primitive";
+                    e.help = "`resize` is only allowed on vectors of primitive elements "
+                             "(int, byte, char, ...). On a vector of objects it would fill "
+                             "the new slots with null smart pointers, or duplicate an owner "
+                             "for resize(n, x). Build the elements with push_back instead.";
+                }
+            }
             errors_.push_back(e);
         }
 

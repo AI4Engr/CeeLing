@@ -19,6 +19,13 @@ bool isVectorType(const std::string& type);
 std::string vectorElementType(const std::string& type);
 
 // Is `methodName` a known std::vector<T> method this allow-list covers?
+// `resize` is listed here but EscapeHatchChecker additionally restricts it to
+// vectors whose element type is primitive: resize(n) on a vector of objects
+// would fill it with null smart pointers (threat #9, whose runtime check does
+// not exist yet), and resize(n, x) would duplicate an owner. Chosen over
+// `assign(n, value)`, which also has an iterator overload -- and
+// `v.assign(v.begin(), v.end())` (iterators into the same vector) is
+// undefined behavior. resize has no iterator form at all.
 bool isKnownVectorMethod(const std::string& methodName);
 
 // Does calling `methodName` on a vector MOVE its argument at position `argIndex`
@@ -31,9 +38,9 @@ bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex);
 
 // Does calling `methodName` on a vector potentially reallocate its backing store,
 // invalidating every existing reference/iterator into the container (CLAUDE.md
-// threat #4)? Only `push_back` is modeled for this slice (the only mutator this
-// allow-list covers); `insert`/`resize`/`erase` will extend this set once they
-// exist. `size`/`begin`/`end` are read-only and never invalidate.
+// threat #4)? `push_back` and `resize` may reallocate; `pop_back` and a
+// shrinking `resize` destroy elements. `insert`/`erase` will extend this set
+// once they exist. `size`/`begin`/`end` are read-only and never invalidate.
 bool vectorMethodInvalidatesReferences(const std::string& methodName);
 
 // Is `type` CeeLing's `string` primitive (bare keyword, or `std::string`/`string`

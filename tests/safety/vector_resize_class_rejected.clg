@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ reason: `resize` on a vector of objects is rejected. resize(n) would fill
+//@ reason: the new slots with null smart pointers (a later `v[i].field` is a
+//@ reason: null dereference -- threat #9, whose runtime check does not exist
+//@ reason: yet), and resize(n, x) would duplicate an owner. Objects go into a
+//@ reason: vector through push_back, which the ownership analysis models.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> nodes;
+    nodes.resize(3);   // ERROR: resize on a vector of objects
+    return 0;
+}

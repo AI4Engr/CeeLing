@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ reason: `resize(n)` / `resize(n, value)` on vectors of primitive elements --
+//@ reason: a local vector<int> (grow with a fill value, then shrink), a
+//@ reason: vector<byte> with a fill value above 127, and a vector field resized
+//@ reason: inside a method (the zlib-cling hash-table setup shape). resize is
+//@ reason: allowed only for primitive elements (see
+//@ reason: vector_resize_class_rejected.clg) and is modeled as invalidating the
+//@ reason: container's observers, like push_back. Chosen instead of `assign`,
+//@ reason: whose iterator overload makes `v.assign(v.begin(), v.end())`
+//@ reason: expressible, which is undefined behavior; resize has no iterator form.
+//@ run: 3 4 205 -1
+
+class Table {
+public:
+    std::vector<int> slots;
+    Table() {
+    }
+    void reset(int n) {
+        slots.resize(n, -1);
+    }
+};
+
+int main() {
+    std::vector<int> v;
+    v.resize(5, -1);
+    v[2] = 7;
+    v.resize(3);
+    std::vector<byte> b;
+    b.resize(4, 200);
+    int total = v[0] + v[1] + v[2] + b[3];
+    Table t = new Table();
+    t.reset(8);
+    std::cout << v.size() << " " << b.size() << " " << total << " " << t.slots[7] << std::endl;
+    return 0;
+}

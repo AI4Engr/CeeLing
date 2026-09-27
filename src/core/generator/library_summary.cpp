@@ -77,7 +77,7 @@ std::string vectorElementType(const std::string& type) {
 }
 
 bool isKnownVectorMethod(const std::string& methodName) {
-    static const std::set<std::string> kKnown = {"push_back", "pop_back", "size", "begin", "end"};
+    static const std::set<std::string> kKnown = {"push_back", "pop_back", "size", "begin", "end", "resize"};
     return kKnown.count(methodName) > 0;
 }
 
@@ -95,7 +95,7 @@ bool vectorMethodInvalidatesReferences(const std::string& methodName) {
     // as push_back's whole-container invalidation, since this codebase's
     // model tracks invalidation at the container level, not per-element (see
     // Chapter 18 Step 14's design note on this granularity choice).
-    return methodName == "push_back" || methodName == "pop_back";
+    return methodName == "push_back" || methodName == "pop_back" || methodName == "resize";
 }
 
 bool isStringType(const std::string& type) {
