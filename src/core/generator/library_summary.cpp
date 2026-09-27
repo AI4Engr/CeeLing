@@ -249,4 +249,47 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used) 
     return out;
 }
 
+std::string copyWithinHelperDefinition() {
+    // See the header's doc comment for why this is a helper rather than a
+    // bare std::memmove call, and why every path keeps memmove's exact
+    // semantics.
+    return
+        "#ifndef CLING_COPY_WITHIN_DEFINED\n"
+        "#define CLING_COPY_WITHIN_DEFINED\n"
+        "#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)\n"
+        "#include <emmintrin.h>\n"
+        "#define CLING_COPY_WITHIN_SSE2 1\n"
+        "#endif\n"
+        "namespace cling {\n"
+        "template <typename T>\n"
+        "inline void copyWithin(std::vector<T>& v, long long dst, long long src, long long len) {\n"
+        "    unsigned char* base = reinterpret_cast<unsigned char*>(v.data());\n"
+        "    const size_t n = static_cast<size_t>(len) * sizeof(T);\n"
+        "    const size_t d = static_cast<size_t>(dst) * sizeof(T);\n"
+        "    const size_t s = static_cast<size_t>(src) * sizeof(T);\n"
+        "#ifdef CLING_COPY_WITHIN_SSE2\n"
+        "    const size_t total = v.size() * sizeof(T);\n"
+        "    const size_t span = (n + 15) & ~static_cast<size_t>(15);\n"
+        "    if (n > 0 && d + span <= total && s + span <= total && (n <= 16 || d >= s + n || s >= d + n)) {\n"
+        "        size_t i = 0;\n"
+        "        while (n - i > 16) {\n"
+        "            _mm_storeu_si128(reinterpret_cast<__m128i*>(base + d + i),\n"
+        "                             _mm_loadu_si128(reinterpret_cast<const __m128i*>(base + s + i)));\n"
+        "            i += 16;\n"
+        "        }\n"
+        "        const __m128i val = _mm_loadu_si128(reinterpret_cast<const __m128i*>(base + s + i));\n"
+        "        const __m128i old = _mm_loadu_si128(reinterpret_cast<const __m128i*>(base + d + i));\n"
+        "        const __m128i idx = _mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);\n"
+        "        const __m128i keep = _mm_cmpgt_epi8(_mm_set1_epi8(static_cast<char>(n - i)), idx);\n"
+        "        _mm_storeu_si128(reinterpret_cast<__m128i*>(base + d + i),\n"
+        "                         _mm_or_si128(_mm_and_si128(keep, val), _mm_andnot_si128(keep, old)));\n"
+        "        return;\n"
+        "    }\n"
+        "#endif\n"
+        "    std::memmove(base + d, base + s, n);\n"
+        "}\n"
+        "} // namespace cling\n"
+        "#endif\n";
+}
+
 } // namespace cling

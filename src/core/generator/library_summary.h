@@ -232,4 +232,20 @@ bool isKnownBorrowingMethod(const std::string& className, const std::string& met
 // <string>, already covered by AstEmitter's unconditional-include list.
 std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used);
 
+// Definition of `cling::copyWithin`, the runtime helper `v.copyWithin(dst,
+// src, len)` lowers to (emitted once per translation unit that uses it,
+// macro-guarded). Semantics are exactly std::memmove's (Rust
+// slice::copy_within's): only [dst, dst+len) changes. Why a helper instead
+// of a bare std::memmove call: the motivating caller (zlib-cling's match
+// copy) copies ~9 bytes on average, where a library memmove call is mostly
+// call overhead plus length-dependent branches -- measured at ~8% of total
+// decompress time. The fast path copies whole 16-byte chunks and writes the
+// last chunk as a BLEND of the source bytes and the destination's own
+// current bytes, so the bytes past len are rewritten with the values they
+// already had (unchanged, not clobbered). It runs only when every 16-byte
+// chunk it touches lies inside the vector and the ranges don't overlap
+// (or len <= 16, where all loads happen before the single store, which is
+// memmove-correct for any overlap); anything else takes std::memmove.
+std::string copyWithinHelperDefinition();
+
 } // namespace cling

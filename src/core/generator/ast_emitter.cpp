@@ -35,7 +35,7 @@ std::string AstEmitter::emit(const Program& program) {
         }
     }
     if (usesCopyWithin_) {
-        // std::memmove -- see the FunctionCall branch's copyWithin codegen.
+        // cling::copyWithin's std::memmove fallback (copyWithinHelperDefinition).
         if (emittedIncludes.insert("#include <cstring>").second) out << "#include <cstring>\n";
     }
     for (const auto& stmt : program.statements) {
@@ -51,6 +51,9 @@ std::string AstEmitter::emit(const Program& program) {
     out << "\n";
     if (!usedRuntimeHelpers_.empty()) {
         out << requiredRuntimeHelperDefinitions(usedRuntimeHelpers_) << "\n";
+    }
+    if (usesCopyWithin_) {
+        out << copyWithinHelperDefinition() << "\n";
     }
 
     // Group top-level declarations by namespaceName and wrap each contiguous run in
@@ -2433,27 +2436,25 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         const bool receiverIsVector = isVectorType(receiverContainerType);
         // v.copyWithin(dstStart, srcStart, len): std::vector has no member
         // of this shape, so (unlike every other vector method on this page,
-        // which is a plain pass-through) this needs its own codegen --
-        // std::memmove into the receiver's own .data(). Exactly Rust
-        // slice::copy_within's semantics, not a self-repeating/run-length
-        // primitive -- see isKnownVectorMethod's own doc comment in
-        // library_summary.h for why a self-overlapping DEFLATE-style
-        // back-reference (match distance shorter than match length) is
-        // OUT OF SCOPE for this call and must be handled by the caller
-        // before ever calling copyWithin. Guarded on isPrimitiveType(element)
-        // the same way resize/reserve are (see
+        // which is a plain pass-through) this lowers to the cling::copyWithin
+        // runtime helper (copyWithinHelperDefinition, library_summary.h:
+        // memmove semantics, inline 16-byte chunks instead of a library
+        // call). Exactly Rust slice::copy_within's semantics, not a
+        // self-repeating/run-length primitive -- see isKnownVectorMethod's
+        // own doc comment in library_summary.h for why a self-overlapping
+        // DEFLATE-style back-reference (match distance shorter than match
+        // length) is OUT OF SCOPE for this call and must be handled by the
+        // caller before ever calling copyWithin. Guarded on
+        // isPrimitiveType(element) the same way resize/reserve are (see
         // EscapeHatchChecker::isKnownCallable) -- checked again here, not
-        // just trusted from the escape-hatch pass, since this codegen
-        // computes a byte COUNT from the element type (`len * sizeof(T)`)
-        // that would be meaningless for an object element.
+        // just trusted from the escape-hatch pass, since the helper computes
+        // a byte count from the element type.
         if (receiverIsVector && methodName == "copyWithin" && call->arguments.size() == 3 &&
             isPrimitiveType(vectorElementType(receiverContainerType))) {
-            const std::string elemType = cppTypeFor(vectorElementType(receiverContainerType), "");
             const std::string dst = emitExpression(call->arguments[0].get());
             const std::string src = emitExpression(call->arguments[1].get());
             const std::string len = emitExpression(call->arguments[2].get());
-            return "std::memmove(" + recvText + ".data() + (" + dst + "), " +
-                   recvText + ".data() + (" + src + "), (" + len + ") * sizeof(" + elemType + "))";
+            return "cling::copyWithin(" + recvText + ", " + dst + ", " + src + ", " + len + ")";
         }
         const bool elementIsShared = receiverIsVector && analyzer_.containerElementIsShared(receiverName);
         size_t argOutParamIdx = call->arguments.size();  // sentinel: no out-parameter
