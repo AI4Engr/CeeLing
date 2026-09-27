@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ reason: `int64` (signed 64-bit, lowers to C++ `long long`) as a plain
+//@ reason: VALUE type -- declaration, a literal beyond 32-bit signed range,
+//@ reason: arithmetic, and a left shift. Named `int64`, not `long`,
+//@ reason: specifically to avoid C++'s own `long` (platform-dependent width)
+//@ reason: implying a guarantee this type does not borrow. This fixture's
+//@ reason: value (5000000000, about 5 billion) is specifically chosen to
+//@ reason: overflow a 32-bit `int` -- proving the arithmetic stays correct
+//@ reason: at 64-bit width, not silently wrapping the way `int` would.
+//@ run: 10000000000 2500000000
+
+int main() {
+    int64 x = 5000000000;
+    int64 doubled = x * 2;
+    int64 shifted = x >> 1;
+    std::cout << doubled << " " << shifted << std::endl;
+    return 0;
+}

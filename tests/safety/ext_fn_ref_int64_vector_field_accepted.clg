@@ -1,0 +1,39 @@
+//@ expect: accept
+//@ reason: ext_fn `ref std::vector<int64>` -- confirms the ext_fn `ref`
+//@ reason: mechanism (pass-by-reference, no copy) composes with `int64`
+//@ reason: with zero additional code, since refParams' type-decides-meaning
+//@ reason: check (isVectorType(paramType) && isPrimitiveType(vectorElementType
+//@ reason: (paramType))) is itself type-name-agnostic. The argument is a
+//@ reason: FIELD (`this->buf`), not a local -- deliberately, not the
+//@ reason: byte_vector precedent's local-variable shape: see TODO.md's
+//@ reason: "Known bug -- ext_fn ref container arguments wrongly std::move'd
+//@ reason: at the call site" entry, found while building this fixture's
+//@ reason: sibling. A field-argument call site is a genuinely different,
+//@ reason: unaffected code path in emitMovedArg (confirmed via probe), so
+//@ reason: this fixture exercises the actually-safe shape rather than
+//@ reason: silently repeating the same masked bug a second time. No `//@
+//@ reason: run:` here (unlike int64_basic_accepted.clg) -- `sumFirstTwo` has
+//@ reason: no real linked implementation, matching every other bare-syntax-
+//@ reason: check ext_fn fixture (ext_fn_ref_byte_vector_accepted.clg has
+//@ reason: none either, for the same reason).
+
+ext_fn int64 sumFirstTwo(ref std::vector<int64> data);
+
+class Holder {
+public:
+    std::vector<int64> buf;
+    Holder() {
+    }
+    int64 total() {
+        return sumFirstTwo(buf);
+    }
+}
+
+int main() {
+    Holder h = new Holder();
+    h.buf.push_back(9000000000);
+    h.buf.push_back(1);
+    int64 result = h.total();
+    std::cout << h.buf.size() << " " << result << std::endl;
+    return 0;
+}

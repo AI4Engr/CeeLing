@@ -1,0 +1,14 @@
+//@ expect: accept
+//@ reason: ext_fn with an int64 parameter and return type (by value) --
+//@ reason: confirms `int64` flows through isSupportedExternType/
+//@ reason: isPrimitiveType unchanged, since both are type-name-set-driven
+//@ reason: rather than enumerating specific primitives. No ext_fn-side code
+//@ reason: needed touching for this to work.
+
+ext_fn int64 doubleIt(int64 x);
+
+int main() {
+    int64 result = doubleIt(5000000000);
+    std::cout << result << std::endl;
+    return 0;
+}

@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ reason: std::vector<int64> must emit std::vector<long long>, exercising
+//@ reason: cppTypeFor's recursive vector-element branch with `int64` as the
+//@ reason: element -- the same code path byte_vector_accepted.clg already
+//@ reason: proved for `byte`, now proved for the second primitive whose
+//@ reason: CeeLing spelling differs from its C++ spelling. This is the
+//@ reason: buffer shape zlib-cling's bit accumulator would use if migrated
+//@ reason: to a genuine 64-bit refill (a separate, not-yet-done follow-up).
+//@ run: 2 9000000000
+
+int main() {
+    std::vector<int64> buf;
+    buf.push_back(9000000000);
+    buf.push_back(1);
+    std::cout << buf.size() << " " << buf[0] << std::endl;
+    return 0;
+}

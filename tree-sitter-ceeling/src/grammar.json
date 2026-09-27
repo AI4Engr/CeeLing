@@ -451,6 +451,10 @@
           "value": "byte"
         },
         {
+          "type": "STRING",
+          "value": "int64"
+        },
+        {
           "type": "SYMBOL",
           "name": "generic_type"
         },

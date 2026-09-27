@@ -1192,6 +1192,10 @@
     "named": false
   },
   {
+    "type": "int64",
+    "named": false
+  },
+  {
     "type": "main",
     "named": false
   },

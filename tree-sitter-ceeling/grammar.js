@@ -219,6 +219,19 @@ module.exports = grammar({
                // `vector<char>` can. Lowered to C++ `unsigned char` in
                // cppTypeFor (ast_emitter.cpp) -- the one primitive whose
                // CeeLing spelling is NOT identical to its C++ spelling.
+      'int64', // a pure VALUE type, signed 64-bit -- named `int64`, not `long`,
+               // specifically to avoid C++'s own `long` (32 or 64 bits
+               // depending on platform/ABI -- e.g. 32 on Windows LLP64, 64 on
+               // Linux LP64) implying a width guarantee this keyword does NOT
+               // give if it borrowed that name. Lowered to C++ `long long`
+               // (guaranteed >= 64 bits by the standard) in cppTypeFor, the
+               // second primitive (after `byte`) whose CeeLing spelling
+               // differs from its C++ spelling. Motivated by zlib-cling's
+               // inflate/deflate bit-buffer refill, which zlib-rs does 8
+               // bytes at a time into a 64-bit accumulator -- CeeLing's
+               // `int` (32-bit signed) can only safely hold 31 usable bits
+               // (bit 31 would be the sign bit), forcing a 4-byte refill
+               // granularity instead of zlib-rs's 8.
       $.generic_type,        // std::vector<T> (Phase 2.6 containers)
       $.scoped_identifier,  // qualified names like std::vector (Phase 2.6 containers)
       $.identifier  // Add support for custom types (class names)

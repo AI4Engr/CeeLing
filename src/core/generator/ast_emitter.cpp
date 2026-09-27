@@ -882,14 +882,16 @@ bool AstEmitter::isBareValueReturningSpecializationCall(const Expression* expr) 
 
 std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::string& varName) const {
     if (isStringType(ceelingType)) return "std::string";
-    // `byte` is the one primitive whose CeeLing spelling is NOT identical to
-    // its C++ spelling (every other primitive -- int/float/double/bool/char
-    // -- happens to share a name with its C++ counterpart, which is why none
-    // of them need an entry here; see grammar.js's `byte` comment). Checked
-    // before isMapType/vectorElementType so `std::vector<byte>`'s element
-    // still gets lowered correctly via the recursive cppTypeFor(elem, "")
-    // call a few lines below.
+    // `byte`/`int64` are the two primitives whose CeeLing spelling is NOT
+    // identical to their C++ spelling (every other primitive --
+    // int/float/double/bool/char -- happens to share a name with its C++
+    // counterpart, which is why none of them need an entry here; see
+    // grammar.js's own comments). Checked before isMapType/vectorElementType
+    // so `std::vector<byte>`/`std::vector<int64>`'s element still gets
+    // lowered correctly via the recursive cppTypeFor(elem, "") call a few
+    // lines below.
     if (ceelingType == "byte") return "unsigned char";
+    if (ceelingType == "int64") return "long long";
     if (isMapType(ceelingType)) {
         // Map keys/values are restricted to primitives this slice (enforced at parse
         // time in ast_builder.cpp), so neither side ever needs the class-type
