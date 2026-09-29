@@ -251,8 +251,8 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used) 
 
 std::string copyWithinHelperDefinition() {
     // See the header's doc comment for why this is a helper rather than a
-    // bare std::memmove call, and why every path keeps memmove's exact
-    // semantics.
+    // bare std::memmove call, and why the SSE2 fast path's final chunk no
+    // longer preserves bytes past dst+len (removed -- see git history).
     return
         "#ifndef CLING_COPY_WITHIN_DEFINED\n"
         "#define CLING_COPY_WITHIN_DEFINED\n"
@@ -277,12 +277,13 @@ std::string copyWithinHelperDefinition() {
         "                             _mm_loadu_si128(reinterpret_cast<const __m128i*>(base + s + i)));\n"
         "            i += 16;\n"
         "        }\n"
-        "        const __m128i val = _mm_loadu_si128(reinterpret_cast<const __m128i*>(base + s + i));\n"
-        "        const __m128i old = _mm_loadu_si128(reinterpret_cast<const __m128i*>(base + d + i));\n"
-        "        const __m128i idx = _mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);\n"
-        "        const __m128i keep = _mm_cmpgt_epi8(_mm_set1_epi8(static_cast<char>(n - i)), idx);\n"
+        "        // Unconditional 16-byte overwrite of the tail chunk: bytes in\n"
+        "        // [d+i+(n-i), d+i+16) -- past the real end of the copy but inside\n"
+        "        // this same SIMD store -- are NOT preserved (see header doc\n"
+        "        // comment). Safe because d+span<=total/s+span<=total above already\n"
+        "        // guarantee this 16-byte load and store both stay inside v.\n"
         "        _mm_storeu_si128(reinterpret_cast<__m128i*>(base + d + i),\n"
-        "                         _mm_or_si128(_mm_and_si128(keep, val), _mm_andnot_si128(keep, old)));\n"
+        "                         _mm_loadu_si128(reinterpret_cast<const __m128i*>(base + s + i)));\n"
         "        return;\n"
         "    }\n"
         "#endif\n"

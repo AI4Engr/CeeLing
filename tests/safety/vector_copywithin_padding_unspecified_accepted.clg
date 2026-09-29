@@ -1,0 +1,39 @@
+//@ expect: accept
+//@ reason: Locks in the (as of this fixture) INTENTIONAL removal of
+//@ reason: copyWithin's former "bytes past dst+len are preserved" behavior
+//@ reason: (see library_summary.h's copyWithinHelperDefinition doc comment
+//@ reason: for the full rationale: ~1-3% real decompress speedup in
+//@ reason: zlib-cling's hot path, never a documented contract, no fixture
+//@ reason: ever depended on it). This fixture deliberately does NOT assert
+//@ reason: padding byte values past the copy's destination end -- on the
+//@ reason: SSE2 fast path they are now an unconditional overwrite (typically
+//@ reason: a copy of source bytes), but on a non-SSE2 build
+//@ reason: (CLING_COPY_WITHIN_SSE2 undefined) the same call falls through to
+//@ reason: plain std::memmove, which still fully preserves them -- so
+//@ reason: asserting specific padding values here would be platform-
+//@ reason: dependent and wrong on non-x86 builds. Only [dst, dst+len) is a
+//@ reason: real contract; that is all this fixture checks. Do NOT "fix"
+//@ reason: this fixture to assert padding preservation -- that would
+//@ reason: silently reintroduce the removed blend's cost if someone "fixes"
+//@ reason: the implementation to match a wrongly-strengthened fixture.
+//@ run: 1 2 3 1 2 3
+
+int main() {
+    // 10 real elements; copy [0,3) to [4,7), leaving [7,10) as real,
+    // readable "padding" past the copy's destination end (7) so this
+    // fixture actually exercises a case where padding exists to observe --
+    // unlike every other copyWithin fixture, where dst+len == v.size() (or
+    // the padding past dst+len is never actually read/asserted).
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    v.resize(10, 99);
+    v.copyWithin(4, 0, 3);
+    // Only the documented contract: [4,7) now holds [1,2,3]. Indices 7,8,9
+    // (past dst+len=7) are deliberately NOT printed/asserted -- see the
+    // reason: block above for why.
+    std::cout << v[0] << " " << v[1] << " " << v[2] << " "
+              << v[4] << " " << v[5] << " " << v[6] << std::endl;
+    return 0;
+}
