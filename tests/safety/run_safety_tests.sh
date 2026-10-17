@@ -6,6 +6,8 @@
 # compiler and compare the exit code to the expectation:
 #   - expect: accept  -> compiler must exit 0
 #   - expect: reject  -> compiler must exit non-zero (it refused unsafe code)
+#   - an accept fixture may add `//@ run: <stdout>` (program must print exactly this) or
+#     `//@ run-fail: <text>` (program must exit non-zero with <text> on stderr)
 #
 # Because the dangling/use-after-move analysis is NOT yet implemented, every
 # `expect: reject` fixture currently passes through (exit 0) -- a known false-negative.
@@ -106,8 +108,38 @@ run_one_fixture() {
             # exception type matching, shared_ptr aliasing. -fsyntax-only cannot
             # distinguish "dispatches to the override" from "silently calls the base".
             want_run="$(grep -m1 -oE '//@ run:.*' "$fx" | sed -E 's|^//@ run:[[:space:]]*||')"
+            # A fixture may instead declare that the compiled program must DIE at
+            # runtime with a diagnostic (a compiler-inserted runtime check firing):
+            #   //@ run-fail: out of bounds
+            # The program must exit non-zero AND its stderr must contain the text.
+            # Exit status alone is not enough -- a segfault is also non-zero, and a
+            # segfault is exactly what a runtime check exists to replace.
+            want_fail="$(grep -m1 -oE '//@ run-fail:.*' "$fx" | sed -E 's|^//@ run-fail:[[:space:]]*||' | tr -d '\r')"
 
-            if [ -n "$want_run" ]; then
+            if [ -n "$want_fail" ]; then
+                if ! "$CXX" -std=c++17 "$gen" -o "$exe" >/dev/null 2>&1; then
+                    printf '%-48s %-8s %s\n' "$name" "$expect" "FAIL (generated C++ does not compile)" > "$report_file"
+                    echo "FAIL" > "$status_file"
+                    return 0
+                fi
+                got_err="$("$exe" 2>&1 >/dev/null)"
+                got_code=$?
+                if [ "$got_code" -eq 0 ]; then
+                    printf '%-48s %-8s %s\n' "$name" "$expect" \
+                        "FAIL (expected runtime failure '$want_fail', but exited 0)" > "$report_file"
+                    echo "FAIL" > "$status_file"
+                    return 0
+                fi
+                case "$got_err" in
+                    *"$want_fail"*) ;;
+                    *)
+                        printf '%-48s %-8s %s\n' "$name" "$expect" \
+                            "FAIL (exited $got_code, stderr lacks '$want_fail': '$got_err')" > "$report_file"
+                        echo "FAIL" > "$status_file"
+                        return 0
+                        ;;
+                esac
+            elif [ -n "$want_run" ]; then
                 if ! "$CXX" -std=c++17 "$gen" -o "$exe" >/dev/null 2>&1; then
                     printf '%-48s %-8s %s\n' "$name" "$expect" "FAIL (generated C++ does not compile)" > "$report_file"
                     echo "FAIL" > "$status_file"
