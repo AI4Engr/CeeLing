@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ run: 3
+//@ reason: positive control: a `ref` may be bound from another `ref`; it inherits
+//@ reason: that observer's owner, so ordinary observer chains stay legal.
+
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+};
+
+int main() {
+    Item a = new Item(3);
+    ref Item b = a;
+    ref Item c = b;
+    std::cout << c.v << std::endl;
+    return 0;
+}

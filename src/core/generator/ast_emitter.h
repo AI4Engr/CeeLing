@@ -256,6 +256,9 @@ private:
 
     // Expression emission.
     std::string emitExpression(const Expression* expr);
+    // Address a `ref` observer binds to: `(x).get()` for a smart pointer, or the
+    // bare name when `x` is itself an observer (already a raw `T*`).
+    std::string observerAddress(const Expression* expr);
     // An argument in a call position. An object-typed local/parameter is std::move'd:
     // the dangling checker has already proven it is not used after this point, so the
     // move is always safe (and required, since object params take ownership). A bare

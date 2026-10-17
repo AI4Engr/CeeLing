@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ reason: the thrown expression is checked like any other expression; an unknown
+//@ reason: call inside it must not slip through.
+
+int main() {
+    try {
+        throw mysteryUnknownMessage(7);
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    return 0;
+}

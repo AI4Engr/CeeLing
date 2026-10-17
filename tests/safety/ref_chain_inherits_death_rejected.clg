@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ reason: an observer copied from another observer must die with the same owner.
+
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+};
+
+int main() {
+    Item a = new Item(3);
+    ref Item b = a;
+    ref Item c = b;
+    a = new Item(4);
+    std::cout << c.v << std::endl;
+    return 0;
+}

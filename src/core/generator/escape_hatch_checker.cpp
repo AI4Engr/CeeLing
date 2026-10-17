@@ -732,6 +732,19 @@ void EscapeHatchChecker::checkStatement(const Statement* stmt) {
         }
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         checkExpression(exprStmt->expression.get());
+    } else if (auto th = dynamic_cast<const ThrowStatement*>(stmt)) {
+        checkExpression(th->expression.get());
+    } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
+        // Both bodies are ordinary code: an unknown call inside `try` is exactly
+        // as unchecked as one outside it. (Missing this branch let any call
+        // through as long as it sat inside a try block.)
+        for (const auto& inner : trys->body) {
+            checkStatement(inner.get());
+        }
+        localType_[trys->catchIdentifier] = trys->catchType;
+        for (const auto& inner : trys->catchBody) {
+            checkStatement(inner.get());
+        }
     }
 }
 

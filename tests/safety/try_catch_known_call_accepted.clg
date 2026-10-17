@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: 7 caught:bad
+//@ reason: positive control for the try/throw escape-hatch walk: calls to functions
+//@ reason: CeeLing compiled itself are fine inside try, catch, and throw expressions.
+
+int twice(int v) {
+    return v * 2;
+}
+
+string tag(string s) {
+    return "caught:" + s;
+}
+
+int main() {
+    try {
+        int x = twice(3) + 1;
+        std::cout << x << " ";
+        throw "bad";
+    } catch (string e) {
+        std::cout << tag(e) << std::endl;
+    }
+    return 0;
+}

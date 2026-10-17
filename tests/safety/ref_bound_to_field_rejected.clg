@@ -1,0 +1,21 @@
+//@ expect: reject
+//@ reason: `ref c = parent.child` used to lower to a raw `(parent->child).get()`
+//@ reason: pointer with no tracked owner; clearing the field freed the object and the
+//@ reason: later read was a use-after-free the checker never saw (probe printed garbage).
+
+class Item {
+public:
+    int v;
+    Item child;
+    Item(int x) { v = x; child = nullptr; }
+    Item getChild() { return child; }
+};
+
+int main() {
+    Item parent = new Item(1);
+    parent.child = new Item(42);
+    ref Item c = parent.child;
+    parent.child = nullptr;
+    std::cout << c.v << std::endl;
+    return 0;
+}

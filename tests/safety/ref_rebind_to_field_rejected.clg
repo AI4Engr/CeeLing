@@ -1,0 +1,22 @@
+//@ expect: reject
+//@ reason: rebinding an existing observer to a field is the same untrackable binding
+//@ reason: as declaring it there (probe printed garbage after the field was cleared).
+
+class Item {
+public:
+    int v;
+    Item child;
+    Item(int x) { v = x; child = nullptr; }
+    Item getChild() { return child; }
+};
+
+int main() {
+    Item parent = new Item(1);
+    parent.child = new Item(42);
+    Item other = new Item(5);
+    ref Item c = other;
+    c = parent.child;
+    parent.child = nullptr;
+    std::cout << c.v << std::endl;
+    return 0;
+}

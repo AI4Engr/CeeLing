@@ -1711,7 +1711,7 @@ std::string AstEmitter::selectAssignmentRhs(const AssignmentStatement* assign, c
         // move/consume `b` (matches DanglingChecker's model: rebinding an
         // observer never marks the RHS moved-from). Lowered the same way as the
         // declaration: `.get()` extracts the new address, or `nullptr` directly.
-        rhs = rhsIsNullptr ? "nullptr" : "(" + emitExpression(assign->expression.get()) + ").get()";
+        rhs = rhsIsNullptr ? "nullptr" : observerAddress(assign->expression.get());
     } else if (auto neww = dynamic_cast<const NewExpression*>(assign->expression.get())) {
         if (isValueType(neww->className)) {
             // `target = new T(...)` for a value-type class: plain constructor
@@ -1803,7 +1803,7 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
             observerClass_[decl->identifier] = decl->type;
             std::string rhs = isNullptrLiteral(decl->expression.get())
                 ? "nullptr"
-                : "(" + emitExpression(decl->expression.get()) + ").get()";
+                : observerAddress(decl->expression.get());
             out << pad << decl->type << "* " << decl->identifier << " = " << rhs << ";\n";
         } else if (isValueType(decl->type)) {
             // Value-type class (Iterator etc.): plain, unwrapped declaration, copied
@@ -2226,6 +2226,13 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
 }
 
 // ---- expressions ---------------------------------------------------------
+
+std::string AstEmitter::observerAddress(const Expression* expr) {
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        if (observerClass_.count(id->name)) return id->name;
+    }
+    return "(" + emitExpression(expr) + ").get()";
+}
 
 std::string AstEmitter::emitExpression(const Expression* expr) {
     if (expr == nullptr) return "";

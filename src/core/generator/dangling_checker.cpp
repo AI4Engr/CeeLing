@@ -166,6 +166,11 @@ DanglingChecker::FunctionSummary DanglingChecker::deriveSummaryForBody(
             for (const auto& inner : ifs->elseBody) stack.push_back(inner.get());
         } else if (auto whiles = dynamic_cast<const WhileStatement*>(s)) {
             for (const auto& inner : whiles->body) stack.push_back(inner.get());
+        } else if (auto fors = dynamic_cast<const ForStatement*>(s)) {
+            for (const auto& inner : fors->body) stack.push_back(inner.get());
+        } else if (auto trys = dynamic_cast<const TryStatement*>(s)) {
+            for (const auto& inner : trys->body) stack.push_back(inner.get());
+            for (const auto& inner : trys->catchBody) stack.push_back(inner.get());
         }
     }
 
@@ -389,6 +394,41 @@ std::string DanglingChecker::asContainerSubscript(const Expression* expr) const 
 std::string DanglingChecker::resolveObservedOwner(const Expression* expr) const {
     if (std::string owner = asObjectLocalName(expr); !owner.empty()) return owner;
     return asContainerSubscript(expr);
+}
+
+bool DanglingChecker::resolveRefBinding(const Expression* expr, std::string& owner,
+                                        bool& inheritsDangling) const {
+    owner.clear();
+    inheritsDangling = false;
+    if (expr == nullptr) return true;
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        if (id->name == "nullptr") return true;
+        if (observerNames_.count(id->name)) {
+            auto it = observerOf_.find(id->name);
+            if (it != observerOf_.end()) owner = it->second;
+            inheritsDangling = danglingObservers_.count(id->name) > 0;
+            return true;
+        }
+    }
+    owner = resolveObservedOwner(expr);
+    return !owner.empty();
+}
+
+void DanglingChecker::reportUntrackableRefBinding(const std::string& name,
+                                                  const Expression* expr,
+                                                  const ASTNode* anchor) {
+    DanglingError e;
+    e.line = anchor->loc.line;
+    e.column = anchor->loc.column;
+    e.message = "`ref " + name + "` is bound to `" + expr->toString() +
+                "`, whose owner cannot be tracked";
+    e.help = "a `ref` may only observe an object local, an element `v[i]` of a "
+             "container local, another `ref`, or nullptr. A field (`p.child`) or a "
+             "call result (`p.getChild()`, `make()`) has no local owner whose death "
+             "the checker can see, so the observer could silently dangle. Use a "
+             "plain (owning/sharing) local instead: `" + name + " = ...` declared "
+             "without `ref`.";
+    errors_.push_back(e);
 }
 
 std::string DanglingChecker::resolveClassOfExpr(const Expression* expr) const {
@@ -915,6 +955,13 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                          decl->identifier + " = ...;`";
                 errors_.push_back(e);
             }
+            std::string boundOwner;
+            bool inheritsDangling = false;
+            const bool trackable = !isObjectType(decl->type) ||
+                resolveRefBinding(decl->expression.get(), boundOwner, inheritsDangling);
+            if (!trackable) {
+                reportUntrackableRefBinding(decl->identifier, decl->expression.get(), decl);
+            }
             observerNames_.insert(decl->identifier);
             danglingObservers_.erase(decl->identifier);
             if (isObjectType(decl->type)) {
@@ -922,9 +969,11 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                 // `ref Node n = v[i];` observes the CONTAINER `v` (see
                 // asContainerSubscript) -- an element has no identity of its own to
                 // observe; invalidation is a whole-container reallocation event.
-                if (std::string owner = resolveObservedOwner(decl->expression.get());
-                    !owner.empty()) {
-                    observerOf_[decl->identifier] = owner;
+                if (!boundOwner.empty()) {
+                    observerOf_[decl->identifier] = boundOwner;
+                }
+                if (inheritsDangling) {
+                    danglingObservers_.insert(decl->identifier);
                 }
             }
         } else {
@@ -1028,11 +1077,22 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             // the alias exemption even if `b` was originally alias-derived.
             danglingObservers_.erase(assign->variable);
             aliasObservers_.erase(assign->variable);
-            if (std::string owner = resolveObservedOwner(assign->expression.get());
-                !owner.empty()) {
-                observerOf_[assign->variable] = owner;
+            std::string boundOwner;
+            bool inheritsDangling = false;
+            auto obsTypeIt = localType_.find(assign->variable);
+            const bool objectObserver = obsTypeIt != localType_.end() &&
+                isObjectType(obsTypeIt->second);
+            if (objectObserver &&
+                !resolveRefBinding(assign->expression.get(), boundOwner, inheritsDangling)) {
+                reportUntrackableRefBinding(assign->variable, assign->expression.get(), assign);
+            }
+            if (!boundOwner.empty()) {
+                observerOf_[assign->variable] = boundOwner;
             } else {
                 observerOf_.erase(assign->variable);
+            }
+            if (inheritsDangling) {
+                danglingObservers_.insert(assign->variable);
             }
         } else if (isOperatorAssignMutation(*assign)) {
             // `n = value;` where `n`'s declared type is a class that declares its

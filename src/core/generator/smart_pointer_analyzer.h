@@ -29,6 +29,10 @@ struct VariableReference {
     bool isAssignedTo = false;    // Is another variable assigned from this?
     bool isBackReference = false; // Is this a backward reference (e.g., prev in doubly linked list)?
     bool participatesInBidirectionalAssignment = false;
+    // Copied out of / into a field (`Item c = p.child;`, `c = p.child;`,
+    // `p.child = q.next;`): field and the other side are two live owners of one
+    // object, so both must be shared -- unique_ptr cannot be copied.
+    bool aliasedWithField = false;
     bool hasExplicitHint = false;
     std::set<std::string> assignedFromVars;  // Variables assigned to this one
     std::set<std::string> assignedToVars;    // Variables this one is assigned to

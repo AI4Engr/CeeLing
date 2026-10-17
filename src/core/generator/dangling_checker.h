@@ -160,6 +160,19 @@ private:
     // for every "what does this ref/alias observe" call site.
     std::string resolveObservedOwner(const Expression* expr) const;
 
+    // Binding a `ref` (declaration or rebind) is only sound when the checker can
+    // track the observed object's owner: an object local, `v[i]` of a container
+    // local, another observer (inherits its owner), or `nullptr`. Anything else --
+    // a field path (`p.child`), a call result (`p.getChild()`, `make()`) -- is
+    // lowered to a raw `.get()` pointer whose owner no death event will ever reach,
+    // so it is rejected here. On success `owner` is the tracked owner ("" for
+    // nullptr / an observer that has none yet) and `inheritsDangling` says the
+    // source observer was already dangling.
+    bool resolveRefBinding(const Expression* expr, std::string& owner,
+                           bool& inheritsDangling) const;
+    void reportUntrackableRefBinding(const std::string& name, const Expression* expr,
+                                     const ASTNode* anchor);
+
     // Is `assign` a bare-identifier target of the form `n = value;` where `n`'s
     // declared type is a class that declares its own `operator=`, and `value`
     // isn't itself an object local of that same class? True means this is really

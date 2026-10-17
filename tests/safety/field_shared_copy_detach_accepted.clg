@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 42
+//@ reason: positive control: the safe way to keep a field's object is a plain local
+//@ reason: (shared ownership), which keeps it alive after the field is cleared.
+
+class Item {
+public:
+    int v;
+    Item child;
+    Item(int x) { v = x; child = nullptr; }
+    Item getChild() { return child; }
+};
+
+int main() {
+    Item parent = new Item(1);
+    parent.child = new Item(42);
+    Item c = parent.child;
+    parent.child = nullptr;
+    std::cout << c.v << std::endl;
+    return 0;
+}

@@ -408,6 +408,9 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
         for (const auto& inner : whiles->body) scanContainerElementKindsInStatement(*inner, scopeName);
     } else if (auto fors = dynamic_cast<const ForStatement*>(&stmt)) {
         for (const auto& inner : fors->body) scanContainerElementKindsInStatement(*inner, scopeName);
+    } else if (auto trys = dynamic_cast<const TryStatement*>(&stmt)) {
+        for (const auto& inner : trys->body) scanContainerElementKindsInStatement(*inner, scopeName);
+        for (const auto& inner : trys->catchBody) scanContainerElementKindsInStatement(*inner, scopeName);
     }
 }
 
@@ -427,6 +430,9 @@ void collectReturnExpressions(const std::vector<StatementPtr>& body,
             collectReturnExpressions(whiles->body, out);
         } else if (auto fors = dynamic_cast<const ForStatement*>(stmtPtr.get())) {
             collectReturnExpressions(fors->body, out);
+        } else if (auto trys = dynamic_cast<const TryStatement*>(stmtPtr.get())) {
+            collectReturnExpressions(trys->body, out);
+            collectReturnExpressions(trys->catchBody, out);
         }
     }
 }
@@ -3597,10 +3603,12 @@ void SmartPointerAnalyzer::scanSource(const std::string& source) {
                     }
                 } else if (rhs.isMemberAccess) {
                     ref.isAssignedFrom = true;
+                    ref.aliasedWithField = true;
                     ref.assignedFromVars.insert(rhs.memberName);
                     for (auto& [otherKey, otherRef] : variableReferences) {
                         if (otherRef.variableName == rhs.memberName) {
                             otherRef.isAssignedTo = true;
+                            otherRef.aliasedWithField = true;
                             otherRef.assignedToVars.insert(declaredName);
                         }
                     }
@@ -3623,6 +3631,7 @@ void SmartPointerAnalyzer::scanSource(const std::string& source) {
                         if (rhs.isIdentifier) {
                             ref.assignedFromVars.insert(rhs.identifier);
                         } else if (rhs.isMemberAccess) {
+                            ref.aliasedWithField = true;
                             ref.assignedFromVars.insert(rhs.memberName);
                         }
                     }
@@ -3637,6 +3646,7 @@ void SmartPointerAnalyzer::scanSource(const std::string& source) {
                         (ref.containingScope == normalizeScope(scopeName) ||
                          (!currentClass.empty() && ref.containingScope == currentClass))) {
                         ref.isAssignedFrom = true;
+                        if (rhs.isMemberAccess) ref.aliasedWithField = true;
                         ref.assignedFromVars.insert(rhs.isIdentifier ? rhs.identifier : rhs.memberName);
                     }
                 }
@@ -3667,6 +3677,7 @@ void SmartPointerAnalyzer::scanSource(const std::string& source) {
                 for (auto& [key, ref] : variableReferences) {
                     if (ref.variableName == rhs.memberName) {
                         ref.isAssignedTo = true;
+                        ref.aliasedWithField = true;
                         ref.assignedToVars.insert(lhs.isIdentifier ? lhs.identifier : lhs.memberName);
                     }
                 }
@@ -3839,6 +3850,9 @@ void SmartPointerAnalyzer::secondPassDeterminePointerTypes() {
             pointerType = PointerType::SHARED;
             reason = "bidirectional ownership needs a shared forward edge";
             classesNeedingSharedRoots.insert(ref.className);
+        } else if (ref.aliasedWithField) {
+            pointerType = PointerType::SHARED;
+            reason = "copied between a field and another variable, so both are owners";
         } else if (ref.containingScope == ref.className && ref.isAssignedFrom &&
                    !ref.assignedFromVars.empty()) {
             pointerType = PointerType::SHARED;

@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ reason: same hole reached through a getter: the returned shared_ptr is a temporary,
+//@ reason: the observer's real owner is the field, which no death event tracks.
+
+class Item {
+public:
+    int v;
+    Item child;
+    Item(int x) { v = x; child = nullptr; }
+    Item getChild() { return child; }
+};
+
+int main() {
+    Item parent = new Item(1);
+    parent.child = new Item(42);
+    ref Item c = parent.getChild();
+    parent.child = nullptr;
+    std::cout << c.v << std::endl;
+    return 0;
+}

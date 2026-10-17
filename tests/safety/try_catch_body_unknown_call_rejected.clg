@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ reason: the catch body is ordinary code too -- an unknown call there must be
+//@ reason: rejected exactly like one in the try body or outside any try.
+
+int main() {
+    try {
+        throw "boom";
+    } catch (string e) {
+        int n = mysteryUnknownFunction(e);
+        std::cout << n << std::endl;
+    }
+    return 0;
+}

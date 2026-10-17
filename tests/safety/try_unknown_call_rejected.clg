@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ reason: an unknown call is just as unchecked inside a `try` body as outside it.
+//@ reason: EscapeHatchChecker used to have no TryStatement branch, so wrapping any
+//@ reason: unregistered call in `try { ... }` silently bypassed default-reject.
+
+int main() {
+    try {
+        int x = mysteryUnknownFunction(3);
+        std::cout << x << std::endl;
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    return 0;
+}
