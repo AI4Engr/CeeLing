@@ -3827,7 +3827,14 @@ void SmartPointerAnalyzer::secondPassDeterminePointerTypes() {
         std::string reason = "default unique ownership";
 
         const std::string exactMemberKey = makeMemberKey(ref.className, ref.variableName);
-        const auto explicitIt = explicitHints.find(exactMemberKey);
+        // A hint is written `//@ptr <kind> EnclosingClass.member`, but ref.className is the FIELD's
+        // type, not its enclosing class: for `Node prev;` inside Node the two coincide, which is
+        // why only that shape ever matched. For `Emitter owner;` inside Listener the key built
+        // above is `Emitter.owner` and a hint for `Listener.owner` could never be found (every
+        // cross-class field silently fell back to the default). Look the enclosing class up too.
+        const std::string enclosingMemberKey = makeMemberKey(ref.containingScope, ref.variableName);
+        auto explicitIt = explicitHints.find(exactMemberKey);
+        if (explicitIt == explicitHints.end()) explicitIt = explicitHints.find(enclosingMemberKey);
         const auto fallbackHintIt = explicitHints.find(ref.variableName);
 
         if (explicitIt != explicitHints.end()) {
@@ -3921,7 +3928,8 @@ void SmartPointerAnalyzer::applyExplicitHints() {
         bool matched = false;
         for (auto& [key, ref] : variableReferences) {
             const std::string memberKey = makeMemberKey(ref.className, ref.variableName);
-            if (target == ref.variableName || target == memberKey) {
+            const std::string enclosingKey = makeMemberKey(ref.containingScope, ref.variableName);
+            if (target == ref.variableName || target == memberKey || target == enclosingKey) {
                 ref.hasExplicitHint = true;
                 matched = true;
             }

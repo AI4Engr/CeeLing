@@ -1,0 +1,53 @@
+//@ expect: accept
+//@ run: 4 5
+//@ reason: `//@ptr weak Listener.owner` on a field whose type is ANOTHER class. The hint lookup
+//@ reason: built its key from the field's TYPE (`Emitter.owner`), not the enclosing class
+//@ reason: (`Listener.owner`), so it only matched when the two coincide (`Node prev;` inside Node).
+//@ reason: Every explicit hint on a cross-class field was silently ignored, `shared` as well as
+//@ reason: `weak`. Run: the program still behaves (4 emits, 5 hits); the lowering itself is
+//@ reason: asserted by the lowering probe recorded in TODO.md (live-object count after release).
+
+class Listener {
+public:
+    string topic;
+    //@ptr weak Listener.owner
+    Emitter owner;
+    int hits;
+    Listener(string t) { topic = t; owner = nullptr; hits = 0; }
+    void notify(string payload) { hits = hits + 1; }
+};
+
+class Emitter {
+public:
+    std::vector<Listener> listeners;
+    int emitted;
+    Emitter() { emitted = 0; }
+    void subscribe(Listener l) {
+        l.owner = this;
+        listeners.push_back(l);
+    }
+    void emit(string topic, string payload) {
+        emitted = emitted + 1;
+        for (Listener l : listeners) {
+            if (l.topic == topic) { l.notify(payload); }
+        }
+    }
+    int totalHits() {
+        int t = 0;
+        for (Listener l : listeners) { t = t + l.hits; }
+        return t;
+    }
+};
+
+int main() {
+    Emitter e = new Emitter();
+    e.subscribe(new Listener("save"));
+    e.subscribe(new Listener("save"));
+    e.subscribe(new Listener("open"));
+    e.emit("save", "{}");
+    e.emit("save", "{}");
+    e.emit("open", "{}");
+    e.emit("none", "{}");
+    std::cout << e.emitted << " " << e.totalHits() << std::endl;
+    return 0;
+}
