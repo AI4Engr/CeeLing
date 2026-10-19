@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: 1
+//@ reason: `other = this;` (the current object stored into one of its OWN fields) used to emit
+//@ reason: a raw `this` into a shared_ptr field, which does not compile, while the very same
+//@ reason: `this` passed as a call argument already lowered to shared_from_this() (see
+//@ reason: this_stored_in_field_accepted.clg). Field-target assignments bypass emitMovedArg to
+//@ reason: avoid wrongly std::move-ing a RHS, but `this` is never moved; it must still become
+//@ reason: shared_from_this(). Run: a self-link reads back its own value.
+
+class Node {
+public:
+    int v;
+    Node other;
+    Node(int x) { v = x; other = nullptr; }
+    void linkToSelf() { other = this; }
+};
+
+int main() {
+    Node a = new Node(1);
+    a.linkToSelf();
+    std::cout << a.other.v << std::endl;
+    return 0;
+}

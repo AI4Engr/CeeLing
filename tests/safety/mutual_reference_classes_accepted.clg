@@ -1,0 +1,51 @@
+//@ expect: accept
+//@ run: 4 5
+//@ reason: two classes in ONE file that refer to each other (Listener has an Emitter field,
+//@ reason: Emitter holds Listeners and stores `this` into each listener's field). The first
+//@ reason: class used to emit `std::shared_ptr<Emitter>` against a name not yet declared, so
+//@ reason: cling reported success and g++ failed. emit() now forward-declares every class
+//@ reason: the file defines. Must be RUN: 4 emits, 5 hits (2 listeners x 2 "save" + 1 "open").
+
+class Listener {
+public:
+    string topic;
+    Emitter owner;
+    int hits;
+    Listener(string t) { topic = t; owner = nullptr; hits = 0; }
+    void notify(string payload) { hits = hits + 1; }
+};
+
+class Emitter {
+public:
+    std::vector<Listener> listeners;
+    int emitted;
+    Emitter() { emitted = 0; }
+    void subscribe(Listener l) {
+        l.owner = this;
+        listeners.push_back(l);
+    }
+    void emit(string topic, string payload) {
+        emitted = emitted + 1;
+        for (Listener l : listeners) {
+            if (l.topic == topic) { l.notify(payload); }
+        }
+    }
+    int totalHits() {
+        int t = 0;
+        for (Listener l : listeners) { t = t + l.hits; }
+        return t;
+    }
+};
+
+int main() {
+    Emitter e = new Emitter();
+    e.subscribe(new Listener("save"));
+    e.subscribe(new Listener("save"));
+    e.subscribe(new Listener("open"));
+    e.emit("save", "{}");
+    e.emit("save", "{}");
+    e.emit("open", "{}");
+    e.emit("none", "{}");
+    std::cout << e.emitted << " " << e.totalHits() << std::endl;
+    return 0;
+}

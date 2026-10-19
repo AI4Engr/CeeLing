@@ -56,6 +56,25 @@ std::string AstEmitter::emit(const Program& program) {
         out << copyWithinHelperDefinition() << "\n";
     }
 
+    // Forward-declare every class this file defines (global namespace, non-value-type), so two
+    // classes in one file may refer to each other through smart-pointer fields, parameters and
+    // return types whatever the definition order: `class Listener { Emitter owner; }` placed
+    // BEFORE `class Emitter` used to emit `std::shared_ptr<Emitter>` against an undeclared name.
+    // A forward declaration followed by the full definition is ordinary C++. Value types
+    // (struct) are skipped: they are embedded by value and need the complete type anyway.
+    // emitHeader's own loop forward-declares classes from OTHER files only.
+    {
+        bool anyForward = false;
+        for (const auto& stmt : program.statements) {
+            if (stmt->isExternalDeclaration) continue;
+            auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+            if (cls == nullptr || !cls->namespaceName.empty() || analyzer_.isValueTypeClass(cls->name)) continue;
+            out << "class " << cls->name << ";\n";
+            anyForward = true;
+        }
+        if (anyForward) out << "\n";
+    }
+
     // Group top-level declarations by namespaceName and wrap each contiguous run in
     // `namespace X { ... }`. Desugaring (ASTBuilder::buildNamespaceDeclaration)
     // preserves each namespace's members as a contiguous block in program order and
@@ -1731,6 +1750,17 @@ std::string AstEmitter::selectAssignmentRhs(const AssignmentStatement* assign, c
         // weak_ptr has no operator=(nullptr_t); default-construct instead (an empty
         // weak_ptr, the same meaning as "nullptr" for the other smart-pointer kinds).
         rhs = "{}";
+    } else if ((memberTarget || isCurrentField(assign->variable)) &&
+               dynamic_cast<const ThisExpression*>(assign->expression.get()) != nullptr &&
+               !currentClass_.empty()) {
+        // `field = this;` / `other.field = this;` -- storing the current object into a field
+        // is shared co-ownership, the same meaning as passing `this` as an argument
+        // (emitMovedArg's own ThisExpression branch, which this field-target branch used to
+        // bypass: it emitted a raw `this` into a shared_ptr field, which does not compile).
+        // SmartPointerAnalyzer already marks the class enable_shared_from_this and builds it
+        // with make_shared for this shape (methodPassesThisAsArgument scans assignment
+        // right-hand sides too); only this lowering was missing.
+        rhs = emitMovedArg(assign->expression.get());
     } else if (memberTarget || isCurrentField(assign->variable)) {
         // `a.b = obj;` OR a bare identifier naming a field with implicit `this`
         // (`data = bytes;`) links/shares into a field -- it does not consume

@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ run: ok
+//@ reason: the smallest shape of the ordering bug: a class whose field type is defined LATER
+//@ reason: in the same file. Without a forward declaration the emitted C++ fails to compile
+//@ reason: ("'Emitter' was not declared") even though cling exits 0.
+
+class Listener {
+public:
+    string topic;
+    Emitter owner;
+    Listener(string t) { topic = t; owner = nullptr; }
+};
+
+class Emitter {
+public:
+    int n;
+    Emitter() { n = 0; }
+};
+
+int main() {
+    Listener l = new Listener("x");
+    std::cout << "ok" << std::endl;
+    return 0;
+}
