@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ run: 7 7
+//@ reason: a FREE function that stores its parameter into another object's field
+//@ reason: (`array.child = it;`) shares the parameter, and `array` (only written through) is not
+//@ reason: consumed either: calling it twice with the same arguments and using them afterwards is
+//@ reason: ordinary Java-like code. Before, both arguments were moved at the first call.
+
+class Item {
+public:
+    Item child;
+    int v;
+    Item(int x) { v = x; }
+};
+
+bool setChild(Item array, Item it) {
+    if (array == nullptr || it == nullptr) {
+        return false;
+    }
+    array.child = it;
+    return true;
+}
+
+int main() {
+    Item root = new Item(0);
+    Item n = new Item(5);
+    setChild(root, n);
+    setChild(root, n);
+    n.v = 7;
+    std::cout << root.child.v << " " << n.v << std::endl;
+    return 0;
+}

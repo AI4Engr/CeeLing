@@ -1205,6 +1205,10 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
 
 void SmartPointerAnalyzer::promoteParamsStoredInSharedFields(const Program& program) {
     for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            promoteParamsInBody(fn->body, "", fn->parameters);
+            continue;
+        }
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
         if (cls == nullptr) continue;
         for (const auto& member : cls->members) {
@@ -1231,15 +1235,88 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
     // boundary). Not recursing into if/while/for bodies is deliberate scope, not
     // an oversight: promoting a param whose storage only happens on some paths
     // would incorrectly promise sharing even on paths where the store never runs.
-    for (const auto& stmtPtr : body) {
+    // Later extension (cJSON port): the same promotion applies to a free function, to a store nested
+    // inside if/while/for/try, and to a store through another object (`array.child = item;`). A
+    // promotion is always safe -- SHARED only means the caller's variable is copied instead of
+    // moved -- so the original reason for staying out of branches (not promising sharing on a path
+    // that never stores) costs nothing and is dropped. The field's owning class is resolved from the
+    // target's base expression (parameter, local, or field chain); when that fails the enclosing
+    // class is used, as before.
+    std::map<std::string, std::string> localTypes;
+    for (const auto& [ptype, pname] : params) localTypes[pname] = ptype;
+    std::function<void(const std::vector<StatementPtr>&)> collectLocals =
+        [&](const std::vector<StatementPtr>& stmts) {
+            for (const auto& sp : stmts) {
+                if (auto decl = dynamic_cast<const VariableDeclaration*>(sp.get())) {
+                    if (localTypes.find(decl->identifier) == localTypes.end()) {
+                        localTypes[decl->identifier] = decl->type;
+                    }
+                } else if (auto ifs = dynamic_cast<const IfStatement*>(sp.get())) {
+                    collectLocals(ifs->body);
+                    collectLocals(ifs->elseBody);
+                } else if (auto whiles = dynamic_cast<const WhileStatement*>(sp.get())) {
+                    collectLocals(whiles->body);
+                } else if (auto fors = dynamic_cast<const ForStatement*>(sp.get())) {
+                    collectLocals(fors->body);
+                } else if (auto trys = dynamic_cast<const TryStatement*>(sp.get())) {
+                    collectLocals(trys->body);
+                    collectLocals(trys->catchBody);
+                }
+            }
+        };
+    collectLocals(body);
+    std::function<std::string(const Expression*)> classOf = [&](const Expression* e) -> std::string {
+        if (auto id = dynamic_cast<const Identifier*>(e)) {
+            auto it = localTypes.find(id->name);
+            if (it != localTypes.end()) return it->second;
+            if (!className.empty()) {
+                auto f = symbolTypesByScope.find(makeSymbolKey(className, id->name));
+                if (f != symbolTypesByScope.end()) return f->second;
+            }
+            return "";
+        }
+        if (auto m = dynamic_cast<const MemberAccess*>(e)) {
+            const std::string owner = classOf(m->object.get());
+            if (owner.empty()) return "";
+            auto f = symbolTypesByScope.find(makeSymbolKey(owner, m->member));
+            return f == symbolTypesByScope.end() ? std::string() : f->second;
+        }
+        return "";
+    };
+    std::function<void(const std::vector<StatementPtr>&)> visit;
+    visit = [&](const std::vector<StatementPtr>& stmts) {
+    for (const auto& stmtPtr : stmts) {
+        if (auto ifs = dynamic_cast<const IfStatement*>(stmtPtr.get())) {
+            visit(ifs->body);
+            visit(ifs->elseBody);
+            continue;
+        }
+        if (auto whiles = dynamic_cast<const WhileStatement*>(stmtPtr.get())) {
+            visit(whiles->body);
+            continue;
+        }
+        if (auto fors = dynamic_cast<const ForStatement*>(stmtPtr.get())) {
+            visit(fors->body);
+            continue;
+        }
+        if (auto trys = dynamic_cast<const TryStatement*>(stmtPtr.get())) {
+            visit(trys->body);
+            visit(trys->catchBody);
+            continue;
+        }
         auto assign = dynamic_cast<const AssignmentStatement*>(stmtPtr.get());
         if (assign == nullptr) continue;
 
         std::string fieldName;
+        std::string fieldOwner = className;  // class whose field is being stored into
         if (!assign->target) {
+            if (className.empty()) continue;  // a plain local assignment in a free function
             fieldName = assign->variable;  // bare identifier, implicit `this`
         } else if (auto member = dynamic_cast<const MemberAccess*>(assign->target.get())) {
             fieldName = member->member;
+            const std::string resolved = classOf(member->object.get());
+            if (!resolved.empty()) fieldOwner = resolved;
+            if (fieldOwner.empty()) continue;
         } else {
             continue;
         }
@@ -1255,7 +1332,7 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
         // The field's own declared type (registered by analyzeVariableDeclaration
         // when the class body was first walked) tells us which (class, name) pair
         // to ask getPointerType about.
-        const auto fieldTypeIt = symbolTypesByScope.find(makeSymbolKey(className, fieldName));
+        const auto fieldTypeIt = symbolTypesByScope.find(makeSymbolKey(fieldOwner, fieldName));
         if (fieldTypeIt == symbolTypesByScope.end()) continue;
 
         auto paramTypeIt = std::find_if(params.begin(), params.end(),
@@ -1338,6 +1415,8 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
             }
         }
     }
+    };
+    visit(body);
 }
 
 namespace {
@@ -2152,6 +2231,21 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnly(
         return id->name == paramName;
     }
     if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+        // `paramName == x` / `paramName != x` compares identity (a null check, or two handles to
+        // the same node); it reads the smart pointer and neither consumes nor stores it, exactly
+        // like `!paramName` below. Only a BARE paramName operand is exempted; anything nested in
+        // the other operand is still checked.
+        if (bin->operator_str == "==" || bin->operator_str == "!=") {
+            auto isBareParam = [&](const Expression* e) {
+                auto id = dynamic_cast<const Identifier*>(e);
+                return id != nullptr && id->name == paramName;
+            };
+            const bool leftOk = isBareParam(bin->left.get()) ||
+                !paramUseDisqualifiesReadOnly(bin->left.get(), paramName, currentClass, okCallees);
+            const bool rightOk = isBareParam(bin->right.get()) ||
+                !paramUseDisqualifiesReadOnly(bin->right.get(), paramName, currentClass, okCallees);
+            return !(leftOk && rightOk);
+        }
         return paramUseDisqualifiesReadOnly(bin->left.get(), paramName, currentClass, okCallees) ||
                paramUseDisqualifiesReadOnly(bin->right.get(), paramName, currentClass, okCallees);
     }
@@ -2277,6 +2371,12 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
             return exprHasGenuineRead(un->operand.get(), paramName, currentClass, okCallees);
         }
         if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+            if (bin->operator_str == "==" || bin->operator_str == "!=") {
+                for (const Expression* side : {bin->left.get(), bin->right.get()}) {
+                    auto sideId = dynamic_cast<const Identifier*>(side);
+                    if (sideId != nullptr && sideId->name == paramName) return true;
+                }
+            }
             return exprHasGenuineRead(bin->left.get(), paramName, currentClass, okCallees) ||
                    exprHasGenuineRead(bin->right.get(), paramName, currentClass, okCallees);
         }

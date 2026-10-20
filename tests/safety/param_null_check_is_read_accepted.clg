@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ run: 3 3
+//@ reason: `p == nullptr` only reads the handle. It used to disqualify a parameter from the read-only
+//@ reason: classification (every bare use except `!p` did), so in a LIBRARY file -- a function with no
+//@ reason: caller in its own file -- the parameter stayed a by-value unique_ptr and every caller in
+//@ reason: another file lost its argument. Within one file a caller's own evidence already made the
+//@ reason: parameter shared, which is why this single-file fixture also passed before; it guards the
+//@ reason: classification itself (the cjson-cling library depends on it) and the `p != nullptr` form.
+
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+};
+
+int valueOrZero(Item p) {
+    if (p == nullptr) {
+        return 0;
+    }
+    return p.v;
+}
+
+int main() {
+    Item a = new Item(3);
+    std::cout << valueOrZero(a) << " " << a.v << std::endl;
+    return 0;
+}

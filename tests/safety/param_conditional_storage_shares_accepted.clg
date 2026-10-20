@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ run: 2
+//@ reason: storage behind a conditional (`if (cond) { link = other; }`) now promotes `other` to a
+//@ reason: shared handle, like an unconditional store: the caller's `b` is COPIED into the call, so
+//@ reason: it stays usable afterwards on every path. Promoting is always safe (it keeps more things
+//@ reason: alive, never fewer); the old behaviour (move, then reject any later use of `b`) was merely
+//@ reason: over-restrictive. This fixture used to be `param_conditional_storage_still_moves_rejected`.
+
+class Node {
+public:
+    int v;
+    Node link;
+    Node(int x) { v = x; }
+    void maybeAttach(Node other, bool cond) {
+        if (cond) {
+            link = other;
+        }
+    }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    a.maybeAttach(b, true);
+    std::cout << b.v << std::endl;
+    return 0;
+}
