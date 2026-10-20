@@ -217,5 +217,11 @@ if [ "$fail" -gt 0 ]; then
     echo "RESULT: FAIL"
     exit 1
 fi
+if [ "$STRICT" -eq 1 ] && [ "$CXX_AVAILABLE" -ne 1 ]; then
+    # Without a C++ compiler an accept fixture proves only that cling exited 0, and every '//@ run:'
+    # and '//@ run-fail:' assertion is skipped -- a green result would be a false pass.
+    echo "RESULT: FAIL (--strict requires the compile gate; put g++ on PATH)"
+    exit 1
+fi
 echo "RESULT: OK (baseline green; $xfail known gap(s) awaiting Phase 2+)"
 exit 0
