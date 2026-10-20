@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ reason: `\x` takes exactly two hex digits here. C++'s `\x` is greedy and swallows every following
+//@ reason: hex digit, so "\x41BC" is ONE out-of-range char in C++ while a reader sees A, B, C.
+//@ reason: Requiring exactly two digits (and ending the escape there) removes that trap; "\x4"
+//@ reason: with a single digit is rejected too.
+
+int main() {
+    string s = "\x4";
+    std::cout << s.length() << std::endl;
+    return 0;
+}

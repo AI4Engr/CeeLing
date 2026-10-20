@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ reason: `\012` is an OCTAL escape in C++ (a newline), not `\0` followed by the digits 1 and 2.
+//@ reason: Accepting `\0` followed by an octal digit would make the literal mean something other than
+//@ reason: what a reader sees; the message tells the author to write \xHH.
+
+int main() {
+    string s = "a\012b";
+    std::cout << s.length() << std::endl;
+    return 0;
+}

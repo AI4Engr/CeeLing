@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 7 9 AB A "
+//@ reason: the escapes JSON-style code needs. A quote INSIDE a string (`\"`) was impossible
+//@ reason: before: the lexer ended the string at the first quote it saw, so JSON text had to be
+//@ reason: built from `char q = '"'` and concatenation. Literals are emitted to C++ verbatim, so
+//@ reason: every accepted escape means exactly what it means in C++. Values pinned, each
+//@ reason: hand-computed:
+//@ reason:   "\"hello\""   = quote h e l l o quote           -> length 7
+//@ reason:   "{\"k\":\"v\"}" = { " k " : " v " }              -> length 9
+//@ reason:   "\x41\x42"    = A B                              -> printed as AB
+//@ reason:   '\x41'        = A (char literal)
+//@ reason:   '\"'          = the quote character (char literal)
+
+int main() {
+    string quoted = "\"hello\"";
+    string json = "{\"k\":\"v\"}";
+    char q = '\"';
+    std::cout << quoted.length() << " " << json.length() << " " << "\x41\x42" << " " << '\x41' << " " << q
+              << std::endl;
+    return 0;
+}

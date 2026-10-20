@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ reason: an escape outside the whitelist (`\q`). C++ gives an unknown escape an
+//@ reason: implementation-defined meaning (usually a warning and the bare character); CeeLing
+//@ reason: emits literals verbatim, so it must refuse rather than pass the ambiguity through.
+
+int main() {
+    string s = "a\qb";
+    std::cout << s.length() << std::endl;
+    return 0;
+}

@@ -1,6 +1,7 @@
 #include "ast_builder.h"
 #include "generator/library_summary.h"
 #include <stdexcept>
+#include <cctype>
 #include <cstring>
 #include <algorithm>
 #include <iostream>
@@ -647,9 +648,62 @@ ExpressionPtr ASTBuilder::buildScopedIdentifier(TSNode node, const std::string& 
     return std::make_unique<ScopedIdentifier>(name);
 }
 
+namespace {
+
+// Reject an escape sequence outside the whitelist. The literal is emitted to C++ verbatim, so an
+// accepted escape MEANS exactly what it means in C++ -- which is why the set is a whitelist: C++
+// gives unknown escapes (`\q`) an implementation-defined meaning, and `\uXXXX` is a universal
+// character name whose byte output depends on the execution character set, not UTF-8 bytes. Code
+// that wants a byte writes `\xHH`. `\0` must not be followed by another octal digit (`\012` is an
+// octal escape in C++); `\xHH` is exactly two hex digits so it can never swallow following text.
+void checkLiteralEscapes(const std::string& text, bool isString, TSNode node, const std::string& source) {
+    auto fail = [&](const std::string& what) {
+        throw std::runtime_error(
+            makeNodeError(("Invalid escape sequence in literal: " + what).c_str(), node, source));
+    };
+    // Skip the opening and closing quote.
+    for (size_t i = 1; i + 1 < text.size(); ++i) {
+        if (text[i] != '\\') continue;
+        const char e = text[i + 1];
+        switch (e) {
+            case 'n': case 'r': case 't': case 'b': case 'f': case '\\': ++i; break;
+            case '0':
+                if (i + 2 < text.size() - 1 && text[i + 2] >= '0' && text[i + 2] <= '7') {
+                    fail("`\\0` followed by another octal digit is an octal escape; write `\\xHH` instead");
+                }
+                ++i;
+                break;
+            case 'x': {
+                auto hex = [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; };
+                if (i + 3 >= text.size() || !hex(text[i + 2]) || !hex(text[i + 3])) {
+                    fail("`\\x` must be followed by exactly two hex digits");
+                }
+                i += 3;
+                break;
+            }
+            case '"': ++i; break;                     // valid in both literal kinds in C++ ('\"' is a quote char)
+            case '\'':
+                // `\'` is the way to write a quote in a char literal; in a string a plain `'` does
+                // the job, so a `\'` there is almost certainly a mistake worth flagging.
+                if (isString) fail("`\\'` is only valid in a character literal; use a plain `'`");
+                ++i;
+                break;
+            default:
+                if (e == 'u' || e == 'U') {
+                    fail("`\\u`/`\\U` are not supported (the bytes they produce depend on the execution "
+                         "character set); write the UTF-8 bytes with `\\xHH`");
+                }
+                fail(std::string("unknown escape `\\") + e + "`");
+        }
+    }
+}
+
+} // namespace
+
 ExpressionPtr ASTBuilder::buildStringLiteral(TSNode node, const std::string& source) {
     // string_literal: a double-quoted token; keep it verbatim (quotes included).
     std::string text = getNodeText(node, source);
+    checkLiteralEscapes(text, /*isString=*/true, node, source);
     return std::make_unique<StringLiteral>(text);
 }
 
@@ -657,6 +711,7 @@ ExpressionPtr ASTBuilder::buildCharLiteral(TSNode node, const std::string& sourc
     // char_literal: a single-quoted token; keep it verbatim (quotes included) --
     // CeeLing's `'x'` and C++'s `'x'` char-literal syntax are identical.
     std::string text = getNodeText(node, source);
+    checkLiteralEscapes(text, /*isString=*/false, node, source);
     return std::make_unique<CharLiteral>(text);
 }
 

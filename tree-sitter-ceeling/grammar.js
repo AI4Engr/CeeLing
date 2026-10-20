@@ -703,16 +703,23 @@ module.exports = grammar({
       repeat1(seq('::', $.identifier))
     )),
 
-    // A double-quoted string literal, e.g. `std::cout << " ";`.
-    string_literal: $ => token(seq('"', /[^"]*/, '"')),
+    // A double-quoted string literal, e.g. `std::cout << " ";`. A backslash escapes the next
+    // character, so `\"` puts a quote INSIDE the string (JSON needs this constantly) and `\\` is a
+    // literal backslash. WHICH escapes are legal (\n \r \t \b \f \0 \xHH \" \\) is checked in
+    // ast_builder.cpp; the grammar only has to keep a backslash from swallowing the closing quote.
+    // A string with no backslash parses exactly as before.
+    string_literal: $ => token(seq('"', repeat(choice(/[^"\\]/, seq('\\', /./))), '"')),
 
     // A single-quoted char literal, e.g. `':'`, `' '`, `'\n'`. Either one plain
     // character, or a backslash escape (\n \r \t \\ \' \0) -- confirmed needed
     // by a real consumer (a hand-rolled scanner testing `peek() == '\n'`/
     // `'\r'` for line-ending detection) rather than built speculatively.
+    // \" \b \f and \xHH were added for JSON-style code (a quote char, form feed, backspace, a
+    // control byte by value).
     char_literal: $ => token(choice(
       seq("'", /[^'\\]/, "'"),
-      seq("'", '\\', /[nrt\\'0]/, "'")
+      seq("'", '\\', /[nrtbf\\'"0]/, "'"),
+      seq("'", '\\', 'x', /[0-9a-fA-F]/, /[0-9a-fA-F]/, "'")
     )),
 
     // Member access is written with `.` in CeeLing source (Java-like). `->` is also

@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ reason: a backslash-u escape is a universal-character-name in C++: the bytes it produces depend
+//@ reason: on the execution character set, not on the UTF-8 bytes a JSON writer expects. Rejected
+//@ reason: so the author writes the bytes explicitly with backslash-x escapes.
+
+int main() {
+    string s = "caf\u00e9";
+    std::cout << s.length() << std::endl;
+    return 0;
+}
