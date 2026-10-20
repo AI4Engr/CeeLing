@@ -57,6 +57,11 @@
     }
   },
   {
+    "type": "break_statement",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "capture_list",
     "named": true,
     "fields": {},
@@ -166,6 +171,11 @@
         }
       ]
     }
+  },
+  {
+    "type": "continue_statement",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "enum_declaration",
@@ -744,11 +754,19 @@
           "named": true
         },
         {
+          "type": "break_statement",
+          "named": true
+        },
+        {
           "type": "class_declaration",
           "named": true
         },
         {
           "type": "container_declaration",
+          "named": true
+        },
+        {
+          "type": "continue_statement",
           "named": true
         },
         {
@@ -1123,6 +1141,10 @@
     "named": false
   },
   {
+    "type": "break",
+    "named": false
+  },
+  {
     "type": "byte",
     "named": false
   },
@@ -1153,6 +1175,10 @@
   },
   {
     "type": "const",
+    "named": false
+  },
+  {
+    "type": "continue",
     "named": false
   },
   {

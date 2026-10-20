@@ -1,0 +1,25 @@
+//@ expect: reject
+//@ reason: `obs` is rebound to the loop-local `b`, then the loop breaks while `obs` still observes
+//@ reason: `b`; on the normal path `obs` is rebound back to `a` before the body ends, so only the
+//@ reason: break path leaves it observing a dead owner. The use after the loop must be rejected.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    ref Node obs = a;
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        Node b = new Node(2);
+        obs = b;
+        if (i == 2) { break; }
+        obs = a;
+    }
+    std::cout << obs.v << std::endl;
+    return 0;
+}

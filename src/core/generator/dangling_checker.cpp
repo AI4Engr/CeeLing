@@ -29,6 +29,8 @@ bool alwaysExits(const std::vector<StatementPtr>& body) {
     const Statement* last = body.back().get();
     if (dynamic_cast<const ReturnStatement*>(last) != nullptr) return true;
     if (dynamic_cast<const ThrowStatement*>(last) != nullptr) return true;
+    if (dynamic_cast<const BreakStatement*>(last) != nullptr) return true;
+    if (dynamic_cast<const ContinueStatement*>(last) != nullptr) return true;
     if (auto ifs = dynamic_cast<const IfStatement*>(last)) {
         return !ifs->elseBody.empty() && alwaysExits(ifs->body) && alwaysExits(ifs->elseBody);
     }
@@ -799,6 +801,7 @@ void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
     observerOf_.clear();
     danglingObservers_.clear();
     aliasObservers_.clear();
+    loopStack_.clear();
     currentClass_ = ownerClass;
 
     // Parameters are always-moved-into owners (CeeLing bans `ref` parameters), so an
@@ -838,6 +841,94 @@ void DanglingChecker::endBlockScope(const std::set<std::string>& ownersBefore) {
         objectLocals_.erase(owner);
         movedFrom_.erase(owner);
     }
+}
+
+void DanglingChecker::recordLoopExit(bool isContinue) {
+    BranchState exit = snapshotBranchState();
+    // Owners declared inside the loop die on the way out; anything observing one of them is
+    // dangling in this recorded copy (the live state continues past the statement unchanged).
+    for (const auto& owner : objectLocals_) {
+        if (loopStack_.back().ownersBefore.count(owner) != 0) continue;
+        for (const auto& [obs, watched] : observerOf_) {
+            if (watched == owner) exit.danglingObservers.insert(obs);
+        }
+        exit.movedFrom.erase(owner);
+    }
+    auto& ctx = loopStack_.back();
+    (isContinue ? ctx.continueExits : ctx.breakExits).push_back(std::move(exit));
+}
+
+void DanglingChecker::processLoop(const Expression* condition, const ForStatement* forStmt,
+                                  const std::vector<StatementPtr>& body) {
+    const BranchState before = snapshotBranchState();
+    const std::set<std::string> ownersBefore = objectLocals_;
+    const size_t firstError = errors_.size();
+    BranchState head = before;  // state at the top of the iteration being analysed
+    BranchState post = before;  // state after the loop; zero iterations leaves `before`
+    auto sameState = [](const BranchState& a, const BranchState& b) {
+        return a.movedFrom == b.movedFrom && a.observerNames == b.observerNames &&
+               a.observerOf == b.observerOf && a.danglingObservers == b.danglingObservers &&
+               a.aliasObservers == b.aliasObservers;
+    };
+    // Two passes catch any effect that matters (a move or kill on one iteration is visible on the
+    // next); a third confirms it stopped changing. The cap bounds nested-loop cost.
+    for (int pass = 0; pass < 3; ++pass) {
+        restoreBranchState(head);
+        if (pass > 0 && condition != nullptr) checkExpressionUses(condition);
+        loopStack_.push_back({ownersBefore, {}, {}});
+        // The range-for variable is a fresh owner for each iteration -- registered exactly like a
+        // VariableDeclaration, then cleaned up by endBlockScope like any other block-local.
+        if (forStmt != nullptr && isObjectType(forStmt->loopVarType)) {
+            objectLocals_.insert(forStmt->loopVarName);
+            localType_[forStmt->loopVarName] = forStmt->loopVarType;
+        }
+        for (const auto& inner : body) {
+            processStatement(inner.get());
+        }
+        endBlockScope(ownersBefore);
+        const BranchState end = snapshotBranchState();
+        LoopContext ctx = std::move(loopStack_.back());
+        loopStack_.pop_back();
+
+        // A body ending in break/continue/return/throw never falls off its end: that state is
+        // unreachable and must not flow back to the loop head (the exits recorded above carry the
+        // real states).
+        const bool fallsThrough = !alwaysExits(body);
+        if (fallsThrough) {
+            mergeBranchStates(before, post, end);
+            post = snapshotBranchState();
+        }
+        for (const auto& e : ctx.breakExits) {
+            mergeBranchStates(before, post, e);
+            post = snapshotBranchState();
+        }
+        BranchState nextHead = head;
+        if (fallsThrough) {
+            mergeBranchStates(before, nextHead, end);
+            nextHead = snapshotBranchState();
+        }
+        for (const auto& e : ctx.continueExits) {
+            mergeBranchStates(before, post, e);
+            post = snapshotBranchState();
+            mergeBranchStates(before, nextHead, e);
+            nextHead = snapshotBranchState();
+        }
+        const bool settled = sameState(nextHead, head);
+        head = nextHead;
+        if (settled) break;
+    }
+    restoreBranchState(post);
+    // A later pass re-reports what an earlier one already found.
+    std::vector<DanglingError> kept(errors_.begin(), errors_.begin() + firstError);
+    for (size_t i = firstError; i < errors_.size(); ++i) {
+        bool dup = false;
+        for (size_t k = firstError; k < kept.size(); ++k) {
+            if (kept[k].line == errors_[i].line && kept[k].column == errors_[i].column &&
+                kept[k].message == errors_[i].message) { dup = true; break; }
+        }
+        if (!dup) kept.push_back(errors_[i]);
+    }
+    errors_ = std::move(kept);
 }
 
 DanglingChecker::BranchState DanglingChecker::snapshotBranchState() const {
@@ -1191,20 +1282,10 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         }
     } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
         checkExpressionUses(whiles->condition.get());
-        // Same conservatism as `if`: the loop body may run zero or more times, so any
-        // effect inside it is not certain on the path after the loop. Modeled as a
-        // two-way branch against "loop body never runs" (mirrors the `if`/no-`else`
-        // case above), reusing the same merge rules -- including the observer-rebind
-        // disagreement handling the sibling-branch fix added for `if`.
-        const BranchState before = snapshotBranchState();
-        const std::set<std::string> ownersBefore = objectLocals_;
-        for (const auto& inner : whiles->body) {
-            processStatement(inner.get());
-        }
-        endBlockScope(ownersBefore);
-        const BranchState afterLoop = snapshotBranchState();
-        restoreBranchState(before);
-        mergeBranchStates(before, afterLoop, before);
+        // The body may run zero or more times, so any effect inside it is not certain on the path
+        // after the loop (modeled as a branch against "never runs", reusing the `if` merge rules),
+        // and it runs again from the state the last pass left -- see processLoop.
+        processLoop(whiles->condition.get(), nullptr, whiles->body);
     } else if (auto cdecl = dynamic_cast<const ContainerDeclaration*>(stmt)) {
         // `std::vector<T> v;` -- no initializer (the one definite-init exception,
         // see Chapter 17/grammar.js container_declaration). Always a fresh owner;
@@ -1214,28 +1295,26 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         localType_[cdecl->identifier] = cdecl->type;
     } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
         checkExpressionUses(fors->container.get());
-        // Same conservatism as `while`: the body may run zero or more times.
-        const BranchState before = snapshotBranchState();
-        const std::set<std::string> ownersBefore = objectLocals_;
-        // The loop variable is a fresh owner for each (modeled: one static pass
-        // over the) iteration -- registered exactly like a VariableDeclaration,
-        // then cleaned up by endBlockScope same as any other block-local.
-        if (isObjectType(fors->loopVarType)) {
-            objectLocals_.insert(fors->loopVarName);
-            localType_[fors->loopVarName] = fors->loopVarType;
-        }
-        for (const auto& inner : fors->body) {
-            processStatement(inner.get());
-        }
-        endBlockScope(ownersBefore);
-        const BranchState afterLoop = snapshotBranchState();
-        restoreBranchState(before);
-        mergeBranchStates(before, afterLoop, before);
+        processLoop(nullptr, fors, fors->body);
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         // A bare expression statement, e.g. `sink(a);`. First check uses, then
         // apply move effects: a user function call moves its object-typed args.
         checkExpressionUses(exprStmt->expression.get());
         applyCallArgMoves(exprStmt->expression.get());
+    } else if (dynamic_cast<const BreakStatement*>(stmt) != nullptr ||
+               dynamic_cast<const ContinueStatement*>(stmt) != nullptr) {
+        if (loopStack_.empty()) {
+            DanglingError e;
+            e.line = stmt->loc.line;
+            e.column = stmt->loc.column;
+            e.message = std::string(dynamic_cast<const BreakStatement*>(stmt) ? "`break`" : "`continue`") +
+                        " outside a loop";
+            e.help = "`break` and `continue` apply to the innermost enclosing `while` or `for`; "
+                     "there is no `switch` and no labelled form.";
+            errors_.push_back(e);
+        } else {
+            recordLoopExit(dynamic_cast<const ContinueStatement*>(stmt) != nullptr);
+        }
     } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
         checkExpressionUses(throwStmt->expression.get());
         // `throw` is restricted to string-typed operands this slice (CeeLing has no

@@ -2324,6 +2324,10 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         out << pad << "}\n";
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         out << pad << emitExpression(exprStmt->expression.get()) << ";\n";
+    } else if (dynamic_cast<const BreakStatement*>(stmt) != nullptr) {
+        out << pad << "break;\n";
+    } else if (dynamic_cast<const ContinueStatement*>(stmt) != nullptr) {
+        out << pad << "continue;\n";
     } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
         // `throw <expr>;` -- restricted to string operands (DanglingChecker has
         // already proven this). A string LITERAL is C++ `const char*`, not

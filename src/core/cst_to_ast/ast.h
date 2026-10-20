@@ -511,6 +511,17 @@ public:
     }
 };
 
+// `break;` / `continue;` -- target the innermost enclosing loop (no labels, no switch).
+class BreakStatement : public Statement {
+public:
+    std::string toString() const override { return "break;"; }
+};
+
+class ContinueStatement : public Statement {
+public:
+    std::string toString() const override { return "continue;"; }
+};
+
 class WhileStatement : public Statement {
 public:
     ExpressionPtr condition;

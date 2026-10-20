@@ -1,0 +1,26 @@
+//@ expect: reject
+//@ reason: same as break_moved_then_used_rejected, through `continue`: the state at the continue
+//@ reason: reaches the code after the loop (the loop condition may fail next).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) {
+}
+
+int main() {
+    Node a = new Node(1);
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        if (i == 2) {
+            sink(a);
+            continue;
+        }
+    }
+    std::cout << a.v << std::endl;
+    return 0;
+}

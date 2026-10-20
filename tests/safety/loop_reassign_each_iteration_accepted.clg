@@ -1,0 +1,26 @@
+//@ expect: accept
+//@ run: 1;2;3;
+//@ reason: `cur` is moved into sink() and re-created at the end of every iteration, so each
+//@ reason: iteration starts with a live object; the loop-carried analysis must not reject it.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) {
+    std::cout << n.v << ";";
+}
+
+int main() {
+    Node cur = new Node(1);
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        sink(cur);
+        cur = new Node(i + 1);
+    }
+    std::cout << std::endl;
+    return 0;
+}

@@ -1,0 +1,26 @@
+//@ expect: accept
+//@ run: 1
+//@ reason: the only path that moves `a` breaks out of the loop, so the next iteration never sees a
+//@ reason: moved `a` (break does not flow back to the loop head). Guards against the loop-carried
+//@ reason: analysis over-rejecting a move-then-break.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) {
+}
+
+int main() {
+    Node a = new Node(1);
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        std::cout << a.v << std::endl;
+        sink(a);
+        break;
+    }
+    return 0;
+}

@@ -1,0 +1,29 @@
+//@ expect: accept
+//@ run: 1
+//@ reason: `a` is moved only on the path that then breaks, so the statement after the `if` (reachable
+//@ reason: only when no move happened) may still use it, and nothing uses it after the loop.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) {
+}
+
+int main() {
+    Node a = new Node(1);
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        if (i == 2) {
+            sink(a);
+            break;
+        }
+        if (i == 1) {
+            std::cout << a.v << std::endl;
+        }
+    }
+    return 0;
+}

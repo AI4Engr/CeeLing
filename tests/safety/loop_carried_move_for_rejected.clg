@@ -1,0 +1,23 @@
+//@ expect: reject
+//@ reason: same as loop_carried_move_rejected, in a range-for over a vector.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) {
+}
+
+int main() {
+    Node a = new Node(1);
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    for (int x : v) {
+        std::cout << a.v << x << std::endl;
+        sink(a);
+    }
+    return 0;
+}

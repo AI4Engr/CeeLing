@@ -1,0 +1,27 @@
+//@ expect: reject
+//@ reason: `a` is moved on the path that breaks out of the loop; after the loop, a use cannot know
+//@ reason: whether the loop ended by that break, so it is rejected (the normal end of the body never
+//@ reason: moved `a`, so only the break path's state exposes this).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) {
+}
+
+int main() {
+    Node a = new Node(1);
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        if (i == 2) {
+            sink(a);
+            break;
+        }
+    }
+    std::cout << a.v << std::endl;
+    return 0;
+}

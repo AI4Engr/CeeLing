@@ -122,6 +122,30 @@ private:
     void mergeBranchStates(const BranchState& before, const BranchState& thenState,
                             const BranchState& elseState);
 
+    // One entry per `while`/`for` currently being analyzed (innermost last). A `break` or
+    // `continue` leaves the straight-line flow, so its effects (a move, an observer rebind, a
+    // dying owner) must not reach the statements after it in the body -- the `if` merge treats
+    // such a branch as exiting -- but they DO reach the code after the loop, which is where both
+    // statements lead (`continue` via the loop condition failing). Each one records the state it
+    // left behind here, and the loop merges every recorded state into its post-loop state.
+    struct LoopContext {
+        std::set<std::string> ownersBefore;     // object locals declared before the loop
+        std::vector<BranchState> breakExits;    // state at each `break`: leaves the loop only
+        std::vector<BranchState> continueExits; // state at each `continue`: next iteration or exit
+    };
+    std::vector<LoopContext> loopStack_;
+    // Record the state at a break/continue (called with the loop's own scope still open, so owners
+    // declared inside the loop are marked dead for their observers in the recorded copy only).
+    void recordLoopExit(bool isContinue);
+    // Analyse a `while` (condition != nullptr) or range-`for` (forStmt != nullptr) body. The body runs
+    // more than once, so it is analysed again from the state the previous pass left at the loop head
+    // (fall-through and `continue` flow back; `break` does not) until that state stops changing --
+    // otherwise `use(a); sink(a);` inside a loop passes although the second iteration uses a moved
+    // `a`. The state after the loop is the union of: no iteration ran, every pass's end, every break
+    // and every continue.
+    void processLoop(const Expression* condition, const ForStatement* forStmt,
+                     const std::vector<StatementPtr>& body);
+
     // Record which locals are object-typed (only those participate in move tracking).
     // Returns true if `type` names a known class OR a recognized container type
     // (e.g. `std::vector<Node>` -- see library_summary.h). A container's own

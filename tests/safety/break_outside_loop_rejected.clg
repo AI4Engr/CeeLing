@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ reason: `break` with no enclosing while/for has no target.
+
+int main() {
+    int i = 0;
+    if (i == 0) {
+        break;
+    }
+    return 0;
+}

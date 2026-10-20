@@ -1,0 +1,24 @@
+//@ expect: reject
+//@ reason: `a` is used and then moved in the same iteration; on the NEXT iteration the use runs on
+//@ reason: a moved-from object (generated C++: null unique_ptr dereference, segfault). The body used
+//@ reason: to be analysed once, so only code after the loop saw the move.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) {
+}
+
+int main() {
+    Node a = new Node(1);
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        std::cout << a.v << std::endl;
+        sink(a);
+    }
+    return 0;
+}

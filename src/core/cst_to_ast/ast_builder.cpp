@@ -402,6 +402,10 @@ StatementPtr ASTBuilder::buildStatement(TSNode node, const std::string& source) 
         result = buildWhileStatement(node, source);
     } else if (strcmp(node_type, "for_statement") == 0) {
         result = buildForStatement(node, source);
+    } else if (strcmp(node_type, "break_statement") == 0) {
+        result = std::make_unique<BreakStatement>();
+    } else if (strcmp(node_type, "continue_statement") == 0) {
+        result = std::make_unique<ContinueStatement>();
     } else if (strcmp(node_type, "throw_statement") == 0) {
         result = buildThrowStatement(node, source);
     } else if (strcmp(node_type, "try_statement") == 0) {

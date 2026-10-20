@@ -52,6 +52,8 @@ module.exports = grammar({
       $.while_statement,
       $.for_statement,
       $.throw_statement,
+      $.break_statement,
+      $.continue_statement,
       $.try_statement,
       $.expression_statement
     ),
@@ -291,6 +293,12 @@ module.exports = grammar({
       optional($.expression),
       ';'
     ),
+
+    // `break;` / `continue;` -- leave / restart the innermost enclosing `while` or `for`.
+    // Rejected outside a loop by DanglingChecker. There is no label form and no `switch`,
+    // so the target is always the innermost loop.
+    break_statement: $ => seq('break', ';'),
+    continue_statement: $ => seq('continue', ';'),
 
     // `throw <expr>;` -- restricted to string-typed operands (enforced downstream by
     // DanglingChecker, not the grammar; see dangling_checker.cpp's ThrowStatement
