@@ -17,6 +17,30 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
     collectCallables(program);
 
     for (const auto& stmt : program.statements) {
+        // Only declarations (functions, classes, enums, includes) have a place at file scope. An
+        // executable statement there has no lowering: the emitter used to drop a declaration like
+        // `int counter = 0;` silently while keeping every use of it, so the failure surfaced as a
+        // C++ compile error instead of a CeeLing diagnostic.
+        if (dynamic_cast<const VariableDeclaration*>(stmt.get()) != nullptr ||
+            dynamic_cast<const ContainerDeclaration*>(stmt.get()) != nullptr ||
+            dynamic_cast<const AssignmentStatement*>(stmt.get()) != nullptr ||
+            dynamic_cast<const ExpressionStatement*>(stmt.get()) != nullptr ||
+            dynamic_cast<const IfStatement*>(stmt.get()) != nullptr ||
+            dynamic_cast<const WhileStatement*>(stmt.get()) != nullptr ||
+            dynamic_cast<const ForStatement*>(stmt.get()) != nullptr ||
+            dynamic_cast<const TryStatement*>(stmt.get()) != nullptr ||
+            dynamic_cast<const ThrowStatement*>(stmt.get()) != nullptr ||
+            dynamic_cast<const ReturnStatement*>(stmt.get()) != nullptr) {
+            EscapeHatchError e;
+            e.line = stmt->loc.line;
+            e.column = stmt->loc.column;
+            e.message = "statement at file scope";
+            e.help = "File-scope variables are not supported (global mutable state has no owner and no "
+                     "lifetime the checker can reason about). Put the value in a function, or pass it "
+                     "as a parameter or a class field.";
+            errors_.push_back(e);
+            continue;
+        }
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             checkBody(fn->body, fn->parameters, "");
         } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {

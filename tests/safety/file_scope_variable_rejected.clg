@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ reason: a file-scope variable used to be dropped silently (the declaration vanished from the
+//@ reason: generated C++ while every use stayed, so g++ failed with "not declared in this scope").
+//@ reason: Now a diagnostic: global mutable state has no owner the checker can reason about.
+
+int counter = 5;
+
+int main() {
+    std::cout << counter << std::endl;
+    return 0;
+}
