@@ -332,6 +332,21 @@ private:
     // `#include <cstring>` is only emitted when this is true -- matching
     // usedRuntimeHelpers_'s own "only include what's actually used" discipline.
     bool usesCopyWithin_ = false;
+    // Does this file declare any std::weak_ptr field? If so, a read of that field goes through
+    // lock(), and a member access THROUGH it is wrapped in cling::nn (null check), so the
+    // helper (nullCheckHelperDefinition) and <cstdio>/<cstdlib> must be emitted.
+    bool usesNullCheck_ = false;
+    // Two-phase class emission (see emit()): when set, emitClass writes only the class DEFINITION to
+    // the output and stashes the out-of-line member bodies here, keyed by class name, to be written
+    // after every class definition exists.
+    bool deferClassBodies_ = false;
+    std::map<std::string, std::string> deferredClassBodies_;
+    // Set while emitting the left-hand side of an assignment, so the field being STORED to is not
+    // rewritten into a lock() read.
+    bool emittingAssignTarget_ = false;
+    // True if `expr` reads a field that is lowered to std::weak_ptr: a bare field name of the
+    // current class, or `obj.field` where `field` is declared weak in obj's class.
+    bool isWeakFieldRead(const Expression* expr) const;
     // Emits an ExternalSpecializationMarker's declaration+definition at its
     // own top-level source position -- see the marker's comment in ast.h for
     // why this position (not "after the target class") is the only one

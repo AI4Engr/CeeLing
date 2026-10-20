@@ -319,6 +319,21 @@ bool SmartPointerAnalyzer::classRequiresSharedRoot(const std::string& className)
     return classesNeedingSharedRoots.find(className) != classesNeedingSharedRoots.end();
 }
 
+bool SmartPointerAnalyzer::isWeakField(const std::string& enclosingClass, const std::string& fieldName) const {
+    // pointerDecisions keys are buildKey(containingScope, fieldTYPE, name) = "Scope|Type.name".
+    // For a field, the scope is the enclosing class; the type is whatever the field is declared
+    // as, which the caller does not need to know -- match on scope prefix and ".name" suffix.
+    const std::string prefix = enclosingClass + "|";
+    const std::string suffix = "." + fieldName;
+    for (const auto& [key, decision] : pointerDecisions) {
+        if (key.size() > prefix.size() + suffix.size() && key.compare(0, prefix.size(), prefix) == 0 &&
+            key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return decision == PointerType::WEAK;
+        }
+    }
+    return false;
+}
+
 bool SmartPointerAnalyzer::containerElementIsShared(const std::string& containerVarName) const {
     auto it = containerElementShared_.find(containerVarName);
     return it != containerElementShared_.end() && it->second;

@@ -293,4 +293,27 @@ std::string copyWithinHelperDefinition() {
         "#endif\n";
 }
 
+std::string nullCheckHelperDefinition() {
+    // cling::nn(p, where) returns p unchanged when non-null, otherwise reports `where`
+    // (the .clg file:line of the dereference) on stderr and aborts. Taken by value and
+    // returned by value so a temporary from weak_ptr::lock() lives long enough for the
+    // `->` that follows it in the same full-expression.
+    return
+        "#ifndef CLING_NULL_CHECK_DEFINED\n"
+        "#define CLING_NULL_CHECK_DEFINED\n"
+        "#include <cstdio>\n"
+        "#include <cstdlib>\n"
+        "namespace cling {\n"
+        "template <typename P>\n"
+        "inline P nn(P p, const char* where) {\n"
+        "    if (!p) {\n"
+        "        std::fprintf(stderr, \"cling: null dereference at %s\\n\", where);\n"
+        "        std::abort();\n"
+        "    }\n"
+        "    return p;\n"
+        "}\n"
+        "} // namespace cling\n"
+        "#endif\n";
+}
+
 } // namespace cling

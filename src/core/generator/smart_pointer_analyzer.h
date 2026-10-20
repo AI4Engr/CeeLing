@@ -70,6 +70,13 @@ public:
     const std::vector<AnalysisDiagnostic>& getDiagnostics() const;
     bool classRequiresSharedRoot(const std::string& className) const;
 
+    // Is `fieldName`, declared directly in class `enclosingClass`, lowered to a std::weak_ptr?
+    // Exact (enclosing class, field) lookup -- unlike getPointerType, which matches on the
+    // field's TYPE and silently falls back to SHARED when nothing matches. A weak_ptr field
+    // cannot be read directly in C++ (no operator->, operator!, operator==, operator bool),
+    // so every read of one has to go through lock(); AstEmitter asks this to know when.
+    bool isWeakField(const std::string& enclosingClass, const std::string& fieldName) const;
+
     // Phase 2.6 container support: a vector's element pointer kind must be uniform
     // (std::vector<unique_ptr<T>> and std::vector<shared_ptr<T>> are different C++
     // types), decided once across every push_back call site targeting that

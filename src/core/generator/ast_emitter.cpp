@@ -18,6 +18,16 @@ std::string AstEmitter::emit(const Program& program) {
     usesCopyWithin_ = false;
     collectClassNames(program);
     collectUsedRuntimeHelpers(program);
+    usesNullCheck_ = false;
+    for (const auto& stmt : program.statements) {
+        if (stmt->isExternalDeclaration) continue;
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr) continue;
+        for (const auto& member : cls->members) {
+            auto field = dynamic_cast<const VariableDeclaration*>(member.get());
+            if (field != nullptr && analyzer_.isWeakField(cls->name, field->identifier)) usesNullCheck_ = true;
+        }
+    }
 
     std::ostringstream out;
     // Headers the lowered constructs always need (smart pointers, std::move, cout),
@@ -55,6 +65,9 @@ std::string AstEmitter::emit(const Program& program) {
     if (usesCopyWithin_) {
         out << copyWithinHelperDefinition() << "\n";
     }
+    if (usesNullCheck_) {
+        out << nullCheckHelperDefinition() << "\n";
+    }
 
     // Forward-declare every class this file defines (global namespace, non-value-type), so two
     // classes in one file may refer to each other through smart-pointer fields, parameters and
@@ -83,6 +96,74 @@ std::string AstEmitter::emit(const Program& program) {
     // needed. A statement with an empty namespaceName (the common case, and every
     // statement type that doesn't have the field at all) emits exactly as before,
     // so a namespace-free program's output is byte-identical to pre-namespace output.
+    // Two-phase class emission, ONLY when needed. Classes are normally emitted one at a time as
+    // "definition, then its out-of-line member bodies". That breaks as soon as an earlier class's
+    // member BODY touches a later class (`Listener::owner.count` with Emitter defined below): even
+    // with the forward declarations above, `Emitter` is still an incomplete type at that point.
+    // When some class mentions a later-defined class in a field, parameter or return type, emit
+    // every class DEFINITION first (with enums, in source order) and every class's member BODIES
+    // afterwards (with the free functions, in source order). Programs without that shape, and every
+    // program that uses namespaces, keep the original order byte for byte.
+    deferClassBodies_ = false;
+    deferredClassBodies_.clear();
+    {
+        bool anyNamespaced = false;
+        std::map<std::string, size_t> classIndex;
+        std::vector<const ClassDeclaration*> classOrder;
+        for (const auto& stmt : program.statements) {
+            if (stmt->isExternalDeclaration) continue;
+            if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+                if (!cls->namespaceName.empty()) anyNamespaced = true;
+                classIndex[cls->name] = classOrder.size();
+                classOrder.push_back(cls);
+            } else if (auto enm = dynamic_cast<const EnumDeclaration*>(stmt.get())) {
+                if (!enm->namespaceName.empty()) anyNamespaced = true;
+            } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+                if (!fn->namespaceName.empty()) anyNamespaced = true;
+            }
+        }
+        auto mentionsLater = [&](const std::string& type, size_t self) {
+            auto it = classIndex.find(type);
+            return it != classIndex.end() && it->second > self;
+        };
+        for (size_t i = 0; i < classOrder.size() && !anyNamespaced && !deferClassBodies_; ++i) {
+            for (const auto& member : classOrder[i]->members) {
+                if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                    if (mentionsLater(field->type, i)) deferClassBodies_ = true;
+                } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    if (mentionsLater(method->returnType, i)) deferClassBodies_ = true;
+                    for (const auto& [ptype, pname] : method->parameters) {
+                        (void)pname;
+                        if (mentionsLater(ptype, i)) deferClassBodies_ = true;
+                    }
+                } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    for (const auto& [ptype, pname] : ctor->parameters) {
+                        (void)pname;
+                        if (mentionsLater(ptype, i)) deferClassBodies_ = true;
+                    }
+                }
+            }
+        }
+    }
+    if (deferClassBodies_) {
+        for (const auto& stmt : program.statements) {
+            if (stmt->isExternalDeclaration) continue;
+            if (dynamic_cast<const ClassDeclaration*>(stmt.get()) != nullptr ||
+                dynamic_cast<const EnumDeclaration*>(stmt.get()) != nullptr) {
+                emitTopLevel(stmt.get(), out);
+            }
+        }
+        for (const auto& stmt : program.statements) {
+            if (stmt->isExternalDeclaration) continue;
+            if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+                out << deferredClassBodies_[cls->name];
+            } else if (dynamic_cast<const EnumDeclaration*>(stmt.get()) == nullptr) {
+                emitTopLevel(stmt.get(), out);
+            }
+        }
+        return out.str();
+    }
+
     std::string openNamespace;
     for (const auto& stmt : program.statements) {
         if (stmt->isExternalDeclaration) continue;
@@ -1211,8 +1292,11 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
     }
     out << "};\n#endif // " << guard << "\n\n";
 
+    // Out-of-line member definitions go to a buffer: written right here normally, or stashed for
+    // the second phase when deferClassBodies_ is set (see emit()).
+    std::ostringstream bodies;
     for (const auto* ctor : outOfLineCtors) {
-        emitFunction("", cls.name + "::" + ctor->name, ctor->parameters, ctor->body, out, cls.name, 0,
+        emitFunction("", cls.name + "::" + ctor->name, ctor->parameters, ctor->body, bodies, cls.name, 0,
                      false, false, false, "", /*isConstructor=*/true);
     }
     for (const auto* method : outOfLineMethods) {
@@ -1221,7 +1305,7 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
         // buildFunctionSignature's virtual/override text must not appear here; only
         // the in-class declaration above carries them.
         emitFunction(method->returnType, cls.name + "::" + method->name, method->parameters,
-                     method->body, out, cls.name, 0, method->isConst, false, false, method->name);
+                     method->body, bodies, cls.name, 0, method->isConst, false, false, method->name);
     }
     // Specializations (`int as<int>() {...}`) DEFINE here, same as any other
     // out-of-line method -- exactly ONE .cpp may define a given explicit
@@ -1234,14 +1318,19 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
     // header (plain `emit()`, no `.h` ever generated) still works unchanged: the
     // specialization is simply defined and used within the same translation unit.
     for (const auto* method : specializations) {
-        out << "template<>\n";
+        bodies << "template<>\n";
         // The `<int>`/`<std::string>` in the qualified name must match the emitted
         // C++ type spelling (cppTypeFor's string->std::string mapping etc.), not the
         // raw CeeLing source token, or the specialization silently fails to bind to
         // its call sites (a second, distinct overload instead of a specialization).
         emitFunction(method->returnType,
                      cls.name + "::" + method->name + "<" + cppTypeFor(method->specializationArg, "") + ">",
-                     method->parameters, method->body, out, cls.name, 0, method->isConst);
+                     method->parameters, method->body, bodies, cls.name, 0, method->isConst);
+    }
+    if (deferClassBodies_) {
+        deferredClassBodies_[cls.name] = bodies.str();
+    } else {
+        out << bodies.str();
     }
 }
 
@@ -1930,7 +2019,9 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         const bool memberTarget = dynamic_cast<const MemberAccess*>(assign->target.get()) != nullptr;
         const bool subscriptTarget = dynamic_cast<const SubscriptExpression*>(assign->target.get()) != nullptr;
         if (auto m = dynamic_cast<const MemberAccess*>(assign->target.get())) {
+            emittingAssignTarget_ = true;
             lhs = emitExpression(m);
+            emittingAssignTarget_ = false;
             ptrVar = m->member;  // the field being assigned
         } else if (subscriptTarget) {
             lhs = emitExpression(assign->target.get());
@@ -2264,12 +2355,28 @@ std::string AstEmitter::observerAddress(const Expression* expr) {
     return "(" + emitExpression(expr) + ").get()";
 }
 
+bool AstEmitter::isWeakFieldRead(const Expression* expr) const {
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        return isCurrentField(id->name) && analyzer_.isWeakField(currentClass_, id->name);
+    }
+    if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+        const std::string objClass = exprObjectClass(member->object.get());
+        return !objClass.empty() && analyzer_.isWeakField(objClass, member->member);
+    }
+    return false;
+}
+
 std::string AstEmitter::emitExpression(const Expression* expr) {
     if (expr == nullptr) return "";
 
     if (auto id = dynamic_cast<const Identifier*>(expr)) {
         // A bare reference to a field of the current class -> this->field.
         if (isCurrentField(id->name)) {
+            // A weak_ptr field can only be read through lock(); the result is a shared_ptr that
+            // may be empty, so `!owner`, `owner == nullptr` and `if (owner)` all work on it.
+            if (!emittingAssignTarget_ && analyzer_.isWeakField(currentClass_, id->name)) {
+                return "this->" + id->name + ".lock()";
+            }
             return "this->" + id->name;
         }
         return id->name;
@@ -2618,9 +2725,23 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
     if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
         // `->` if the object is a smart-pointer-to-object (including nested access and
         // this-> fields); `.` for references, value types, and plain values.
-        const std::string objStr = emitExpression(member->object.get());
+        // The assignment-target flag applies only to the OUTERMOST field being written
+        // (`a.owner = x` must stay a plain store); every sub-expression it is reached through
+        // is an ordinary read (`a.owner.next = x` reads `a.owner` and must lock it).
+        const bool targetHere = emittingAssignTarget_;
+        emittingAssignTarget_ = false;
+        std::string objStr = emitExpression(member->object.get());
+        emittingAssignTarget_ = targetHere;
         const std::string memberClass = exprObjectClass(member->object.get());
         const std::string op = (memberClass.empty() || isValueType(memberClass)) ? "." : "->";
+        // Dereferencing THROUGH a weak field: lock() may yield an empty pointer, so check it.
+        if (op == "->" && isWeakFieldRead(member->object.get())) {
+            objStr = "cling::nn(" + objStr + ", \"line " + std::to_string(member->loc.line) + "\")";
+        }
+        // A weak field that is itself being READ as a value (not written) is locked.
+        if (!targetHere && isWeakFieldRead(member)) {
+            return objStr + op + member->member + ".lock()";
+        }
         return objStr + op + member->member;
     }
     if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {

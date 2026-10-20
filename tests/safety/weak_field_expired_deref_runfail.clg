@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ run-fail: null dereference
+//@ reason: the runtime backstop for a weak field: the owner is destroyed, then its field is read
+//@ reason: through the weak back-reference. This used to be undefined behaviour (or did not even
+//@ reason: compile); it must now stop with a clear message naming the .clg line, not read freed
+//@ reason: memory. abort(), not throw: a `catch (string e)` in user code cannot swallow it.
+
+class Listener {
+public:
+    //@ptr weak Listener.owner
+    Emitter owner;
+    Listener() { owner = nullptr; }
+    int ownerCount() { return owner.count; }
+};
+
+class Emitter {
+public:
+    int count;
+    Listener first;
+    Emitter() { count = 7; first = nullptr; }
+    void attach(Listener l) { l.owner = this; first = l; }
+};
+
+Listener wire() {
+    Listener l = new Listener();
+    Emitter e = new Emitter();
+    e.attach(l);
+    return l;
+}
+
+int main() {
+    Listener l = wire();
+    std::cout << l.ownerCount() << std::endl;
+    return 0;
+}

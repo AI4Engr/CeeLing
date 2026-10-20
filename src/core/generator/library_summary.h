@@ -274,4 +274,11 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used);
 // since the answer differs by platform.
 std::string copyWithinHelperDefinition();
 
+// Runtime null check for dereferencing a smart pointer that may legitimately be empty -- today
+// the result of locking a weak_ptr field (cling::nn). Aborts with a message naming the source
+// line instead of dereferencing null. Emitted only into files that declare a weak field.
+// abort(), not throw: a thrown error could be swallowed by a `catch (string e)` in user code,
+// and the whole point of this check is that it cannot be silently ignored.
+std::string nullCheckHelperDefinition();
+
 } // namespace cling

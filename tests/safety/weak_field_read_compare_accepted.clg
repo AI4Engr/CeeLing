@@ -1,0 +1,36 @@
+//@ expect: accept
+//@ run: 0 1
+//@ reason: reading a weak (back-reference) field. `!owner` and `owner == nullptr` on a std::weak_ptr
+//@ reason: used to emit C++ with no operator! / operator== for weak_ptr while cling reported success.
+//@ reason: Every read of a weak field now goes through lock(). Run: the owner is alive (0), then the
+//@ reason: Emitter is destroyed when wire() returns and the same test reports gone (1).
+
+class Listener {
+public:
+    //@ptr weak Listener.owner
+    Emitter owner;
+    Listener() { owner = nullptr; }
+    bool ownerGone() { return !owner; }
+    bool ownerIsNull() { return owner == nullptr; }
+};
+
+class Emitter {
+public:
+    Listener first;
+    Emitter() { first = nullptr; }
+    void attach(Listener l) { l.owner = this; first = l; }
+};
+
+Listener wire() {
+    Listener l = new Listener();
+    Emitter e = new Emitter();
+    e.attach(l);
+    std::cout << l.ownerGone() << " ";
+    return l;
+}
+
+int main() {
+    Listener l = wire();
+    std::cout << l.ownerIsNull() << std::endl;
+    return 0;
+}

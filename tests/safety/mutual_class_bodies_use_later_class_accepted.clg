@@ -1,0 +1,29 @@
+//@ expect: accept
+//@ run: 2
+//@ reason: the smallest shape of the second ordering bug: class A's member BODY touches class B's
+//@ reason: members and B is defined below. Forward declarations make the TYPE name visible but B is
+//@ reason: still an incomplete type inside A's out-of-line method, so the emitted C++ failed with
+//@ reason: "invalid use of incomplete type". When a class mentions a later class, every class
+//@ reason: definition is now emitted first and every member body afterwards.
+
+class A {
+public:
+    int v;
+    B other;
+    A() { v = 1; other = nullptr; }
+    int peek() { return other.w; }
+};
+
+class B {
+public:
+    int w;
+    A back;
+    B() { w = 2; back = nullptr; }
+};
+
+int main() {
+    A a = new A();
+    a.other = new B();
+    std::cout << a.peek() << std::endl;
+    return 0;
+}

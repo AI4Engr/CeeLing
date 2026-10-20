@@ -1,0 +1,32 @@
+//@ expect: accept
+//@ run: 7 7
+//@ reason: reading THROUGH a weak field (`owner.count`, and a method call on it) while the owner is
+//@ reason: alive. Lowered to cling::nn(owner.lock(), line)->count, so a live owner works and an
+//@ reason: expired one aborts (see weak_field_expired_deref_runfail). Also needs the two-phase class
+//@ reason: emission: Listener's member bodies use Emitter's members, and Emitter is defined later.
+
+class Listener {
+public:
+    //@ptr weak Listener.owner
+    Emitter owner;
+    Listener() { owner = nullptr; }
+    int ownerCount() { return owner.count; }
+    int ownerDoubled() { return owner.twice() - owner.count; }
+};
+
+class Emitter {
+public:
+    int count;
+    Listener first;
+    Emitter() { count = 7; first = nullptr; }
+    int twice() { return count * 2; }
+    void attach(Listener l) { l.owner = this; first = l; }
+};
+
+int main() {
+    Listener l = new Listener();
+    Emitter e = new Emitter();
+    e.attach(l);
+    std::cout << l.ownerCount() << " " << l.ownerDoubled() << std::endl;
+    return 0;
+}
