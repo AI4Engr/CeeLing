@@ -1158,6 +1158,49 @@ std::string AstEmitter::perClassGuardName(const std::string& className) {
     return "CEELING_DECL_" + guard;
 }
 
+std::vector<std::string> AstEmitter::selfOwningFields(const ClassDeclaration& cls) const {
+    std::vector<std::string> fields;
+    if (!cls.baseClass.empty() || baseClasses_.count(cls.name) > 0 || isValueType(cls.name)) {
+        return fields;
+    }
+    for (const auto& member : cls.members) {
+        auto var = dynamic_cast<const VariableDeclaration*>(member.get());
+        if (var == nullptr || var->type != cls.name) continue;
+        if (smartPointerType(var->type, var->identifier) == "std::weak_ptr") continue;
+        fields.push_back(var->identifier);
+    }
+    return fields;
+}
+
+std::string AstEmitter::selfOwningDestructorBody(const ClassDeclaration& cls,
+                                                 const std::vector<std::string>& fields) const {
+    // Detach the owned links onto a heap worklist and free them one at a time. A node that is
+    // still referenced elsewhere (use_count > 1) is only released, never taken apart -- its other
+    // owner keeps its links. Each freed node re-enters this destructor with empty links and
+    // returns at the first line.
+    const std::string T = cls.name;
+    std::ostringstream b;
+    b << "    if (";
+    for (size_t i = 0; i < fields.size(); ++i) {
+        if (i > 0) b << " && ";
+        b << "!" << fields[i];
+    }
+    b << ") return;\n";
+    b << "    std::vector<std::shared_ptr<" << T << ">> pending;\n";
+    for (const auto& f : fields) {
+        b << "    if (" << f << ") pending.push_back(std::move(" << f << "));\n";
+    }
+    b << "    while (!pending.empty()) {\n";
+    b << "        std::shared_ptr<" << T << "> node = std::move(pending.back());\n";
+    b << "        pending.pop_back();\n";
+    b << "        if (node.use_count() != 1) continue;\n";
+    for (const auto& f : fields) {
+        b << "        if (node->" << f << ") pending.push_back(std::move(node->" << f << "));\n";
+    }
+    b << "    }\n";
+    return b.str();
+}
+
 void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out) {
     const std::string guard = perClassGuardName(cls.name);
     out << "#ifndef " << guard << "\n#define " << guard << "\n";
@@ -1298,6 +1341,8 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
             outOfLineMethods.push_back(method);
         }
     }
+    const std::vector<std::string> selfOwning = selfOwningFields(cls);
+    if (!selfOwning.empty()) out << indentStr(1) << "~" << cls.name << "();\n";
     out << "};\n#endif // " << guard << "\n\n";
 
     // Out-of-line member definitions go to a buffer: written right here normally, or stashed for
@@ -1314,6 +1359,9 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
         // the in-class declaration above carries them.
         emitFunction(method->returnType, cls.name + "::" + method->name, method->parameters,
                      method->body, bodies, cls.name, 0, method->isConst, false, false, method->name);
+    }
+    if (!selfOwning.empty()) {
+        bodies << cls.name << "::~" << cls.name << "() {\n" << selfOwningDestructorBody(cls, selfOwning) << "}\n\n";
     }
     // Specializations (`int as<int>() {...}`) DEFINE here, same as any other
     // out-of-line method -- exactly ONE .cpp may define a given explicit
@@ -1418,6 +1466,7 @@ void AstEmitter::emitClassHeader(const ClassDeclaration& cls, std::ostringstream
             out << indentStr(1) << sig << ";\n";
         }
     }
+    if (!selfOwningFields(cls).empty()) out << indentStr(1) << "~" << cls.name << "();\n";
     out << "};\n#endif // " << guard << "\n\n";
 
     for (const auto* method : specializations) {

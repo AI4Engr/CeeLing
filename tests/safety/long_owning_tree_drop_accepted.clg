@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ run: built 299999
+//@ reason: same as long_owning_chain_drop_accepted for a node with TWO owning self-typed fields
+//@ reason: (`next` and `child`, cJSON's shape): a 300,000-deep `child` chain, each node also owning
+//@ reason: a one-element `next` list.
+
+class Item {
+public:
+    Item next;
+    Item child;
+    int v;
+    Item(int x) { v = x; }
+};
+
+int main() {
+    Item top = new Item(0);
+    int i = 1;
+    while (i < 300000) {
+        Item n = new Item(i);
+        n.child = top;
+        n.next = new Item(0);
+        top = n;
+        i = i + 1;
+    }
+    std::cout << "built " << top.v << std::endl;
+    return 0;
+}

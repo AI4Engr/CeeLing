@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: 2 3
+//@ reason: the iterative destructor must not take apart a node something else still owns. `mid` shares
+//@ reason: the second node of the chain; replacing `head` frees the first node, which must NOT detach
+//@ reason: `mid`'s own `next` (that would silently cut the chain `mid` still sees).
+
+class Item {
+public:
+    Item next;
+    int v;
+    Item(int x) { v = x; }
+};
+
+int main() {
+    Item head = new Item(1);
+    head.next = new Item(2);
+    head.next.next = new Item(3);
+    Item mid = head.next;
+    head = new Item(9);
+    std::cout << mid.v << " " << mid.next.v << std::endl;
+    return 0;
+}

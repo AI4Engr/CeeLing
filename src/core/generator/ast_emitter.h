@@ -99,6 +99,14 @@ private:
     // base-class synthesized `T() = default;` injection (emitClass/
     // emitClassHeader) against duplicating one the user wrote themselves.
     bool hasUserDefinedDefaultConstructor(const ClassDeclaration& cls) const;
+    // Names of `cls`'s fields that OWN (unique/shared, not weak) another object of `cls`'s own
+    // type -- a `next`/`child` link. Empty for a class used as a base or a value type, which keep
+    // their implicit destructor. Such a class gets a generated iterative destructor
+    // (selfOwningDestructorBody): the implicit one frees a 1,000,000-node chain by recursing once
+    // per node and overflows the stack.
+    std::vector<std::string> selfOwningFields(const ClassDeclaration& cls) const;
+    std::string selfOwningDestructorBody(const ClassDeclaration& cls,
+                                         const std::vector<std::string>& fields) const;
     // "std::vector<Node>" -> "std::vector<std::shared_ptr<Node>>" or
     // "std::vector<std::unique_ptr<Node>>", depending on `varName`'s scanned
     // element kind (SmartPointerAnalyzer::containerElementIsShared -- decided once
