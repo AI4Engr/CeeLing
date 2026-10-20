@@ -132,6 +132,11 @@ bool isPrimitiveType(const std::string& type) {
     return kKnown.count(type) > 0;
 }
 
+bool isPrimitiveConversionName(const std::string& name) {
+    static const std::set<std::string> kKnown = {"int", "float", "double", "char", "byte", "int64"};
+    return kKnown.count(name) > 0;
+}
+
 bool isCharType(const std::string& type) {
     return type == "char";
 }

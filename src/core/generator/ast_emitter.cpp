@@ -2507,6 +2507,14 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         return s;
     }
     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        // `int(x)` / `double(x)` / `char(x)` / `byte(x)` / `int64(x)` / `float(x)`: a primitive
+        // conversion. EscapeHatchChecker has already restricted the argument to a primitive; a
+        // static_cast is emitted (not a functional cast) because `byte` lowers to
+        // `unsigned char`, which has no single-token functional spelling.
+        if (call->callee == nullptr && call->arguments.size() == 1 && isPrimitiveConversionName(call->function_name)) {
+            return "static_cast<" + cppTypeFor(call->function_name, "") + ">(" +
+                   emitExpression(call->arguments[0].get()) + ")";
+        }
         std::string prefix;
         std::string receiverContainerType;  // "" unless recv is a known container local
         std::string receiverName;

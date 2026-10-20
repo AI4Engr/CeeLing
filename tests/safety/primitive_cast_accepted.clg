@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ run: 3 3 A 44 65 4294967296 -1 9
+//@ reason: int(x) double(x) char(x) byte(x) int64(x) between primitives. byte(300) wraps modulo 256
+//@ reason: like C++ unsigned char; int(double) truncates toward zero; the argument may be any
+//@ reason: primitive expression (a call result, a subscript, arithmetic).
+
+int twice(int n) {
+    return n * 2;
+}
+
+int main() {
+    double d = 3.7;
+    int i = int(d);
+    double e = double(i);
+    char c = char(65);
+    byte b = byte(300);
+    int j = int(c);
+    int64 big = int64(65536) * int64(65536);
+    int neg = int(-1.9);
+    std::vector<int> v;
+    v.push_back(9);
+    int k = int(v[0]);
+    int m = int(twice(2) + 1) + int(0.5);
+    std::cout << i << " " << int(e) << " " << c << " " << int(b) << " " << j << " "
+              << big << " " << neg << " " << k << std::endl;
+    return 0;
+}

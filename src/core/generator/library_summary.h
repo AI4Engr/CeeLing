@@ -149,6 +149,11 @@ bool isPrimitiveType(const std::string& type);
 // SubscriptExpression string-receiver branch) and char literals (`'x'`).
 bool isCharType(const std::string& type);
 
+// `int(x)`, `double(x)`, `float(x)`, `char(x)`, `byte(x)`, `int64(x)`: a conversion between two
+// primitive types. The name must be one of these AND the single argument must not be an object,
+// container or string (EscapeHatchChecker). `bool(x)` is left out: a non-zero test is `x != 0`.
+bool isPrimitiveConversionName(const std::string& name);
+
 // Is `qualifiedName` (e.g. "std::stoi") a known qualified FREE function this
 // allow-list covers? Grown incrementally, same discipline as every other allow-
 // list here -- currently just the two yaml-cling needs for `.as<int>()`/

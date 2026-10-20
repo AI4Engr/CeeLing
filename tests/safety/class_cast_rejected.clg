@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ reason: int(x) is a conversion between primitives only. Applied to an object it would be a
+//@ reason: reinterpretation of a smart pointer as a number (CLAUDE.md escape hatch #13).
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node n = new Node(1);
+    int x = int(n);
+    std::cout << x << std::endl;
+    return 0;
+}

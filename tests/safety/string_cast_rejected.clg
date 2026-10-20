@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ reason: int(s) on a string is not a primitive conversion (use std::stoi, which is on the
+//@ reason: allow-list and reports bad input by throwing).
+
+int main() {
+    string s = "12";
+    int x = int(s);
+    std::cout << x << std::endl;
+    return 0;
+}

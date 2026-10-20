@@ -290,6 +290,17 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         return arityIt != classSpecializationArities_.end() &&
                arityIt->second.count(call.arguments.size()) > 0;
     }
+    // `int(x)` etc.: a primitive conversion, allowed only when the argument is not known to be an
+    // object, container or string (an unresolvable expression such as `a + b` is a primitive
+    // computation or a type error the C++ compile gate reports -- neither is a memory hazard).
+    if (call.templateArg.empty() && isPrimitiveConversionName(call.function_name)) {
+        if (call.arguments.size() != 1) return false;
+        const Expression* arg = call.arguments[0].get();
+        const std::string declared = resolveDeclaredType(arg);
+        if (!declared.empty() && !isPrimitiveType(declared)) return false;
+        if (declared == "string" || declared == "std::string") return false;
+        return resolveObjectType(arg).empty();
+    }
     // Plain call `f(args)`: either a free function, or -- inside a method body -- a
     // bare same-class method call with an implicit `this` receiver, or a qualified
     // library free function on the allow-list (`std::stoi(x)`).
@@ -464,6 +475,13 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                      "silently trusted (CLAUDE.md \"default-reject, never default-allow\"). "
                      "Define `" + calleeName + "` in CeeLing source, or call an existing "
                      "CeeLing function/method instead.";
+            if (call->callee == nullptr && isPrimitiveConversionName(call->function_name)) {
+                e.message = "`" + call->function_name + "(...)` converts one primitive to another; "
+                            "the argument here is not a single primitive";
+                e.help = "Primitive conversions take exactly one int/float/double/char/byte/int64 "
+                         "(or bool) value. A class, container or string cannot be cast to a "
+                         "primitive -- that would be a type-confusion hatch (CLAUDE.md #13).";
+            }
             if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get());
                 calleeMember != nullptr && calleeMember->member == "resize") {
                 const std::string recvType = resolveDeclaredType(calleeMember->object.get());
