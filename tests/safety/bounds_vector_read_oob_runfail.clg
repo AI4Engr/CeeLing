@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ run-fail: index out of bounds
+//@ reason: reading past the end of a std::vector. Unchecked, this is undefined behaviour
+//@ reason: (the zlib-cling history has a real instance: a match distance past the window indexed a
+//@ reason: table out of range and was only found because the process crashed). With the check on
+//@ reason: by default it aborts and names the .clg line instead.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    int i = 5;
+    std::cout << v[i] << std::endl;
+    return 0;
+}

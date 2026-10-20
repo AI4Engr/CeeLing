@@ -43,6 +43,11 @@ class AstEmitter {
 public:
     explicit AstEmitter(const SmartPointerAnalyzer& analyzer) : analyzer_(analyzer) {}
 
+    // Bounds checks on `v[i]` / `s[i]` are ON by default (the safety contract's runtime half);
+    // a project that has measured the cost and accepts the risk can turn them off
+    // (`--no-bounds-checks`). Output without checks must never be described as bounds-safe.
+    void setBoundsChecks(bool on) { boundsChecks_ = on; }
+
     // Emit a full translation unit for the program.
     std::string emit(const Program& program);
 
@@ -336,6 +341,10 @@ private:
     // lock(), and a member access THROUGH it is wrapped in cling::nn (null check), so the
     // helper (nullCheckHelperDefinition) and <cstdio>/<cstdlib> must be emitted.
     bool usesNullCheck_ = false;
+    // Wrap `v[i]` / `s[i]` in cling::at (runtime bounds check). usesBoundsCheck_ is set by the
+    // pre-scan when the program contains any subscript, so the helper is emitted only when needed.
+    bool boundsChecks_ = true;
+    bool usesBoundsCheck_ = false;
     // Two-phase class emission (see emit()): when set, emitClass writes only the class DEFINITION to
     // the output and stashes the out-of-line member bodies here, keyed by class name, to be written
     // after every class definition exists.

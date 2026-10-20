@@ -281,4 +281,11 @@ std::string copyWithinHelperDefinition();
 // and the whole point of this check is that it cannot be silently ignored.
 std::string nullCheckHelperDefinition();
 
+// Runtime bounds check for `v[i]` / `s[i]` on std::vector and std::string (cling::at). An index
+// outside [0, size) -- including every negative index -- prints the .clg line and aborts. Types
+// that have a key_type (std::map) keep operator[]'s insert-or-update meaning and are NOT checked,
+// so the emitter can wrap any non-class subscript without having to know the receiver's type.
+// Emitted unless --no-bounds-checks was given. abort(), not throw, for the same reason as nn().
+std::string boundsCheckHelperDefinition();
+
 } // namespace cling

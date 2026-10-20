@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ run: 30 c 6 5
+//@ reason: the check must not change behaviour of CORRECT programs. In-range vector reads and stores,
+//@ reason: a string read, a nested vector<vector<int>> subscript, and -- the one that would silently
+//@ reason: break -- std::map: `m[key] = v` is insert-or-update by KEY, so comparing the key to
+//@ reason: m.size() would be wrong; cling::at leaves any type with a key_type alone.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(10);
+    v.push_back(20);
+    v[1] = v[0] + v[1];
+    string s = "abc";
+    std::map<string, int> m;
+    m["k"] = 5;
+    m["k"] = m["k"] + 1;
+    std::vector<std::vector<int>> rows;
+    std::vector<int> r;
+    r.push_back(4);
+    rows.push_back(r);
+    rows[0][0] = rows[0][0] + 1;
+    std::cout << v[1] << " " << s[2] << " " << m["k"] << " " << rows[0][0] << std::endl;
+    return 0;
+}

@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ run-fail: index out of bounds
+//@ reason: a STORE past the end (`v[i] = x`) is the more dangerous half: it corrupts memory instead
+//@ reason: of merely reading it. The assignment target comes through a different path than a read,
+//@ reason: and a first version of the check missed it (a program whose only subscripts are stores
+//@ reason: never got the helper emitted and failed to compile), so it has its own fixture.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    int i = 1;
+    v[i] = 9;
+    std::cout << "unreachable" << std::endl;
+    return 0;
+}

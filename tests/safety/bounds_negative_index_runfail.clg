@@ -1,0 +1,12 @@
+//@ expect: accept
+//@ run-fail: index out of bounds
+//@ reason: a negative index. The check compares as unsigned so one test rejects both i >= size and
+//@ reason: i < 0; -1 must not wrap around into a huge valid-looking offset.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    int i = 0 - 1;
+    std::cout << v[i] << std::endl;
+    return 0;
+}

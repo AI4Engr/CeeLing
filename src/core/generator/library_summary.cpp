@@ -293,6 +293,36 @@ std::string copyWithinHelperDefinition() {
         "#endif\n";
 }
 
+std::string boundsCheckHelperDefinition() {
+    // The index is compared as unsigned so one test rejects both `i >= size` and `i < 0`.
+    // `if constexpr` picks the map-like branch at compile time: a type with a key_type is indexed
+    // by KEY (and inserts), so a size comparison would be wrong for it.
+    return
+        "#ifndef CLING_BOUNDS_CHECK_DEFINED\n"
+        "#define CLING_BOUNDS_CHECK_DEFINED\n"
+        "#include <cstdio>\n"
+        "#include <cstdlib>\n"
+        "#include <type_traits>\n"
+        "namespace cling {\n"
+        "template <typename C, typename = void> struct has_key_type : std::false_type {};\n"
+        "template <typename C> struct has_key_type<C, std::void_t<typename C::key_type>> : std::true_type {};\n"
+        "template <typename C, typename I>\n"
+        "inline decltype(auto) at(C& c, I i, int line) {\n"
+        "    if constexpr (has_key_type<std::remove_const_t<C>>::value) {\n"
+        "        return c[i];\n"
+        "    } else {\n"
+        "        if (static_cast<unsigned long long>(i) >= static_cast<unsigned long long>(c.size())) {\n"
+        "            std::fprintf(stderr, \"cling: index out of bounds at line %d (index %lld, size %lld)\\n\",\n"
+        "                         line, static_cast<long long>(i), static_cast<long long>(c.size()));\n"
+        "            std::abort();\n"
+        "        }\n"
+        "        return c[static_cast<typename std::remove_const_t<C>::size_type>(i)];\n"
+        "    }\n"
+        "}\n"
+        "} // namespace cling\n"
+        "#endif\n";
+}
+
 std::string nullCheckHelperDefinition() {
     // cling::nn(p, where) returns p unchanged when non-null, otherwise reports `where`
     // (the .clg file:line of the dereference) on stderr and aborts. Taken by value and

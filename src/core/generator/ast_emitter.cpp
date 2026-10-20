@@ -16,6 +16,7 @@ std::string AstEmitter::emit(const Program& program) {
     varKinds_.clear();
     usedRuntimeHelpers_.clear();
     usesCopyWithin_ = false;
+    usesBoundsCheck_ = false;
     collectClassNames(program);
     collectUsedRuntimeHelpers(program);
     usesNullCheck_ = false;
@@ -67,6 +68,9 @@ std::string AstEmitter::emit(const Program& program) {
     }
     if (usesNullCheck_) {
         out << nullCheckHelperDefinition() << "\n";
+    }
+    if (boundsChecks_ && usesBoundsCheck_) {
+        out << boundsCheckHelperDefinition() << "\n";
     }
 
     // Forward-declare every class this file defines (global namespace, non-value-type), so two
@@ -534,6 +538,7 @@ void AstEmitter::collectUsedRuntimeHelpers(const Program& program) {
         } else if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
             visitExpr(member->object.get());
         } else if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+            usesBoundsCheck_ = true;   // some `x[i]` exists; emitExpression decides per site
             visitExpr(sub->object.get());
             visitExpr(sub->index.get());
         }
@@ -547,6 +552,9 @@ void AstEmitter::collectUsedRuntimeHelpers(const Program& program) {
             visitExpr(decl->expression.get());
         } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
             visitExpr(assign->expression.get());
+            // The TARGET too: `v[i] = x;` is a store through a subscript, and a program whose only
+            // subscripts are stores would otherwise never get the bounds-check helper emitted.
+            visitExpr(assign->target.get());
         } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
             visitExpr(ret->expression.get());
         } else if (auto th = dynamic_cast<const ThrowStatement*>(stmt)) {
@@ -2755,8 +2763,15 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             return emitExpression(sub->object.get()) + "->operator[](" +
                    emitExpression(sub->index.get()) + ")";
         }
-        // `v[i]` lowers 1:1 to C++ `v[i]` -- std::vector's operator[] is exactly
-        // what CeeLing's subscript syntax means, no translation needed.
+        // `v[i]` / `s[i]` on a container or string: by default routed through cling::at, which
+        // aborts with the .clg line on an out-of-range index (the contract's runtime backstop
+        // for threat #11). Written for reads AND stores, since an assignment target comes through
+        // here too. cling::at leaves map-like receivers (insert-or-update by key) untouched, so
+        // this branch does not have to know the receiver's type.
+        if (boundsChecks_) {
+            return "cling::at(" + emitExpression(sub->object.get()) + ", " + emitExpression(sub->index.get()) +
+                   ", " + std::to_string(sub->loc.line) + ")";
+        }
         return emitExpression(sub->object.get()) + "[" + emitExpression(sub->index.get()) + "]";
     }
     // Unknown node: best effort.

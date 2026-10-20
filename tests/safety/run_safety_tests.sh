@@ -117,7 +117,10 @@ run_one_fixture() {
             want_fail="$(grep -m1 -oE '//@ run-fail:.*' "$fx" | sed -E 's|^//@ run-fail:[[:space:]]*||' | tr -d '\r')"
 
             if [ -n "$want_fail" ]; then
-                if ! "$CXX" -std=c++17 "$gen" -o "$exe" >/dev/null 2>&1; then
+                # -O2, deliberately: libstdc++ turns its own operator[] assertions ON for unoptimized
+                # builds only, so without it a fixture could "pass" because the LIBRARY aborted, not
+                # because the check CeeLing inserted fired. Optimized, only our check can stop it.
+                if ! "$CXX" -std=c++17 -O2 "$gen" -o "$exe" >/dev/null 2>&1; then
                     printf '%-48s %-8s %s\n' "$name" "$expect" "FAIL (generated C++ does not compile)" > "$report_file"
                     echo "FAIL" > "$status_file"
                     return 0

@@ -1510,7 +1510,9 @@ ExpressionPtr ASTBuilder::buildMemberAccess(TSNode node, const std::string& sour
     auto object = buildExpression(object_node, source);
     std::string member = getNodeText(member_node, source);
 
-    return std::make_unique<MemberAccess>(std::move(object), member);
+    auto access = std::make_unique<MemberAccess>(std::move(object), member);
+    stampLoc(access.get(), node);   // same reason as buildSubscriptExpression: direct callers skip buildExpression
+    return access;
 }
 
 ExpressionPtr ASTBuilder::buildSubscriptExpression(TSNode node, const std::string& source) {
@@ -1521,7 +1523,11 @@ ExpressionPtr ASTBuilder::buildSubscriptExpression(TSNode node, const std::strin
     auto object = buildExpression(object_node, source);
     auto index = buildExpression(index_node, source);
 
-    return std::make_unique<SubscriptExpression>(std::move(object), std::move(index));
+    auto sub = std::make_unique<SubscriptExpression>(std::move(object), std::move(index));
+    // Stamp here as well: an assignment target (`v[i] = x;`) is built by calling this directly,
+    // bypassing buildExpression's own stampLoc, and the bounds check reports this line.
+    stampLoc(sub.get(), node);
+    return sub;
 }
 
 StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& source) {

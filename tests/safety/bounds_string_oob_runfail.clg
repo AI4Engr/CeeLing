@@ -1,0 +1,12 @@
+//@ expect: accept
+//@ run-fail: index out of bounds
+//@ reason: s[i] on a std::string is checked the same way. (s[size()] is legal C++ for std::string,
+//@ reason: returning the terminator, but CeeLing's string has no such notion, so index == size is
+//@ reason: out of bounds here.)
+
+int main() {
+    string s = "abc";
+    int i = 3;
+    std::cout << s[i] << std::endl;
+    return 0;
+}

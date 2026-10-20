@@ -168,6 +168,7 @@ void showUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [options] <file.clg>" << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << "  --cpp <output>  - Compile to C++ and save to <output> file" << std::endl;
+    std::cout << "  --no-bounds-checks - Do not insert runtime bounds checks on v[i] / s[i]" << std::endl;
     std::cout << "  --legacy-cpp    - Use the legacy regex/text-substitution generator" << std::endl;
     std::cout << "                    instead of the default AST-driven generator" << std::endl;
     std::cout << "  --help         - Show this help message" << std::endl;
@@ -213,12 +214,16 @@ int main(int argc, char* argv[]) {
     // --legacy-cpp for comparison/debugging, but does not offer that guarantee (it
     // builds output from the raw source text, not from the validated AST).
     bool useLegacyGenerator = false;
+    // Runtime bounds checks on v[i] / s[i] are on by default; --no-bounds-checks turns them off.
+    bool boundsChecks = true;
 
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--emit-ast") {
             // AstEmitter is now the default; kept as a harmless accepted alias.
+        } else if (arg == "--no-bounds-checks") {
+            boundsChecks = false;
         } else if (arg == "--legacy-cpp") {
             useLegacyGenerator = true;
         } else if (arg == "--cpp") {
@@ -429,6 +434,7 @@ int main(int argc, char* argv[]) {
             // exact point each class is actually declared (not the whole
             // file's top), don't have this problem.
             AstEmitter emitter(analyzer);
+            emitter.setBoundsChecks(boundsChecks);
             cppCode = emitter.emit(*program);
         }
         cppCode = rewriteClhIncludes(cppCode);
