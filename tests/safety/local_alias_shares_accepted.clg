@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ run: 5 5 3
+//@ reason: `Item b = a;` followed by a use of `a` is two live handles to one object. The rule is
+//@ reason: "multiple live owners => shared_ptr"; before, the assignment MOVED `a` and any later use
+//@ reason: was rejected, so a `head` and a `current` walking one list could not be written.
+//@ reason: Second half: the classic list build (`last = node` in a loop, `node` used again after).
+
+class Item {
+public:
+    Item next;
+    int v;
+    Item(int x) { v = x; }
+};
+
+int main() {
+    Item a = new Item(1);
+    Item b = a;
+    b.v = 5;
+    std::cout << a.v << " " << b.v << " ";
+    Item head = new Item(0);
+    Item last = head;
+    int i = 1;
+    while (i < 4) {
+        Item node = new Item(i);
+        last.next = node;
+        last = node;
+        i = i + 1;
+    }
+    std::cout << last.v << std::endl;
+    return 0;
+}

@@ -2329,7 +2329,10 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         // the loop variable stays the bare type too, falling through to the
         // `else` branch below (VarKind::Value, `.` access) exactly like an
         // ordinary value-type local elsewhere in this file.
-        std::string elemCppType = fors->loopVarType;
+        // A non-class element keeps its CeeLing spelling only when it is also valid C++; `string` and
+        // `byte`/`int64` are not (cppTypeFor maps them).
+        std::string elemCppType = isClassType(fors->loopVarType) ? fors->loopVarType
+                                                                 : cppTypeFor(fors->loopVarType, "");
         bool elementIsUnique = false;
         if (isClassType(fors->loopVarType) && !isValueType(fors->loopVarType)) {
             std::string containerName;

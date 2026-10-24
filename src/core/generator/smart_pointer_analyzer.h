@@ -251,6 +251,11 @@ private:
     // contained third pass, runs once after secondPassDeterminePointerTypes (needs
     // fields' own already-decided pointer kind), single pass (no fixed-point
     // iteration -- see .cpp for the documented limitation this leaves).
+    // Two handles to one object (`b = a;` then `a` used again) are both shared. See the call site.
+    void promoteAliasedLocals(const Program& program);
+    void promoteAliasedLocalsInBody(const std::vector<StatementPtr>& body,
+                                    const std::vector<std::pair<std::string, std::string>>& params,
+                                    const std::string& scope);
     void promoteParamsStoredInSharedFields(const Program& program);
     void promoteParamsInBody(const std::vector<StatementPtr>& body, const std::string& className,
                              const std::vector<std::pair<std::string, std::string>>& params,

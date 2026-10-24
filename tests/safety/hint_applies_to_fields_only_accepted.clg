@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ run: 2 1
+//@ reason: `//@ptr weak Item.prev` names a FIELD. A function parameter that happens to be called
+//@ reason: `prev` used to inherit the hint (the lookup matched any variable named prev), emitting
+//@ reason: `std::weak_ptr<Item> prev` and then `prev->next` -- which does not compile.
+
+class Item {
+public:
+    Item next;
+    //@ptr weak Item.prev
+    Item prev;
+    int v;
+    Item(int x) { v = x; }
+};
+
+void link(Item prev, Item item) {
+    prev.next = item;
+    item.prev = prev;
+}
+
+int main() {
+    Item a = new Item(1);
+    Item b = new Item(2);
+    link(a, b);
+    std::cout << a.next.v << " " << b.prev.v << std::endl;
+    return 0;
+}

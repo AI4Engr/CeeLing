@@ -189,6 +189,11 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     // the hint mechanism's plumbing rather than adding a parallel one.
     inferAliasReturningMethods(program);
     secondPassDeterminePointerTypes();
+    // `b = a;` followed by another use of `a` means two live handles to one object -- the documented
+    // "multiple live owners => shared_ptr" rule. Without this the assignment moves `a` and every
+    // later use is rejected, which makes ordinary Java-style aliasing (a `head` and a `current`
+    // walking the same list) unwritable.
+    promoteAliasedLocals(program);
 
     // Container element-kind scan runs AFTER the two-pass decision above, since it
     // asks "what pointer kind did each push_back argument's OWN variable already
@@ -1012,9 +1017,46 @@ void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& progr
         if (returns.empty()) continue;
 
         bool allAliasCalls = true;
+        bool sawCall = false;
         for (const Expression* expr : returns) {
+            // `return nullptr;` fits either pointer kind and says nothing about this one.
+            if (auto nullId = dynamic_cast<const Identifier*>(expr); nullId != nullptr && nullId->name == "nullptr") {
+                continue;
+            }
+            // `return x.field;` hands out an object somebody else keeps owning: shared.
+            if (auto ma = dynamic_cast<const MemberAccess*>(expr)) {
+                sawCall = true;
+                // The returned field must itself be a shared handle: resolve `base.field` (one
+                // level, or a chain) to the field's owning class and mark that field shared.
+                std::function<std::string(const Expression*)> classOfExpr = [&](const Expression* e) -> std::string {
+                    if (auto id = dynamic_cast<const Identifier*>(e)) {
+                        auto t = symbolTypesByScope.find(makeSymbolKey(fn->name, id->name));
+                        return t == symbolTypesByScope.end() ? std::string() : t->second;
+                    }
+                    if (auto m = dynamic_cast<const MemberAccess*>(e)) {
+                        const std::string owner = classOfExpr(m->object.get());
+                        if (owner.empty()) return "";
+                        auto t = symbolTypesByScope.find(makeSymbolKey(owner, m->member));
+                        return t == symbolTypesByScope.end() ? std::string() : t->second;
+                    }
+                    return "";
+                };
+                const std::string owner = classOfExpr(ma->object.get());
+                if (!owner.empty()) {
+                    for (auto& [vkey, vref] : variableReferences) {
+                        if (vref.containingScope == owner && vref.variableName == ma->member &&
+                            !vref.hasExplicitHint && pointerDecisions[vkey] == PointerType::UNIQUE) {
+                            pointerDecisions[vkey] = PointerType::SHARED;
+                            pointerReasons[vkey] = "returned as an alias by a free function";
+                            vref.reason = pointerReasons[vkey];
+                        }
+                    }
+                }
+                continue;
+            }
             auto call = dynamic_cast<const FunctionCall*>(expr);
             if (call == nullptr) { allAliasCalls = false; break; }
+            sawCall = true;
             std::string calledClass;
             std::string calledName;
             if (call->callee) {
@@ -1054,7 +1096,7 @@ void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& progr
                 break;
             }
         }
-        if (allAliasCalls) {
+        if (allAliasCalls && sawCall) {
             changed = true;
             aliasReturningFreeFunctions.insert(fn->name);
             methodReturnKinds_[makeMemberKey("", fn->name)] = PointerType::SHARED;
@@ -1220,6 +1262,184 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
             if (!fn->namespaceName.empty()) {
                 methodReturnKinds_[makeMemberKey("", fn->namespaceName + "::" + fn->name)] =
                     PointerType::SHARED;
+            }
+        }
+    }
+}
+
+namespace {
+void collectIdentifierNames(const Expression* expr, std::set<std::string>& out) {
+    if (expr == nullptr) return;
+    if (auto id = dynamic_cast<const Identifier*>(expr)) { out.insert(id->name); return; }
+    if (auto m = dynamic_cast<const MemberAccess*>(expr)) { collectIdentifierNames(m->object.get(), out); return; }
+    if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        collectIdentifierNames(sub->object.get(), out);
+        collectIdentifierNames(sub->index.get(), out);
+        return;
+    }
+    if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+        collectIdentifierNames(bin->left.get(), out);
+        collectIdentifierNames(bin->right.get(), out);
+        return;
+    }
+    if (auto un = dynamic_cast<const UnaryExpression*>(expr)) { collectIdentifierNames(un->operand.get(), out); return; }
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        collectIdentifierNames(call->callee.get(), out);
+        for (const auto& a : call->arguments) collectIdentifierNames(a.get(), out);
+        return;
+    }
+    if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
+        for (const auto& a : neww->arguments) collectIdentifierNames(a.get(), out);
+        return;
+    }
+}
+
+// One entry per statement in execution (pre-)order. `used` holds the names read by the statement's
+// OWN expressions (a loop's entry holds its condition / container); nested bodies get entries of
+// their own.
+struct FlatStmt {
+    const Statement* stmt = nullptr;
+    std::set<std::string> used;
+    std::string declared;
+    int loopEnd = -1;  // for a while/for: index of its last nested statement
+};
+
+void flattenBody(const std::vector<StatementPtr>& body, std::vector<FlatStmt>& out) {
+    for (const auto& sp : body) {
+        const Statement* st = sp.get();
+        FlatStmt fs;
+        fs.stmt = st;
+        const size_t myIndex = out.size();
+        if (auto decl = dynamic_cast<const VariableDeclaration*>(st)) {
+            collectIdentifierNames(decl->expression.get(), fs.used);
+            fs.declared = decl->identifier;
+            out.push_back(fs);
+        } else if (auto cdecl = dynamic_cast<const ContainerDeclaration*>(st)) {
+            fs.declared = cdecl->identifier;
+            out.push_back(fs);
+        } else if (auto asg = dynamic_cast<const AssignmentStatement*>(st)) {
+            collectIdentifierNames(asg->expression.get(), fs.used);
+            if (asg->target) collectIdentifierNames(asg->target.get(), fs.used);
+            out.push_back(fs);
+        } else if (auto es = dynamic_cast<const ExpressionStatement*>(st)) {
+            collectIdentifierNames(es->expression.get(), fs.used);
+            out.push_back(fs);
+        } else if (auto ret = dynamic_cast<const ReturnStatement*>(st)) {
+            collectIdentifierNames(ret->expression.get(), fs.used);
+            out.push_back(fs);
+        } else if (auto th = dynamic_cast<const ThrowStatement*>(st)) {
+            collectIdentifierNames(th->expression.get(), fs.used);
+            out.push_back(fs);
+        } else if (auto ifs = dynamic_cast<const IfStatement*>(st)) {
+            collectIdentifierNames(ifs->condition.get(), fs.used);
+            out.push_back(fs);
+            flattenBody(ifs->body, out);
+            flattenBody(ifs->elseBody, out);
+        } else if (auto wh = dynamic_cast<const WhileStatement*>(st)) {
+            collectIdentifierNames(wh->condition.get(), fs.used);
+            out.push_back(fs);
+            flattenBody(wh->body, out);
+            out[myIndex].loopEnd = static_cast<int>(out.size()) - 1;
+        } else if (auto fo = dynamic_cast<const ForStatement*>(st)) {
+            collectIdentifierNames(fo->container.get(), fs.used);
+            fs.declared = fo->loopVarName;
+            out.push_back(fs);
+            flattenBody(fo->body, out);
+            out[myIndex].loopEnd = static_cast<int>(out.size()) - 1;
+        } else if (auto tr = dynamic_cast<const TryStatement*>(st)) {
+            out.push_back(fs);
+            flattenBody(tr->body, out);
+            flattenBody(tr->catchBody, out);
+        } else {
+            out.push_back(fs);
+        }
+    }
+}
+} // namespace
+
+void SmartPointerAnalyzer::promoteAliasedLocalsInBody(
+    const std::vector<StatementPtr>& body,
+    const std::vector<std::pair<std::string, std::string>>& params, const std::string& scope) {
+    std::vector<FlatStmt> flat;
+    flattenBody(body, flat);
+    std::map<std::string, std::string> types;  // object-class locals and parameters
+    for (const auto& [ptype, pname] : params) {
+        if (classNames.count(ptype) > 0) types[pname] = ptype;
+    }
+    for (const auto& fs : flat) {
+        if (auto decl = dynamic_cast<const VariableDeclaration*>(fs.stmt)) {
+            if (classNames.count(decl->type) > 0 && !decl->isObserver) types[decl->identifier] = decl->type;
+        }
+    }
+    auto promote = [&](const std::string& name) {
+        auto ti = types.find(name);
+        if (ti == types.end()) return;
+        auto it = pointerDecisions.find(buildKey(scope, ti->second, name));
+        if (it == pointerDecisions.end() || it->second == PointerType::WEAK) return;
+        // an explicit hint always wins
+        auto vr = variableReferences.find(buildKey(scope, ti->second, name));
+        if (vr != variableReferences.end() && vr->second.hasExplicitHint) return;
+        it->second = PointerType::SHARED;
+        pointerReasons[buildKey(scope, ti->second, name)] =
+            "assigned to another handle and used again afterwards (two live owners)";
+    };
+    for (size_t i = 0; i < flat.size(); ++i) {
+        std::string target;
+        const Expression* rhs = nullptr;
+        if (auto decl = dynamic_cast<const VariableDeclaration*>(flat[i].stmt)) {
+            if (classNames.count(decl->type) == 0 || decl->isObserver) continue;
+            target = decl->identifier;
+            rhs = decl->expression.get();
+        } else if (auto asg = dynamic_cast<const AssignmentStatement*>(flat[i].stmt)) {
+            if (asg->target) continue;  // a field store already shares
+            target = asg->variable;
+            rhs = asg->expression.get();
+        } else {
+            continue;
+        }
+        auto rhsId = dynamic_cast<const Identifier*>(rhs);
+        if (rhsId == nullptr || types.find(rhsId->name) == types.end() || types.find(target) == types.end()) {
+            continue;
+        }
+        const std::string& src = rhsId->name;
+        bool usedAgain = false;
+        for (size_t j = i + 1; j < flat.size() && !usedAgain; ++j) {
+            if (flat[j].used.count(src) > 0) usedAgain = true;
+        }
+        // inside a loop, a use anywhere in the loop is 'after' on the next iteration, unless the
+        // source is declared inside that loop (then every iteration starts with a fresh one)
+        for (size_t l = 0; l < i && !usedAgain; ++l) {
+            if (flat[l].loopEnd < 0 || static_cast<size_t>(flat[l].loopEnd) < i) continue;
+            bool declaredInside = false;
+            for (size_t k = l; k <= static_cast<size_t>(flat[l].loopEnd); ++k) {
+                if (k != l && flat[k].declared == src) declaredInside = true;
+            }
+            if (declaredInside) continue;
+            for (size_t k = l; k <= static_cast<size_t>(flat[l].loopEnd) && !usedAgain; ++k) {
+                if (k != i && flat[k].used.count(src) > 0) usedAgain = true;
+            }
+        }
+        if (usedAgain) {
+            promote(src);
+            promote(target);
+        }
+    }
+}
+
+void SmartPointerAnalyzer::promoteAliasedLocals(const Program& program) {
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            promoteAliasedLocalsInBody(fn->body, fn->parameters, fn->name);
+        } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
+            promoteAliasedLocalsInBody(mn->body, {}, "main");
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    promoteAliasedLocalsInBody(method->body, method->parameters,
+                                               cls->name + "::" + method->name);
+                } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    promoteAliasedLocalsInBody(ctor->body, ctor->parameters, cls->name + "::" + ctor->name);
+                }
             }
         }
     }
@@ -3957,6 +4177,7 @@ void SmartPointerAnalyzer::recordBidirectionalAssignment(const std::string& lhsO
     classRelationships[reverseTypeIt->second].hasBidirectionalAssignment = true;
 
     for (auto& [key, ref] : variableReferences) {
+        if (classNames.find(ref.containingScope) == classNames.end()) continue;  // fields only
         const std::string memberKey = makeMemberKey(ref.className, ref.variableName);
         if (memberKey == backMemberKey) {
             ref.isBackReference = true;
@@ -3975,6 +4196,14 @@ void SmartPointerAnalyzer::secondPassDeterminePointerTypes() {
     applyExplicitHints();
     reportLines.clear();
 
+    std::set<std::string> fieldMemberKeys;
+    std::set<std::string> fieldNames;
+    for (const auto& [fkey, fref] : variableReferences) {
+        if (classNames.find(fref.containingScope) == classNames.end()) continue;
+        fieldMemberKeys.insert(makeMemberKey(fref.className, fref.variableName));
+        fieldMemberKeys.insert(makeMemberKey(fref.containingScope, fref.variableName));
+        fieldNames.insert(fref.variableName);
+    }
     for (auto& [key, ref] : variableReferences) {
         PointerType pointerType = PointerType::UNIQUE;
         std::string reason = "default unique ownership";
@@ -3989,24 +4218,33 @@ void SmartPointerAnalyzer::secondPassDeterminePointerTypes() {
         auto explicitIt = explicitHints.find(exactMemberKey);
         if (explicitIt == explicitHints.end()) explicitIt = explicitHints.find(enclosingMemberKey);
         const auto fallbackHintIt = explicitHints.find(ref.variableName);
+        // Hints and back-reference rules are about FIELDS (containing scope is a class). A parameter
+        // or local that merely shares a field's name -- `void link(Item prev, ...)` -- is an ordinary
+        // variable and must not become a weak_ptr because of it.
+        const bool isField = classNames.find(ref.containingScope) != classNames.end();
+        // A hint names a field whenever a field of that name exists; it reaches a local or parameter
+        // only when it does not (`//@ptr shared Node.a` on a local `a`).
+        const bool hintReachesThis = isField ||
+            (fieldMemberKeys.count(exactMemberKey) == 0 && fieldMemberKeys.count(enclosingMemberKey) == 0 &&
+             fieldNames.count(ref.variableName) == 0);
 
-        if (explicitIt != explicitHints.end()) {
+        if (hintReachesThis && explicitIt != explicitHints.end()) {
             pointerType = explicitIt->second;
             ref.hasExplicitHint = true;
             reason = "explicit @ptr annotation";
-        } else if (fallbackHintIt != explicitHints.end()) {
+        } else if (hintReachesThis && fallbackHintIt != explicitHints.end()) {
             pointerType = fallbackHintIt->second;
             ref.hasExplicitHint = true;
             reason = "explicit @ptr annotation";
-        } else if (ref.isBackReference || bidirectionalBackMembers.find(exactMemberKey) != bidirectionalBackMembers.end()) {
+        } else if (isField && (ref.isBackReference || bidirectionalBackMembers.find(exactMemberKey) != bidirectionalBackMembers.end())) {
             pointerType = PointerType::WEAK;
             reason = ref.participatesInBidirectionalAssignment
                 ? "bidirectional assignment closed a cycle"
                 : "back-reference heuristic matched a backward edge";
             classesNeedingSharedRoots.insert(ref.className);
             classRelationships[ref.className].hasBackReference = true;
-        } else if (ref.participatesInBidirectionalAssignment ||
-                   bidirectionalOwnerMembers.find(exactMemberKey) != bidirectionalOwnerMembers.end()) {
+        } else if (isField && (ref.participatesInBidirectionalAssignment ||
+                   bidirectionalOwnerMembers.find(exactMemberKey) != bidirectionalOwnerMembers.end())) {
             pointerType = PointerType::SHARED;
             reason = "bidirectional ownership needs a shared forward edge";
             classesNeedingSharedRoots.insert(ref.className);
@@ -4077,11 +4315,26 @@ bool SmartPointerAnalyzer::isSharedOwnership(const std::string& containingScope,
 }
 
 void SmartPointerAnalyzer::applyExplicitHints() {
+    // Does `target` (a `Class.member`, `Scope.member` or bare name) name a FIELD of some class?
+    auto hintNamesAField = [&](const std::string& target) {
+        for (const auto& [fkey, fref] : variableReferences) {
+            if (classNames.find(fref.containingScope) == classNames.end()) continue;
+            if (target == fref.variableName || target == makeMemberKey(fref.className, fref.variableName) ||
+                target == makeMemberKey(fref.containingScope, fref.variableName)) {
+                return true;
+            }
+        }
+        return false;
+    };
     for (const auto& [target, line] : explicitHintLines) {
         bool matched = false;
         for (auto& [key, ref] : variableReferences) {
             const std::string memberKey = makeMemberKey(ref.className, ref.variableName);
             const std::string enclosingKey = makeMemberKey(ref.containingScope, ref.variableName);
+            // A hint names a FIELD. A parameter or local that happens to share the field's name
+            // (`void link(Item prev, ...)` next to a `//@ptr weak Item.prev`) must not inherit it:
+            // fields are the entries whose containing scope is a class.
+            if (classNames.find(ref.containingScope) == classNames.end() && hintNamesAField(target)) continue;
             if (target == ref.variableName || target == memberKey || target == enclosingKey) {
                 ref.hasExplicitHint = true;
                 matched = true;

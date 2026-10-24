@@ -1,0 +1,40 @@
+//@ expect: accept
+//@ run: 7 0
+//@ reason: a free function with a `return nullptr;` AND a forwarded `return other(...)` is still
+//@ reason: classified from `other` (nullptr fits either pointer kind); before, the nullptr return
+//@ reason: made the whole function "not alias-returning" and its unique_ptr return type could not
+//@ reason: take the shared_ptr that `other` hands back.
+
+class Item {
+public:
+    Item child;
+    int v;
+    Item(int x) { v = x; }
+};
+
+Item firstChild(Item parent) {
+    if (parent == nullptr) {
+        return nullptr;
+    }
+    return parent.child;
+}
+
+Item firstChildChecked(Item parent, int which) {
+    if (which < 0) {
+        return nullptr;
+    }
+    return firstChild(parent);
+}
+
+int main() {
+    Item p = new Item(0);
+    p.child = new Item(7);
+    Item c = firstChildChecked(p, 0);
+    Item none = firstChildChecked(p, -1);
+    int missing = 0;
+    if (none != nullptr) {
+        missing = 1;
+    }
+    std::cout << c.v << " " << missing << std::endl;
+    return 0;
+}

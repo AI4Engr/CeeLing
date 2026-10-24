@@ -530,6 +530,13 @@ std::string DanglingChecker::resolveBorrowingMethodReceiver(const Expression* ex
     return recvId->name;
 }
 
+bool DanglingChecker::isSharedLocal(const std::string& name) const {
+    auto typeIt = localType_.find(name);
+    if (typeIt == localType_.end() || analyzer_ == nullptr) return false;
+    if (classNames_.count(typeIt->second) == 0) return false;
+    return analyzer_->getPointerTypeInScope(currentScope_, typeIt->second, name) == PointerType::SHARED;
+}
+
 void DanglingChecker::applyCallArgMoves(const Expression* expr) {
     auto call = dynamic_cast<const FunctionCall*>(expr);
     if (call == nullptr) return;
@@ -1080,7 +1087,8 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             const bool srcIsValueTypeCopy = analyzer_ != nullptr &&
                 analyzer_->isValueTypeClass(decl->type);
             if (isObjectType(decl->type) && decl->expression && !srcIsValueTypeCopy) {
-                if (std::string src = asObjectLocalName(decl->expression.get()); !src.empty()) {
+                if (std::string src = asObjectLocalName(decl->expression.get());
+                    !src.empty() && !isSharedLocal(src)) {
                     movedFrom_.insert(src);
                 }
             }
@@ -1208,8 +1216,10 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             }
             // Reassigning a local revives the name itself (no longer moved-from).
             movedFrom_.erase(assign->variable);
-            // RHS being another object local moves that source.
-            if (std::string src = asObjectLocalName(assign->expression.get()); !src.empty()) {
+            // RHS being another object local moves that source -- unless the source is a shared
+            // handle, which the emitter copies (a refcount bump) and which therefore stays live.
+            if (std::string src = asObjectLocalName(assign->expression.get());
+                !src.empty() && !isSharedLocal(src)) {
                 movedFrom_.insert(src);
             }
             // `x = f(a);` — a call RHS moves its own object-typed arguments, same as

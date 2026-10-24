@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ run: ab:1 cd:2
+//@ reason: `for (string s : v)` emitted the loop variable type verbatim (`string`), which is not C++.
+
+int main() {
+    std::vector<string> v;
+    v.push_back("ab");
+    v.push_back("cd");
+    int n = 0;
+    for (string s : v) {
+        n = n + 1;
+        std::cout << s << ":" << n;
+        if (n < 2) {
+            std::cout << " ";
+        }
+    }
+    std::cout << std::endl;
+    return 0;
+}

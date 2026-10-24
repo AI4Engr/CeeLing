@@ -153,6 +153,9 @@ private:
     // store; an observer of a moved-from/killed container dangles), so it reuses
     // 100% of the existing move/observer machinery once recognized here.
     bool isObjectType(const std::string& type) const;
+    // True if `name` is an object local whose pointer kind resolved to SHARED: assigning it onward
+    // copies the handle (the emitter does exactly that), so it is not consumed.
+    bool isSharedLocal(const std::string& name) const;
 
     // Is `expr` provably a `string`-value expression? A string literal always is;
     // a `string`-typed identifier is (via localType_); a `+` BinaryExpression of
