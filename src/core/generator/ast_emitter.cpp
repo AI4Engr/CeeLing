@@ -20,8 +20,9 @@ std::string AstEmitter::emit(const Program& program) {
     collectClassNames(program);
     collectUsedRuntimeHelpers(program);
     usesNullCheck_ = false;
+    // Classes pulled in through a `.clh` include count too: this file may read a weak field of a
+    // class declared elsewhere (`node.prev.next`), and the helper is guarded against redefinition.
     for (const auto& stmt : program.statements) {
-        if (stmt->isExternalDeclaration) continue;
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
         if (cls == nullptr) continue;
         for (const auto& member : cls->members) {
