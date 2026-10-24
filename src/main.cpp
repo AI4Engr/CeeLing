@@ -169,6 +169,7 @@ void showUsage(const char* programName) {
     std::cout << "Options:" << std::endl;
     std::cout << "  --cpp <output>  - Compile to C++ and save to <output> file" << std::endl;
     std::cout << "  --no-bounds-checks - Do not insert runtime bounds checks on v[i] / s[i]" << std::endl;
+    std::cout << "  --no-null-checks   - Do not insert runtime null checks on object-handle dereferences" << std::endl;
     std::cout << "  --legacy-cpp    - Use the legacy regex/text-substitution generator" << std::endl;
     std::cout << "                    instead of the default AST-driven generator" << std::endl;
     std::cout << "  --help         - Show this help message" << std::endl;
@@ -216,6 +217,7 @@ int main(int argc, char* argv[]) {
     bool useLegacyGenerator = false;
     // Runtime bounds checks on v[i] / s[i] are on by default; --no-bounds-checks turns them off.
     bool boundsChecks = true;
+    bool nullChecks = true;
 
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
@@ -224,6 +226,8 @@ int main(int argc, char* argv[]) {
             // AstEmitter is now the default; kept as a harmless accepted alias.
         } else if (arg == "--no-bounds-checks") {
             boundsChecks = false;
+        } else if (arg == "--no-null-checks") {
+            nullChecks = false;
         } else if (arg == "--legacy-cpp") {
             useLegacyGenerator = true;
         } else if (arg == "--cpp") {
@@ -435,6 +439,7 @@ int main(int argc, char* argv[]) {
             // file's top), don't have this problem.
             AstEmitter emitter(analyzer);
             emitter.setBoundsChecks(boundsChecks);
+            emitter.setNullChecks(nullChecks);
             cppCode = emitter.emit(*program);
         }
         cppCode = rewriteClhIncludes(cppCode);

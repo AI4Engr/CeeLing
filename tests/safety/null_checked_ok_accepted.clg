@@ -1,0 +1,26 @@
+//@ expect: accept
+//@ run: 1 0 7
+//@ reason: the checks do not fire on valid code: dereference after a nullptr test, through `this`,
+//@ reason: through a chain whose links are all set, and on a temporary returned by a call.
+
+class Node {
+public:
+    Node next;
+    int v;
+    Node(int x) { v = x; }
+    int twice() { return v + v; }
+};
+
+Node make(int x) {
+    Node n = new Node(x);
+    return n;
+}
+
+int main() {
+    Node a = new Node(1);
+    a.next = new Node(7);
+    int missing = 1;
+    if (a.next != nullptr) { missing = 0; }
+    std::cout << a.v << " " << missing << " " << make(3).twice() + a.next.v - 6 << std::endl;
+    return 0;
+}

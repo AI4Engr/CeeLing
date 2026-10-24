@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ run-fail: cling: null dereference at line 23
+//@ reason: dereferencing a handle that is nullptr -- here the result of a lookup that found nothing -- is
+//@ reason: no longer an unchecked C++ null dereference (segfault / undefined behaviour): every `->` on an
+//@ reason: object handle goes through cling::nn, which aborts with the .clg line (exit 3). This is the
+//@ reason: runtime half of threat #9; weak links were already covered. `--no-null-checks` turns it off.
+
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+    int get() { return v; }
+};
+
+Node find(Node n, int k) {
+    if (k == 0) { return n; }
+    return nullptr;
+}
+
+int main() {
+    Node a = new Node(5);
+    Node b = find(a, 1);
+    std::cout << b.get() << std::endl;
+    return 0;
+}

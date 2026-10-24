@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ run-fail: cling: null dereference at line 15
+//@ reason: dereference through an empty owning field (`next` of the last node): `n.next.v`.
+
+class Node {
+public:
+    Node next;
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node n = new Node(1);
+    std::cout << n.v << std::endl;
+    std::cout << n.next.v << std::endl;
+    return 0;
+}

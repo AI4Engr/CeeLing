@@ -67,7 +67,7 @@ std::string AstEmitter::emit(const Program& program) {
     if (usesCopyWithin_) {
         out << copyWithinHelperDefinition() << "\n";
     }
-    if (usesNullCheck_) {
+    if (usesNullCheck_ || (nullChecks_ && !classNames_.empty())) {
         out << nullCheckHelperDefinition() << "\n";
     }
     if (boundsChecks_ && usesBoundsCheck_) {
@@ -1044,6 +1044,12 @@ std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::st
 AstEmitter::VarKind AstEmitter::kindOf(const std::string& name) const {
     auto it = varKinds_.find(name);
     return it == varKinds_.end() ? VarKind::Value : it->second;
+}
+
+std::string AstEmitter::checkedDeref(const Expression* obj, const std::string& text, int line) const {
+    if (!nullChecks_) return text;
+    if (dynamic_cast<const ThisExpression*>(obj) != nullptr) return text;
+    return "cling::nn(" + text + ", \"line " + std::to_string(line) + "\")";
 }
 
 std::string AstEmitter::scopeKeyFor(const std::string& ownerClass, const std::string& name,
@@ -2608,7 +2614,7 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             recvText = recv;
             const std::string mClass = exprObjectClass(m->object.get());
             const std::string op = (mClass.empty() || isValueType(mClass)) ? "." : "->";
-            prefix = recv + op + m->member;
+            prefix = (op == "->" ? checkedDeref(m->object.get(), recv, m->loc.line) : recv) + op + m->member;
             if (!call->templateArg.empty()) {
                 prefix += "<" + cppTypeFor(call->templateArg, "") + ">";
             }
@@ -2823,8 +2829,10 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         const std::string memberClass = exprObjectClass(member->object.get());
         const std::string op = (memberClass.empty() || isValueType(memberClass)) ? "." : "->";
         // Dereferencing THROUGH a weak field: lock() may yield an empty pointer, so check it.
-        if (op == "->" && isWeakFieldRead(member->object.get())) {
-            objStr = "cling::nn(" + objStr + ", \"line " + std::to_string(member->loc.line) + "\")";
+        if (op == "->") {
+            // every dereference of an object handle is null-checked (a weak read yields a handle
+            // that may be empty; any other handle may simply be nullptr)
+            objStr = checkedDeref(member->object.get(), objStr, member->loc.line);
         }
         // A weak field that is itself being READ as a value (not written) is locked.
         if (!targetHere && isWeakFieldRead(member)) {
@@ -2840,7 +2848,7 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         // ordinary method call (`n->operator[](key)`), never literal `n[key]`.
         const std::string objClass = exprObjectClass(sub->object.get());
         if (!objClass.empty()) {
-            return emitExpression(sub->object.get()) + "->operator[](" +
+            return checkedDeref(sub->object.get(), emitExpression(sub->object.get()), sub->loc.line) + "->operator[](" +
                    emitExpression(sub->index.get()) + ")";
         }
         // `v[i]` / `s[i]` on a container or string: by default routed through cling::at, which

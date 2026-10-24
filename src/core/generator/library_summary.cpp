@@ -329,23 +329,25 @@ std::string boundsCheckHelperDefinition() {
 }
 
 std::string nullCheckHelperDefinition() {
-    // cling::nn(p, where) returns p unchanged when non-null, otherwise reports `where`
-    // (the .clg file:line of the dereference) on stderr and aborts. Taken by value and
-    // returned by value so a temporary from weak_ptr::lock() lives long enough for the
+    // cling::nn(p, where) passes p through unchanged when it is non-null, otherwise reports `where`
+    // (the .clg file:line of the dereference) on stderr and aborts. A forwarding reference in and
+    // out: an lvalue handle comes back as the same lvalue (no shared_ptr copy, so no reference-count
+    // traffic per dereference) and a temporary (a call result, weak_ptr::lock()) stays alive for the
     // `->` that follows it in the same full-expression.
     return
         "#ifndef CLING_NULL_CHECK_DEFINED\n"
         "#define CLING_NULL_CHECK_DEFINED\n"
         "#include <cstdio>\n"
         "#include <cstdlib>\n"
+        "#include <utility>\n"
         "namespace cling {\n"
         "template <typename P>\n"
-        "inline P nn(P p, const char* where) {\n"
+        "inline P&& nn(P&& p, const char* where) {\n"
         "    if (!p) {\n"
         "        std::fprintf(stderr, \"cling: null dereference at %s\\n\", where);\n"
         "        std::abort();\n"
         "    }\n"
-        "    return p;\n"
+        "    return std::forward<P>(p);\n"
         "}\n"
         "} // namespace cling\n"
         "#endif\n";

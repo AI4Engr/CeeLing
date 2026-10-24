@@ -47,6 +47,8 @@ public:
     // a project that has measured the cost and accepts the risk can turn them off
     // (`--no-bounds-checks`). Output without checks must never be described as bounds-safe.
     void setBoundsChecks(bool on) { boundsChecks_ = on; }
+    // Runtime null checks on every dereference of an object handle (`--no-null-checks` turns them off).
+    void setNullChecks(bool on) { nullChecks_ = on; }
 
     // Emit a full translation unit for the program.
     std::string emit(const Program& program);
@@ -352,6 +354,10 @@ private:
     // Wrap `v[i]` / `s[i]` in cling::at (runtime bounds check). usesBoundsCheck_ is set by the
     // pre-scan when the program contains any subscript, so the helper is emitted only when needed.
     bool boundsChecks_ = true;
+    bool nullChecks_ = true;
+    // `obj` is about to be dereferenced with `->`: wrap its text in cling::nn(...) when null checks
+    // are on. `this` and an already-wrapped weak read need nothing.
+    std::string checkedDeref(const Expression* obj, const std::string& text, int line) const;
     bool usesBoundsCheck_ = false;
     // Two-phase class emission (see emit()): when set, emitClass writes only the class DEFINITION to
     // the output and stashes the out-of-line member bodies here, keyed by class name, to be written
