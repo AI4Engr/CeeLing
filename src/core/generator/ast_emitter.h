@@ -413,6 +413,11 @@ private:
     // to PARAMETERS only, never an ordinary local. Set in emitFunction,
     // restored on return (mirrors currentClass_'s own save/restore).
     std::string currentFunctionName_;
+    // The analyzer's scope string for the body being emitted (free function name, "main", or
+    // "Class::method"); "" while emitting a class's field list.
+    std::string currentScope_;
+    static std::string scopeKeyFor(const std::string& ownerClass, const std::string& name,
+                                   const std::string& methodName);
     std::set<std::string> currentParamNames_;
     // True while emitting a method whose return was `@ptr shared`-hinted --
     // ReturnStatement emits a COPY (aliasing) instead of emitMovedArg's move in

@@ -86,7 +86,7 @@ private:
     // methods ("" for free functions/main), used to resolve method-call summaries.
     void checkBody(const std::vector<StatementPtr>& body,
                     const std::vector<std::pair<std::string, std::string>>& params,
-                    const std::string& ownerClass);
+                    const std::string& ownerClass, const std::string& scope);
 
     // Process one statement in the CURRENT scope (does not clear state). Nested blocks
     // (e.g. an `if` body) reuse the enclosing scope so outer observers stay visible;
@@ -320,6 +320,7 @@ private:
     std::map<std::string, std::set<size_t>> externRefParams_;
 
     std::string currentClass_;  // enclosing class of the body being checked ("" = free fn)
+    std::string currentScope_;  // analyzer scope string of the body being checked (see getPointerTypeInScope)
     std::set<std::string> objectLocals_;   // object-typed owners live in current body
     std::map<std::string, std::string> localType_;  // object-local/param name -> class name
     std::set<std::string> movedFrom_;      // moved-from locals in the current body

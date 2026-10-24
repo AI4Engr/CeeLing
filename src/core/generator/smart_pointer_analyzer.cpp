@@ -243,6 +243,16 @@ PointerType SmartPointerAnalyzer::getPointerType(const std::string& className, c
     return PointerType::SHARED;
 }
 
+PointerType SmartPointerAnalyzer::getPointerTypeInScope(const std::string& scopeName,
+                                                        const std::string& className,
+                                                        const std::string& variableName) const {
+    if (!scopeName.empty()) {
+        auto it = pointerDecisions.find(buildKey(scopeName, className, variableName));
+        if (it != pointerDecisions.end()) return it->second;
+    }
+    return getPointerType(className, variableName);
+}
+
 PointerType SmartPointerAnalyzer::getPointerTypeForVariable(const std::string& variableName) const {
     const std::string suffix = "." + variableName;
     bool found = false;
@@ -986,10 +996,16 @@ void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& progr
     // shared_ptr -- a real return-type mismatch confirmed via probe before
     // this pass was pulled out into its own, later-running function.
     std::set<std::string> aliasReturningFreeFunctions;
+    // Iterated to a fixed point: a function that forwards `return other(...)` is classified from
+    // `other`, which may be defined later in the file or classified by an earlier pass
+    // (promoteReturnsOfSharedLocals marks a free function that returns a shared local).
+    for (bool changed = true; changed;) {
+    changed = false;
     for (const auto& stmt : program.statements) {
         auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get());
         if (fn == nullptr) continue;
         if (classNames.find(fn->returnType) == classNames.end()) continue;
+        if (aliasReturningFreeFunctions.count(fn->name) > 0) continue;
 
         std::vector<const Expression*> returns;
         collectReturnExpressions(fn->body, returns);
@@ -1028,13 +1044,18 @@ void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& progr
                 calledName = call->function_name;
             }
             if (calledClass.empty()) {
-                if (aliasReturningFreeFunctions.count(calledName) == 0) { allAliasCalls = false; break; }
+                if (aliasReturningFreeFunctions.count(calledName) == 0 &&
+                    getMethodReturnPointerType("", calledName) != PointerType::SHARED) {
+                    allAliasCalls = false;
+                    break;
+                }
             } else if (getMethodReturnPointerType(calledClass, calledName) != PointerType::SHARED) {
                 allAliasCalls = false;
                 break;
             }
         }
         if (allAliasCalls) {
+            changed = true;
             aliasReturningFreeFunctions.insert(fn->name);
             methodReturnKinds_[makeMemberKey("", fn->name)] = PointerType::SHARED;
             // Dual-register under the QUALIFIED name too (`YAML::Load`) --
@@ -1052,6 +1073,7 @@ void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& progr
                     PointerType::SHARED;
             }
         }
+    }
     }
 }
 
@@ -1206,16 +1228,20 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
 void SmartPointerAnalyzer::promoteParamsStoredInSharedFields(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
-            promoteParamsInBody(fn->body, "", fn->parameters);
+            promoteParamsInBody(fn->body, "", fn->parameters, fn->name);
+            continue;
+        }
+        if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
+            promoteParamsInBody(mn->body, "", {}, "main");
             continue;
         }
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
         if (cls == nullptr) continue;
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                promoteParamsInBody(method->body, cls->name, method->parameters);
+                promoteParamsInBody(method->body, cls->name, method->parameters, cls->name + "::" + method->name);
             } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
-                promoteParamsInBody(ctor->body, cls->name, ctor->parameters);
+                promoteParamsInBody(ctor->body, cls->name, ctor->parameters, cls->name + "::" + ctor->name);
             }
         }
     }
@@ -1223,7 +1249,8 @@ void SmartPointerAnalyzer::promoteParamsStoredInSharedFields(const Program& prog
 
 void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& body,
                                                const std::string& className,
-                                               const std::vector<std::pair<std::string, std::string>>& params) {
+                                               const std::vector<std::pair<std::string, std::string>>& params,
+                                               const std::string& scope) {
     // Only the unconditional, direct, single-hop case is promoted this slice: a
     // top-level `field = param;` (bare identifier target naming a field of
     // `className`, or a `this`-qualified member-access target -- CeeLing has no
@@ -1324,10 +1351,13 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
         auto rhsId = dynamic_cast<const Identifier*>(assign->expression.get());
         if (rhsId == nullptr) continue;
 
-        // RHS must be exactly one of this body's own parameters.
+        // RHS must be one of this body's own parameters, or (when the field is already shared) a
+        // local declared in it -- a local stored into a shared field must itself be shared, or the
+        // emitted `field = local` assigns a unique_ptr lvalue to a shared_ptr.
         const bool rhsIsParam = std::any_of(params.begin(), params.end(),
             [&](const auto& p) { return p.second == rhsId->name; });
-        if (!rhsIsParam) continue;
+        const bool rhsIsLocal = !rhsIsParam && localTypes.count(rhsId->name) > 0;
+        if (!rhsIsParam && !rhsIsLocal) continue;
 
         // The field's own declared type (registered by analyzeVariableDeclaration
         // when the class body was first walked) tells us which (class, name) pair
@@ -1335,10 +1365,17 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
         const auto fieldTypeIt = symbolTypesByScope.find(makeSymbolKey(fieldOwner, fieldName));
         if (fieldTypeIt == symbolTypesByScope.end()) continue;
 
-        auto paramTypeIt = std::find_if(params.begin(), params.end(),
-            [&](const auto& p) { return p.second == rhsId->name; });
-        if (paramTypeIt == params.end()) continue;
+        std::pair<std::string, std::string> paramTypeEntry;
+        if (rhsIsParam) {
+            auto pit = std::find_if(params.begin(), params.end(),
+                [&](const auto& p) { return p.second == rhsId->name; });
+            paramTypeEntry = *pit;
+        } else {
+            paramTypeEntry = {localTypes[rhsId->name], rhsId->name};
+        }
+        auto paramTypeIt = &paramTypeEntry;
         if (classNames.find(paramTypeIt->first) == classNames.end()) continue;
+        if (rhsIsLocal && getPointerType(fieldTypeIt->second, fieldName) != PointerType::SHARED) continue;
 
         if (getPointerType(fieldTypeIt->second, fieldName) != PointerType::SHARED) {
             // The field was NOT already decided SHARED by anything -- most
@@ -1408,7 +1445,8 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
         // registerParameters already gave every object-typed parameter a bare
         // variableReferences entry to promote here.
         for (auto& [key, ref] : variableReferences) {
-            if (ref.className == paramTypeIt->first && ref.variableName == rhsId->name) {
+            if (ref.className == paramTypeIt->first && ref.variableName == rhsId->name &&
+                (rhsIsParam || ref.containingScope == normalizeScope(scope))) {
                 pointerDecisions[key] = PointerType::SHARED;
                 pointerReasons[key] = "parameter is stored into an already-shared field";
                 ref.reason = pointerReasons[key];

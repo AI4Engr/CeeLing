@@ -53,6 +53,15 @@ public:
     // Two-pass analysis
     void analyzeProgram(const Program& program, const std::string& source = "");
     PointerType getPointerType(const std::string& className, const std::string& variableName) const;
+    // Scope-aware variant of getPointerType: the decision recorded for exactly this
+    // (enclosing function/method, class, name) triple when there is one, else the merged
+    // getPointerType answer. getPointerType merges EVERY same-named variable of the same class
+    // across the whole program and answers SHARED when they disagree, so a function whose local
+    // `item` is unique got a shared declaration just because another function's `item` is shared
+    // -- while its return type, decided per function, stayed unique. The scope string is the one
+    // analyzeStatement uses: a free function's name, "main", or "Class::method".
+    PointerType getPointerTypeInScope(const std::string& scopeName, const std::string& className,
+                                      const std::string& variableName) const;
     PointerType getPointerTypeForVariable(const std::string& variableName) const;
     // Scoped variant of getPointerTypeForVariable: only matches pointerDecisions
     // entries recorded under `scopeName` (a function/method name, matching
@@ -244,7 +253,8 @@ private:
     // iteration -- see .cpp for the documented limitation this leaves).
     void promoteParamsStoredInSharedFields(const Program& program);
     void promoteParamsInBody(const std::vector<StatementPtr>& body, const std::string& className,
-                             const std::vector<std::pair<std::string, std::string>>& params);
+                             const std::vector<std::pair<std::string, std::string>>& params,
+                             const std::string& scope);
 
     // A call-site argument bound to a parameter that sub-pass 1 promoted to SHARED
     // must itself become SHARED (otherwise the caller's local is still emitted as

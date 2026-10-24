@@ -1045,6 +1045,15 @@ AstEmitter::VarKind AstEmitter::kindOf(const std::string& name) const {
     return it == varKinds_.end() ? VarKind::Value : it->second;
 }
 
+std::string AstEmitter::scopeKeyFor(const std::string& ownerClass, const std::string& name,
+                                    const std::string& methodName) {
+    std::string bare = methodName.empty() ? name : methodName;
+    if (ownerClass.empty()) return bare;
+    const auto pos = bare.rfind("::");
+    if (pos != std::string::npos) bare = bare.substr(pos + 2);
+    return ownerClass + "::" + bare;
+}
+
 std::string AstEmitter::smartPointerType(const std::string& className,
                                          const std::string& varName) const {
     // `className` is passed through VERBATIM to SmartPointerAnalyzer -- do not
@@ -1056,7 +1065,7 @@ std::string AstEmitter::smartPointerType(const std::string& className,
     // up a DIFFERENT (nonexistent) registration and silently fall through to
     // getPointerType's raw SHARED default -- confirmed as a real bug this way (a
     // never-shared namespaced local got shared_ptr instead of unique_ptr).
-    switch (analyzer_.getPointerType(className, varName)) {
+    switch (analyzer_.getPointerTypeInScope(currentScope_, className, varName)) {
         case PointerType::UNIQUE: return "std::unique_ptr";
         case PointerType::WEAK:   return "std::weak_ptr";
         default:                  return "std::shared_ptr";
@@ -1534,6 +1543,8 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
     // p->parseDocument(); }`-shaped code (yaml-cling's YAML::Load), which is
     // exactly as alias-returning as any class method but has no owner class
     // to key by.
+    const std::string savedScope = currentScope_;
+    currentScope_ = scopeKeyFor(ownerClass, name, methodName);
     currentMethodReturnsShared_ = !methodName.empty() &&
         analyzer_.getMethodReturnPointerType(ownerClass, methodName) == PointerType::SHARED;
     currentMethodReturnsValueType_ = isValueType(returnType);
@@ -1665,6 +1676,7 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
     sig += ")";
     if (isConst) sig += " const";
     if (isOverride) sig += " override";
+    currentScope_ = savedScope;
     return sig;
 }
 
@@ -1685,6 +1697,8 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     const bool savedReturnsShared = currentMethodReturnsShared_;
     const bool savedReturnsValueType = currentMethodReturnsValueType_;
     const std::string savedFunctionName = currentFunctionName_;
+    const std::string savedBodyScope = currentScope_;
+    currentScope_ = scopeKeyFor(ownerClass, name, methodName);
     const std::set<std::string> savedParamNames = currentParamNames_;
     currentFunctionName_ = methodName.empty() ? name : methodName;
     currentParamNames_.clear();
@@ -1749,6 +1763,7 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     currentMethodReturnsShared_ = savedReturnsShared;
     currentMethodReturnsValueType_ = savedReturnsValueType;
     currentFunctionName_ = savedFunctionName;
+    currentScope_ = savedBodyScope;
     currentParamNames_ = savedParamNames;
 }
 
@@ -1784,7 +1799,7 @@ std::string AstEmitter::emitMovedArg(const Expression* arg,
             // violate that). Emit a plain copy instead -- cheap (a refcount bump),
             // and the only way "b stays usable after a.attach(b)" is actually true
             // in the generated code, not just in DanglingChecker's model.
-            if (analyzer_.getPointerType(it->second, id->name) == PointerType::SHARED) {
+            if (analyzer_.getPointerTypeInScope(currentScope_, it->second, id->name) == PointerType::SHARED) {
                 return id->name;
             }
             return "std::move(" + id->name + ")";
@@ -2758,7 +2773,7 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
                 auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
                 const std::string argClass = argId ? exprObjectClass(argId) : std::string{};
                 const bool argIsShared = !argClass.empty() &&
-                    analyzer_.getPointerType(argClass, argId->name) == PointerType::SHARED;
+                    analyzer_.getPointerTypeInScope(currentScope_, argClass, argId->name) == PointerType::SHARED;
                 if (elementIsShared && argIsShared) {
                     s += emitExpression(call->arguments[i].get());  // share: plain copy
                 } else if (elementIsShared) {

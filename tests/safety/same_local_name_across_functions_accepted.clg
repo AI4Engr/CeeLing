@@ -1,0 +1,43 @@
+//@ expect: accept
+//@ run: 1 2 5
+//@ reason: pointer kinds were looked up by (class, variable NAME) across the whole program and
+//@ reason: disagreement answered SHARED, while a function's return type is decided per function.
+//@ reason: Two functions each with a local called `item` -- one returned fresh, one stored in a
+//@ reason: field (so shared) -- gave the first a shared_ptr local in a unique_ptr-returning function:
+//@ reason: a C++ compile error. Lookups are now scope-aware. Also: a function that only forwards
+//@ reason: `return other(...)` of a shared-returning function is itself shared-returning, whatever
+//@ reason: the definition order.
+
+class Item {
+public:
+    Item child;
+    int v;
+    Item(int x) { v = x; }
+};
+
+Item makeOne() {
+    Item item = new Item(1);
+    return item;
+}
+
+void attach(Item parent, int x) {
+    Item item = new Item(x);
+    parent.child = item;
+}
+
+Item findChild(Item parent) {
+    Item c = parent.child;
+    return c;
+}
+
+Item findAgain(Item parent) {
+    return findChild(parent);
+}
+
+int main() {
+    Item a = makeOne();
+    attach(a, 2);
+    Item c = findAgain(a);
+    std::cout << a.v << " " << c.v << " " << 5 << std::endl;
+    return 0;
+}

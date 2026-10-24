@@ -52,15 +52,15 @@ std::vector<DanglingError> DanglingChecker::check(const Program& program, const 
     // Each top-level function / main / method body is analyzed independently.
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
-            checkBody(fn->body, fn->parameters, "");
+            checkBody(fn->body, fn->parameters, "", fn->name);
         } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
-            checkBody(mn->body, {}, "");
+            checkBody(mn->body, {}, "", "main");
         } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
             for (const auto& member : cls->members) {
                 if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                    checkBody(method->body, method->parameters, cls->name);
+                    checkBody(method->body, method->parameters, cls->name, cls->name + "::" + method->name);
                 } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
-                    checkBody(ctor->body, ctor->parameters, cls->name);
+                    checkBody(ctor->body, ctor->parameters, cls->name, cls->name + "::" + ctor->name);
                 }
             }
         }
@@ -626,7 +626,7 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
             const bool elementIsShared = analyzer_ != nullptr &&
                 analyzer_->containerElementIsShared(receiverName);
             const bool argIsShared = analyzer_ != nullptr && !argName.empty() &&
-                analyzer_->getPointerType(localType_.count(argName) ? localType_.at(argName) : "",
+                analyzer_->getPointerTypeInScope(currentScope_, localType_.count(argName) ? localType_.at(argName) : "",
                                           argName) == PointerType::SHARED;
             if (elementIsShared && argIsShared) {
                 continue;  // shares -- the argument stays a live owner
@@ -660,7 +660,7 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
         const std::string argName = asObjectLocalName(call->arguments[i].get());
         const std::string argType = localType_.count(argName) ? localType_.at(argName) : "";
         if (analyzer_ != nullptr && !argName.empty() && classNames_.count(argType) > 0 &&
-            analyzer_->getPointerType(argType, argName) == PointerType::SHARED) {
+            analyzer_->getPointerTypeInScope(currentScope_, argType, argName) == PointerType::SHARED) {
             continue;
         }
 
@@ -793,7 +793,7 @@ void DanglingChecker::checkExpressionUses(const Expression* expr) {
 
 void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
                                  const std::vector<std::pair<std::string, std::string>>& params,
-                                 const std::string& ownerClass) {
+                                 const std::string& ownerClass, const std::string& scope) {
     objectLocals_.clear();
     localType_.clear();
     movedFrom_.clear();
@@ -803,6 +803,7 @@ void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
     aliasObservers_.clear();
     loopStack_.clear();
     currentClass_ = ownerClass;
+    currentScope_ = scope;
 
     // Parameters are always-moved-into owners (CeeLing bans `ref` parameters), so an
     // object-typed parameter participates in move tracking exactly like a local
