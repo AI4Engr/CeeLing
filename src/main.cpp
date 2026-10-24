@@ -170,6 +170,7 @@ void showUsage(const char* programName) {
     std::cout << "  --cpp <output>  - Compile to C++ and save to <output> file" << std::endl;
     std::cout << "  --no-bounds-checks - Do not insert runtime bounds checks on v[i] / s[i]" << std::endl;
     std::cout << "  --no-null-checks   - Do not insert runtime null checks on object-handle dereferences" << std::endl;
+    std::cout << "  --pool-shared      - Allocate shared objects from a per-thread free list (faster node-heavy code)" << std::endl;
     std::cout << "  --legacy-cpp    - Use the legacy regex/text-substitution generator" << std::endl;
     std::cout << "                    instead of the default AST-driven generator" << std::endl;
     std::cout << "  --help         - Show this help message" << std::endl;
@@ -218,6 +219,7 @@ int main(int argc, char* argv[]) {
     // Runtime bounds checks on v[i] / s[i] are on by default; --no-bounds-checks turns them off.
     bool boundsChecks = true;
     bool nullChecks = true;
+    bool poolShared = false;
 
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
@@ -228,6 +230,8 @@ int main(int argc, char* argv[]) {
             boundsChecks = false;
         } else if (arg == "--no-null-checks") {
             nullChecks = false;
+        } else if (arg == "--pool-shared") {
+            poolShared = true;
         } else if (arg == "--legacy-cpp") {
             useLegacyGenerator = true;
         } else if (arg == "--cpp") {
@@ -440,6 +444,7 @@ int main(int argc, char* argv[]) {
             AstEmitter emitter(analyzer);
             emitter.setBoundsChecks(boundsChecks);
             emitter.setNullChecks(nullChecks);
+            emitter.setPoolShared(poolShared);
             cppCode = emitter.emit(*program);
         }
         cppCode = rewriteClhIncludes(cppCode);

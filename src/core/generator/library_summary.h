@@ -284,6 +284,8 @@ std::string copyWithinHelperDefinition();
 // line instead of dereferencing null. Emitted only into files that declare a weak field.
 // abort(), not throw: a thrown error could be swallowed by a `catch (string e)` in user code,
 // and the whole point of this check is that it cannot be silently ignored.
+// Emitted by --pool-shared: a per-thread free-list allocator used through std::allocate_shared.
+std::string poolAllocatorHelperDefinition();
 std::string nullCheckHelperDefinition();
 
 // Runtime bounds check for `v[i]` / `s[i]` on std::vector and std::string (cling::at). An index

@@ -49,6 +49,8 @@ public:
     void setBoundsChecks(bool on) { boundsChecks_ = on; }
     // Runtime null checks on every dereference of an object handle (`--no-null-checks` turns them off).
     void setNullChecks(bool on) { nullChecks_ = on; }
+    // Allocate shared objects from a per-thread free list instead of malloc (`--pool-shared`).
+    void setPoolShared(bool on) { poolShared_ = on; }
 
     // Emit a full translation unit for the program.
     std::string emit(const Program& program);
@@ -355,6 +357,9 @@ private:
     // pre-scan when the program contains any subscript, so the helper is emitted only when needed.
     bool boundsChecks_ = true;
     bool nullChecks_ = true;
+    bool poolShared_ = false;
+    // `std::make_shared<T>(args)`, or its pooled form when --pool-shared is on.
+    std::string sharedConstruct(const std::string& cls, const std::string& args) const;
     // `obj` is about to be dereferenced with `->`: wrap its text in cling::nn(...) when null checks
     // are on. `this` and an already-wrapped weak read need nothing.
     std::string checkedDeref(const Expression* obj, const std::string& text, int line) const;

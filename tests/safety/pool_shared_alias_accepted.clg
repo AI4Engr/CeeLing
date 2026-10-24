@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ flags: --pool-shared
+//@ run: ok
+//@ reason: --pool-shared with aliased shared handles (`d = c`): a block returns to the free list only when the
+//@ reason: LAST handle goes, and the next allocation reuses it. Single-threaded; the per-thread free lists are
+//@ reason: what makes concurrent use of separate trees safe, but CeeLing has no thread API to test that with.
+
+class Cell {
+public:
+    int v;
+    Cell(int x) { v = x; }
+};
+
+int main() {
+    int total = 0;
+    int round = 0;
+    while (round < 3) {
+        Cell c = new Cell(round);
+        Cell d = c;
+        total = total + d.v;
+        round = round + 1;
+    }
+    if (total == 3) {
+        std::cout << "ok" << std::endl;
+    }
+    return 0;
+}

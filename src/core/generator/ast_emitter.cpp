@@ -67,6 +67,9 @@ std::string AstEmitter::emit(const Program& program) {
     if (usesCopyWithin_) {
         out << copyWithinHelperDefinition() << "\n";
     }
+    if (poolShared_) {
+        out << poolAllocatorHelperDefinition() << "\n";
+    }
     if (usesNullCheck_ || (nullChecks_ && !classNames_.empty())) {
         out << nullCheckHelperDefinition() << "\n";
     }
@@ -1052,6 +1055,12 @@ std::string AstEmitter::checkedDeref(const Expression* obj, const std::string& t
     return "cling::nn(" + text + ", \"line " + std::to_string(line) + "\")";
 }
 
+std::string AstEmitter::sharedConstruct(const std::string& cls, const std::string& args) const {
+    if (!poolShared_) return "std::make_shared<" + cls + ">(" + args + ")";
+    return "std::allocate_shared<" + cls + ">(cling::PoolAllocator<" + cls + ">()" +
+           (args.empty() ? std::string() : ", " + args) + ")";
+}
+
 std::string AstEmitter::scopeKeyFor(const std::string& ownerClass, const std::string& name,
                                     const std::string& methodName) {
     std::string bare = methodName.empty() ? name : methodName;
@@ -1091,14 +1100,13 @@ std::string AstEmitter::factoryFor(const std::string& className, const std::stri
     // non-inheriting programs are unaffected.
     const std::string kindType = declaredType.empty() ? className : declaredType;
     const std::string ptr = smartPointerType(kindType, varName);
-    const std::string factory = (ptr == "std::unique_ptr") ? "std::make_unique" : "std::make_shared";
-    std::string s = factory + "<" + className + ">(";
+    std::string argText;
     for (size_t i = 0; i < args.size(); ++i) {
-        if (i > 0) s += ", ";
-        s += emitExpression(args[i].get());
+        if (i > 0) argText += ", ";
+        argText += emitExpression(args[i].get());
     }
-    s += ")";
-    return s;
+    if (ptr == "std::unique_ptr") return "std::make_unique<" + className + ">(" + argText + ")";
+    return sharedConstruct(className, argText);
 }
 
 // ---- top level -----------------------------------------------------------
@@ -2576,13 +2584,12 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             s += ")";
             return s;
         }
-        std::string s = "std::make_shared<" + neww->className + ">(";
+        std::string argText;
         for (size_t i = 0; i < neww->arguments.size(); ++i) {
-            if (i > 0) s += ", ";
-            s += emitExpression(neww->arguments[i].get());
+            if (i > 0) argText += ", ";
+            argText += emitExpression(neww->arguments[i].get());
         }
-        s += ")";
-        return s;
+        return sharedConstruct(neww->className, argText);
     }
     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
         // `int(x)` / `double(x)` / `char(x)` / `byte(x)` / `int64(x)` / `float(x)`: a primitive
@@ -2770,14 +2777,13 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
                 if (auto neww = dynamic_cast<const NewExpression*>(call->arguments[i].get())) {
                     // A bare `new T(...)` argument has no variable of its own --
                     // use the container's decided element pointer kind directly.
-                    const std::string factory = elementIsShared ? "std::make_shared<" : "std::make_unique<";
-                    std::string arg = factory + neww->className + ">(";
+                    std::string argText;
                     for (size_t j = 0; j < neww->arguments.size(); ++j) {
-                        if (j > 0) arg += ", ";
-                        arg += emitExpression(neww->arguments[j].get());
+                        if (j > 0) argText += ", ";
+                        argText += emitExpression(neww->arguments[j].get());
                     }
-                    arg += ")";
-                    s += arg;
+                    s += elementIsShared ? sharedConstruct(neww->className, argText)
+                                         : "std::make_unique<" + neww->className + ">(" + argText + ")";
                     continue;
                 }
                 auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());

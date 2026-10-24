@@ -328,6 +328,63 @@ std::string boundsCheckHelperDefinition() {
         "#endif\n";
 }
 
+std::string poolAllocatorHelperDefinition() {
+    // A free-list allocator for the control-block-plus-object that std::allocate_shared requests.
+    // Blocks of one size share one free list PER THREAD (two threads building their own trees cannot
+    // corrupt each other; a block freed on another thread simply joins that thread's list). The list
+    // head is a plain pointer, so there is no destructor to run at thread or process exit while
+    // objects are still being released. Chunks are never returned to the system: the point is that a
+    // node costs a pointer pop instead of a malloc.
+    return
+        "#ifndef CLING_POOL_DEFINED\n"
+        "#define CLING_POOL_DEFINED\n"
+        "#include <cstddef>\n"
+        "#include <memory>\n"
+        "#include <new>\n"
+        "namespace cling {\n"
+        "struct PoolNode { PoolNode* next; };\n"
+        "template <std::size_t Size>\n"
+        "struct PoolFor {\n"
+        "    static constexpr std::size_t kAlign = alignof(std::max_align_t);\n"
+        "    static constexpr std::size_t kRaw = Size < sizeof(PoolNode) ? sizeof(PoolNode) : Size;\n"
+        "    static constexpr std::size_t kBlock = (kRaw + kAlign - 1) / kAlign * kAlign;\n"
+        "    static inline thread_local PoolNode* head = nullptr;\n"
+        "    static void* take() {\n"
+        "        if (head != nullptr) { PoolNode* n = head; head = n->next; return n; }\n"
+        "        return refill();\n"
+        "    }\n"
+        "    static void* refill() {\n"
+        "        constexpr std::size_t kPer = 65536 / kBlock > 0 ? 65536 / kBlock : 1;\n"
+        "        char* chunk = static_cast<char*>(::operator new(kPer * kBlock));\n"
+        "        for (std::size_t i = kPer; i-- > 1;) {\n"
+        "            PoolNode* n = reinterpret_cast<PoolNode*>(chunk + i * kBlock);\n"
+        "            n->next = head;\n"
+        "            head = n;\n"
+        "        }\n"
+        "        return chunk;\n"
+        "    }\n"
+        "    static void give(void* p) noexcept { PoolNode* n = static_cast<PoolNode*>(p); n->next = head; head = n; }\n"
+        "};\n"
+        "template <class T>\n"
+        "struct PoolAllocator {\n"
+        "    using value_type = T;\n"
+        "    PoolAllocator() noexcept = default;\n"
+        "    template <class U> PoolAllocator(const PoolAllocator<U>&) noexcept {}\n"
+        "    T* allocate(std::size_t n) {\n"
+        "        if (n == 1 && alignof(T) <= alignof(std::max_align_t)) return static_cast<T*>(PoolFor<sizeof(T)>::take());\n"
+        "        return static_cast<T*>(::operator new(n * sizeof(T)));\n"
+        "    }\n"
+        "    void deallocate(T* p, std::size_t n) noexcept {\n"
+        "        if (n == 1 && alignof(T) <= alignof(std::max_align_t)) PoolFor<sizeof(T)>::give(p);\n"
+        "        else ::operator delete(p);\n"
+        "    }\n"
+        "};\n"
+        "template <class A, class B> bool operator==(const PoolAllocator<A>&, const PoolAllocator<B>&) noexcept { return true; }\n"
+        "template <class A, class B> bool operator!=(const PoolAllocator<A>&, const PoolAllocator<B>&) noexcept { return false; }\n"
+        "} // namespace cling\n"
+        "#endif\n";
+}
+
 std::string nullCheckHelperDefinition() {
     // cling::nn(p, where) passes p through unchanged when it is non-null, otherwise reports `where`
     // (the .clg file:line of the dereference) on stderr and aborts. A forwarding reference in and

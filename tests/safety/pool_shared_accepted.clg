@@ -1,0 +1,44 @@
+//@ expect: accept
+//@ flags: --pool-shared
+//@ run: 1000 499500 1 7
+//@ reason: with --pool-shared every shared object comes from a per-thread free list. Create and drop
+//@ reason: 1000 nodes twice (the second round reuses the first round's blocks and must not see stale
+//@ reason: contents), keep a node alive through a weak back-link while its owner is replaced, and read it.
+
+class Node {
+public:
+    Node next;
+    //@ptr weak Node.prev
+    Node prev;
+    int v;
+    Node(int x) { v = x; next = nullptr; prev = nullptr; }
+};
+
+int build(int n) {
+    Node head = new Node(0);
+    Node cur = head;
+    int i = 1;
+    int sum = 0;
+    while (i < n) {
+        Node nd = new Node(i);
+        cur.next = nd;
+        nd.prev = cur;
+        cur = nd;
+        sum = sum + i;
+        i = i + 1;
+    }
+    return sum;
+}
+
+int main() {
+    int first = build(1000);
+    int second = build(1000);
+    Node a = new Node(7);
+    Node b = new Node(8);
+    a.next = b;
+    b.prev = a;
+    b = nullptr;
+    a.next = nullptr;
+    std::cout << 1000 << " " << first + second - 499500 << " " << (a.next == nullptr) + 0 << " " << a.v << std::endl;
+    return 0;
+}

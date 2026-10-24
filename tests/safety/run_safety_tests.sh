@@ -91,7 +91,9 @@ run_one_fixture() {
     gen="$TMP_OUT/${name%.clg}.cpp"
     exe="$TMP_OUT/${name%.clg}.exe"
 
-    "$CLING" "$fx" --cpp "$gen" >/dev/null 2>&1
+    # optional per-fixture compiler flags: `//@ flags: --pool-shared`
+    fx_flags="$(grep -m1 '^//@ flags:' "$fx" | sed 's|^//@ flags: *||' | tr -d '')"
+    "$CLING" $fx_flags "$fx" --cpp "$gen" >/dev/null 2>&1
     code=$?
     # A crash of the compiler itself (signal: exit code >= 128) is neither an accept nor a reject. It used
     # to count as a "reject" and could silently satisfy an `expect: reject` fixture.
