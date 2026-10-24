@@ -105,7 +105,7 @@ bool isStringType(const std::string& type) {
 
 bool isKnownStringMethod(const std::string& methodName) {
     static const std::set<std::string> kKnown = {
-        "length", "size", "empty", "substr", "find", "append", "clear"};
+        "length", "size", "empty", "substr", "find", "append", "clear", "push_back", "reserve"};
     return kKnown.count(methodName) > 0;
 }
 

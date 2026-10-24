@@ -1,0 +1,16 @@
+//@ expect: accept
+//@ run: abcdexx 7
+//@ reason: string.push_back(char) and reserve are allowed. Building a string with `s = s + c` copies
+//@ reason: the whole string on every character (quadratic); push_back appends in place, which the
+//@ reason: cjson-cling parser and printer rely on.
+
+int main() {
+    string s = "ab";
+    s.reserve(16);
+    s.push_back('c');
+    s.push_back(char(100));
+    s.append("e");
+    s.append(2, 'x');
+    std::cout << s << " " << s.length() << std::endl;
+    return 0;
+}
