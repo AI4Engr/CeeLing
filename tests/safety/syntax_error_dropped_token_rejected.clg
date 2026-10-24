@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ reason: a syntax error that tree-sitter's error recovery used to hide: `0x10` lexes as the number 0
+//@ reason: followed by an identifier `x10`, which recovery dropped, so `int n = 0x10;` compiled as
+//@ reason: `int n = 0;` with no diagnostic. Any ERROR or MISSING node now fails the compile.
+
+int main() {
+    int n = 0x10;
+    std::cout << n << std::endl;
+    return 0;
+}

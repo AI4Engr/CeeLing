@@ -93,6 +93,13 @@ run_one_fixture() {
 
     "$CLING" "$fx" --cpp "$gen" >/dev/null 2>&1
     code=$?
+    # A crash of the compiler itself (signal: exit code >= 128) is neither an accept nor a reject. It used
+    # to count as a "reject" and could silently satisfy an `expect: reject` fixture.
+    if [ "$code" -ge 128 ]; then
+        printf '%-48s %-8s %s\n' "$name" "$expect" "FAIL (compiler crashed, exit $code)" > "$report_file"
+        echo FAIL > "$status_file"
+        return 0
+    fi
     if [ "$code" -eq 0 ]; then actual="accept"; else actual="reject"; fi
 
     if [ "$actual" = "$expect" ]; then

@@ -129,6 +129,32 @@ ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
     }
 
     TSNode root_node = ts_tree_root_node(tree);
+    // Tree-sitter recovers from a syntax error by dropping or inventing tokens, and the builder below
+    // then builds from what is left -- `double x = 1.0e30;` used to compile as `double x = 1.0;`. Any
+    // ERROR or MISSING node anywhere in the tree is a syntax error, reported at its first occurrence.
+    if (ts_node_has_error(root_node)) {
+        std::vector<TSNode> pending{root_node};
+        TSNode firstBad{};
+        bool found = false;
+        while (!pending.empty() && !found) {
+            TSNode n = pending.back();
+            pending.pop_back();
+            if (strcmp(ts_node_type(n), "ERROR") == 0 || ts_node_is_missing(n)) {
+                firstBad = n;
+                found = true;
+                break;
+            }
+            if (!ts_node_has_error(n)) continue;
+            // children pushed in reverse so the earliest one is examined first
+            for (int64_t i = static_cast<int64_t>(ts_node_child_count(n)) - 1; i >= 0; --i) {
+                pending.push_back(ts_node_child(n, static_cast<uint32_t>(i)));
+            }
+        }
+        // the message is built BEFORE the tree is freed: the node points into it
+        const std::string message = found ? makeNodeError("Syntax error", firstBad, source) : std::string("Syntax error");
+        ts_tree_delete(tree);
+        throw std::runtime_error(message);
+    }
     bool hasStructuralAnchor = false;
     bool hasUnresolvedTopLevel = false;
     TSNode firstUnresolvedNode{};

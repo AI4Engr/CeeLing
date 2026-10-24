@@ -1,0 +1,13 @@
+//@ expect: accept
+//@ run: 1e+30 0.0025 100000 0.5
+//@ reason: decimal literals with an exponent (1.0e30, 2.5E-3, 1e5, 5e-1). Before, the lexer stopped at
+//@ reason: the `e` and tree-sitter's error recovery silently dropped the rest: 1.0e30 compiled as 1.0.
+
+int main() {
+    double big = 1.0e30;
+    double small = 2.5E-3;
+    double hundredK = 1e5;
+    double half = 5e-1;
+    std::cout << big << " " << small << " " << int(hundredK) << " " << half << std::endl;
+    return 0;
+}

@@ -807,6 +807,7 @@ module.exports = grammar({
     ),
 
     identifier: $ => /[a-zA-Z_][a-zA-Z0-9_]*/,
-    number: $ => /\d+(\.\d+)?/
+    // decimal digits, optional fraction, optional exponent: 7, 0.25, 1.0e30, 2.5E-3, 1e5
+    number: $ => /\d+(\.\d+)?([eE][+-]?\d+)?/
   }
 });
