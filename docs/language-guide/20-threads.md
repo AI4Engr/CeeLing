@@ -134,16 +134,40 @@ error: the `spawn` body uses `hidden`, which belongs to the enclosing scope but 
 The first three print as `error[semantic/spawn-captures-object]`; the fourth is the ordinary
 `semantic/use-after-move`; the last is `semantic/spawn-uncaptured-name`.
 
-The fixtures are `tests/safety/spawn_*.clg` (27 of them; 6 accepted, with `//@ run:` where the
+The fixtures are `tests/safety/spawn_*.clg` (35 of them; 9 accepted, with `//@ run:` where the
 claim is a runtime property such as "the worker really got a copy" or "a throwing job does not
 abort the process").
 
 ## What the runtime does
 
-`cling::spawn` is a small helper emitted into the generated file. It starts one `std::thread`
-per job and keeps the threads in a registry that is **joined when the process exits**, so a job
-cannot be lost by `main` returning. A job that throws is reported on stderr and its thread ends;
-the exception never reaches `std::terminate`. Nothing is pooled and nothing is capped.
+`cling::spawn` is a small helper emitted into the generated file. Jobs run on a **capped worker pool**:
+a spawn puts its job in a first-in-first-out queue and returns at once (the spawning thread never
+blocks); worker threads are created lazily, only while jobs are waiting and the limit has not been
+reached. At most *limit* jobs run at the same time — by default the larger of 4 and the number of
+cores; `cling::setWorkerLimit(n)` or `-DCLING_MAX_WORKERS=n` changes it. The pool is **drained and
+joined when the process exits**, so a job cannot be lost by `main` returning (and a job that never
+ends hangs the exit).
+
+A job that throws never reaches `std::terminate`. What happens to the message depends on whether a
+failure handler exists:
+
+```
+// for this one spawn:
+spawn(closure Job [id] () { throw "boom"; },
+      closure Failure [id] (string message) { /* runs on the worker, gets "boom" */ });
+
+// or a default for the spawns that follow, from this thread:
+onJobFailure(closure Failure [id] (string message) { ... });
+spawn(closure Job [id] () { ... });          // inherits it
+cling::clearJobFailure();
+```
+
+`Failure` is any class whose one virtual method is `void fail(string message)`. The handler is held to
+the same capture rule as the job (plain values only) and runs on the worker thread. With no handler
+the message goes to stderr and the job simply ends. A handler that itself throws is reported on
+stderr, not rethrown. Remember to clear a default handler when its request is over: it belongs to
+the *thread*, so the next request handled on that thread would otherwise inherit it. app-cling's
+dispatcher does exactly this around every asynchronous command.
 
 ## A worked use: app-cling
 
@@ -167,9 +191,11 @@ code, outside the guarantee.
 
 ## How it was tested
 
-- **Compiler:** 27 `tests/safety/spawn_*` fixtures; the full safety suite is green (263).
-- **Real threads:** app-cling's 27 end-to-end tests start real workers: out-of-order replies,
-  50 concurrent jobs, a struct copied in (the main thread changes its own copy afterwards and the
+- **Compiler:** 35 `tests/safety/spawn_*` fixtures; the full safety suite is green (271).
+- **Real threads:** app-cling's 31 end-to-end tests start real workers: out-of-order replies,
+  50 concurrent jobs, a throwing job rejecting its promise, six 80 ms jobs under a limit of 2 (the
+  shim's gauge sees at most 2 inside at once, and a control run without the limit sees more, so the
+  check can fail), a struct copied in (the main thread changes its own copy afterwards and the
   worker still sees the original), an object moved in.
 - **Sanitizers:** the whole suite under AddressSanitizer + UndefinedBehaviorSanitizer and under
   ThreadSanitizer, with and without the pooled allocator: no reports.
@@ -191,9 +217,11 @@ copies, objects moved into it, and its own allocations, so there are no data rac
 - **Shared state outside CeeLing's memory:** files, sockets, the window.
 - **Deadlock and starvation.** There are no locks in the language, but a worker can block forever,
   and because exit joins every worker, that blocks exit.
-- **Number of threads.** One per `spawn`, no cap, no pool.
-- **A failed job leaves its caller waiting.** A throw ends the thread; if the job was meant to
-  answer a request, nothing does, unless the job catches its own error and replies.
+- **A job that blocks forever** holds one of the pool's slots; with a small limit, enough of them
+  starve every queued job behind them. The pool does not time jobs out.
+- **A failed job with no handler leaves its caller waiting.** A throw ends the job; if it was meant
+  to answer a request, nothing does. (app-cling installs a handler for you, so its page's promise is
+  rejected with `command_failed`.)
 - **Hidden state in a trusted type.** Objects are checked by their fields' types; a class built on
   a library type whose internals share state is not looked into.
 

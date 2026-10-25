@@ -1,0 +1,28 @@
+//@ expect: accept
+//@ reason: the optional second closure of spawn is a failure handler: when the job throws, the handler runs on the
+//@ reason: same worker thread and receives the thrown message, so a failed job can still answer whoever is waiting
+//@ reason: for it. Must be RUN: without the handler the message would only go to stderr and stdout stays empty.
+//@ reason: (Only the worker thread prints, so the output is deterministic.)
+//@ run: failed: boom 7
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+class Failure {
+public:
+    Failure() { }
+    virtual void fail(string message) { }
+};
+
+int main() {
+    int id = 7;
+    spawn(closure Job [id] () {
+        throw "boom";
+    }, closure Failure [id] (string message) {
+        std::cout << "failed: " << message << " " << id << std::endl;
+    });
+    return 0;
+}

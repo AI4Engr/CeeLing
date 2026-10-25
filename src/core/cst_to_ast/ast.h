@@ -46,6 +46,13 @@ public:
     // a definition that already exists in the included file's own .cpp/.clh (an ODR
     // violation at link time). See main.cpp's collectExternalDeclarations.
     bool isExternalDeclaration = false;
+
+    // The source file this top-level statement was parsed from (set by main.cpp for the primary file and for
+    // every #include'd sibling). Used to give synthesized names -- the classes closures desugar into -- a stem
+    // that is stable no matter which file is being compiled, so two files that both contain closures never
+    // generate the same class name (they used to: each counted from 0, and the merged declaration of the
+    // second silently collided with the first's definition at link time).
+    std::string originFile;
 };
 
 using StatementPtr = std::unique_ptr<Statement>;

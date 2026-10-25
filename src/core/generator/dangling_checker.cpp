@@ -616,7 +616,8 @@ std::string DanglingChecker::spawnObjectProblem(const std::string& type, const s
 }
 
 void DanglingChecker::checkSpawnCall(const FunctionCall* call) {
-    if (call->arguments.size() != 1) return;
+    if (call->arguments.empty() || call->arguments.size() > 2) return;
+    // arguments[1], when present, is the failure handler: plain values only, nothing to move or check here
     auto neww = dynamic_cast<const NewExpression*>(call->arguments[0].get());
     if (neww == nullptr) return;
     const ClassDeclaration* job = nullptr;

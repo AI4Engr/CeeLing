@@ -1,0 +1,34 @@
+//@ expect: accept
+//@ reason: `onJobFailure` registers a failure handler on the CALLING thread; every spawn made from it afterwards
+//@ reason: that has no handler of its own inherits it, so a framework can arrange the reply once per request instead
+//@ reason: of each job repeating it. `cling::clearJobFailure()` removes it. Must be RUN: the first job's failure is
+//@ reason: reported through the registered handler; the second job, spawned after clearing, only reaches stderr (which
+//@ reason: the runner does not capture), so exactly one line is printed on stdout.
+//@ run: handler saw: first failed (req 5)
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+class Failure {
+public:
+    Failure() { }
+    virtual void fail(string message) { }
+};
+
+int main() {
+    int request = 5;
+    onJobFailure(closure Failure [request] (string message) {
+        std::cout << "handler saw: " << message << " (req " << request << ")" << std::endl;
+    });
+    spawn(closure Job [request] () {
+        throw "first failed";
+    });
+    cling::clearJobFailure();
+    spawn(closure Job [request] () {
+        throw "second failed";
+    });
+    return 0;
+}

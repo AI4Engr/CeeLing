@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ reason: onJobFailure takes a closure LITERAL, for the same reason spawn does: only the capture list is checked for
+//@ reason: what crosses into the worker thread.
+
+class Failure {
+public:
+    Failure() { }
+    virtual void fail(string message) { }
+};
+
+int main() {
+    Failure f = new Failure();
+    onJobFailure(f);
+    return 0;
+}

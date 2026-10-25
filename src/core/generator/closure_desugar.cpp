@@ -122,7 +122,24 @@ void checkSignatureMatches(const ClosureExpression& closure, const MethodDeclara
     }
 }
 
-int g_closureCounter = 0;
+// Closure classes are named after the SOURCE FILE they came from plus a per-file counter, never a global one:
+// `__closure_app_0` is the first closure of app.clg whether app.clg is being compiled itself or merged into a
+// file that includes it, so the declaration in app.h and the definition in app.cpp always agree and a second
+// file's closures can never reuse the name.
+std::map<std::string, int> g_closureCounters;
+std::string g_currentOrigin;
+bool g_currentIsExternal = false;
+
+std::string originStem(const std::string& path) {
+    size_t slash = path.find_last_of("/\\");
+    std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    size_t dot = name.find_last_of('.');
+    if (dot != std::string::npos) name = name.substr(0, dot);
+    for (char& c : name) {
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) c = '_';
+    }
+    return name;
+}
 
 // Builds the synthesized class for one closure and returns it, along with the
 // NewExpression that replaces the closure at its use site. NESTING: a closure
@@ -260,7 +277,8 @@ void collectNamesInBody(const std::vector<StatementPtr>& body, std::set<std::str
 
 DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
                          const std::map<std::string, const ClassDeclaration*>& classesByName,
-                         std::vector<StatementPtr>& pendingClasses, bool isSpawn = false) {
+                         std::vector<StatementPtr>& pendingClasses, bool isSpawn = false,
+                         bool isHandler = false) {
     auto ifaceIt = classesByName.find(closure.interfaceName);
     if (ifaceIt == classesByName.end()) {
         reject("closure-unknown-interface", &closure,
@@ -273,7 +291,14 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
     const ClassDeclaration& iface = *ifaceIt->second;
     const MethodDeclaration* ifaceMethod = findSoleVirtualMethod(iface, closure);
     checkSignatureMatches(closure, *ifaceMethod, iface.name);
-    if (isSpawn && (ifaceMethod->returnType != "void" || !ifaceMethod->parameters.empty())) {
+    if (isHandler && (ifaceMethod->name != "fail" || ifaceMethod->returnType != "void" ||
+                      ifaceMethod->parameters.size() != 1 || ifaceMethod->parameters[0].first != "string")) {
+        reject("spawn-handler-shape", &closure,
+               "the failure handler of `spawn` needs an interface whose one virtual method is "
+               "`void fail(string message)` -- `" + iface.name + "::" + ifaceMethod->name + "` is not",
+               "the handler runs on the worker thread when the job throws, and receives the thrown message");
+    }
+    if (isSpawn && !isHandler && (ifaceMethod->returnType != "void" || !ifaceMethod->parameters.empty())) {
         reject("spawn-interface-shape", &closure,
                "`spawn` needs a closure whose interface method is `void run()` -- `" + iface.name + "::" +
                    ifaceMethod->name + "` is not",
@@ -318,7 +343,7 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
         // need it (and the rest of the object rules) run in DanglingChecker::checkSpawnCall. What can be
         // decided here is decided here: only a plain local of a class declared in this program qualifies.
         bool movableObject = false;
-        if (isSpawn) {
+        if (isSpawn && !isHandler) {
             auto clsIt = classesByName.find(entry->type);
             if (clsIt != classesByName.end() && !clsIt->second->isValueType &&
                 !clsIt->second->isExternalDeclaration) {
@@ -364,7 +389,9 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
         }
     }
 
-    const std::string closureClassName = "__closure_" + std::to_string(g_closureCounter++);
+    const std::string stem = originStem(g_currentOrigin);
+    const std::string closureClassName =
+        "__closure_" + (stem.empty() ? std::string() : stem + "_") + std::to_string(g_closureCounters[stem]++);
 
     // Fields: one VariableDeclaration per capture, matching how an ordinary
     // hand-written field is represented (buildMemberVariableDeclaration
@@ -439,7 +466,9 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
 
     auto closureClass = std::make_unique<ClassDeclaration>(closureClassName, std::move(members));
     closureClass->baseClass = closure.interfaceName;
-    closureClass->isSpawnJob = isSpawn;
+    closureClass->isSpawnJob = isSpawn && !isHandler;
+    closureClass->isExternalDeclaration = g_currentIsExternal;
+    closureClass->originFile = g_currentOrigin;
     closureClass->loc = closure.loc;
 
     std::vector<ExpressionPtr> ctorArgs;
@@ -472,18 +501,46 @@ void rewriteExpr(ExpressionPtr& expr, const ScopeStack& scope,
         return;
     }
     if (auto call = dynamic_cast<FunctionCall*>(expr.get())) {
+        if (call->callee == nullptr && call->function_name == "cling::setJobFailure") {
+            reject("spawn-reserved", call, "`cling::setJobFailure` is reserved for the compiler",
+                   "write `onJobFailure(closure Failure [values] (string message) { ... })` instead");
+        }
+        if (call->callee == nullptr && call->function_name == "onJobFailure") {
+            auto handler = call->arguments.size() == 1
+                ? dynamic_cast<ClosureExpression*>(call->arguments[0].get()) : nullptr;
+            if (handler == nullptr) {
+                reject("spawn-form", call, "`onJobFailure` takes exactly one closure literal",
+                       "write `onJobFailure(closure Failure [values] (string message) { ... })`");
+            }
+            if (g_spawnDepth > 0) {
+                reject("spawn-nested", call, "`onJobFailure` inside a `spawn` body",
+                       "register the failure handler from the thread that spawns, before the `spawn` call");
+            }
+            DesugarResult result = desugarOne(*handler, scope, classesByName, pendingClasses, true, true);
+            pendingClasses.push_back(std::move(result.closureClass));
+            std::vector<ExpressionPtr> args;
+            args.push_back(std::move(result.replacement));
+            auto replaced = std::make_unique<FunctionCall>("cling::setJobFailure", std::move(args));
+            replaced->loc = call->loc;
+            expr = std::move(replaced);
+            return;
+        }
         if (call->callee == nullptr && call->function_name == "cling::spawn") {
             reject("spawn-reserved", call, "`cling::spawn` is reserved for the compiler",
                    "write `spawn(closure Job [values] () { ... })` instead -- calling the runtime helper directly "
                    "would skip the check on what is captured");
         }
         if (call->callee == nullptr && call->function_name == "spawn") {
-            auto closure = call->arguments.size() == 1
+            auto closure = !call->arguments.empty() && call->arguments.size() <= 2
                 ? dynamic_cast<ClosureExpression*>(call->arguments[0].get()) : nullptr;
-            if (closure == nullptr) {
-                reject("spawn-form", call, "`spawn` takes exactly one closure literal",
-                       "write `spawn(closure Job [values] () { ... })` -- a named object cannot be spawned, "
-                       "because only the capture list is checked for what crosses into the new thread");
+            auto handler = call->arguments.size() == 2
+                ? dynamic_cast<ClosureExpression*>(call->arguments[1].get()) : nullptr;
+            if (closure == nullptr || (call->arguments.size() == 2 && handler == nullptr)) {
+                reject("spawn-form", call, "`spawn` takes a closure literal, and optionally a second one as failure handler",
+                       "write `spawn(closure Job [values] () { ... })` or "
+                       "`spawn(closure Job [values] () { ... }, closure Failure [values] (string message) { ... })` -- "
+                       "a named object cannot be spawned, because only the capture lists are checked for what "
+                       "crosses into the new thread");
             }
             if (g_spawnDepth > 0) {
                 reject("spawn-nested", call, "`spawn` inside a `spawn` body",
@@ -493,6 +550,11 @@ void rewriteExpr(ExpressionPtr& expr, const ScopeStack& scope,
             pendingClasses.push_back(std::move(result.closureClass));
             std::vector<ExpressionPtr> args;
             args.push_back(std::move(result.replacement));
+            if (handler != nullptr) {
+                DesugarResult onFail = desugarOne(*handler, scope, classesByName, pendingClasses, true, true);
+                pendingClasses.push_back(std::move(onFail.closureClass));
+                args.push_back(std::move(onFail.replacement));
+            }
             auto replaced = std::make_unique<FunctionCall>("cling::spawn", std::move(args));
             replaced->loc = call->loc;
             expr = std::move(replaced);
@@ -625,10 +687,13 @@ void desugarClosures(Program& program) {
     std::vector<StatementPtr> newStatements;
     newStatements.reserve(program.statements.size());
 
+    g_closureCounters.clear();
     for (auto& topLevel : program.statements) {
         std::vector<StatementPtr> pendingClasses;
         ScopeStack scope;
         scope.push();
+        g_currentOrigin = topLevel->originFile;
+        g_currentIsExternal = topLevel->isExternalDeclaration;
 
         if (auto cls = dynamic_cast<ClassDeclaration*>(topLevel.get())) {
             // Fields are in scope (by bare name, matching implicit `this->field`

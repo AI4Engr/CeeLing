@@ -1,0 +1,27 @@
+//@ expect: reject
+//@ reason: a failure handler may not start threads itself (same v1 rule as the job body).
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+class Failure {
+public:
+    Failure() { }
+    virtual void fail(string message) { }
+};
+
+int main() {
+    int id = 1;
+    spawn(closure Job [id] () {
+        throw "boom";
+    }, closure Failure [id] (string message) {
+        int again = id;
+        spawn(closure Job [again] () {
+            std::cout << again << std::endl;
+        });
+    });
+    return 0;
+}

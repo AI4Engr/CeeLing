@@ -1,0 +1,29 @@
+//@ expect: accept
+//@ reason: `cling::setWorkerLimit(1)` caps the pool at one thread, and queued jobs run first-in first-out, so three
+//@ reason: spawned jobs print in the order they were spawned -- which is only guaranteed because exactly one worker
+//@ reason: exists. With the default pool the three digits could come out in any order. Must be RUN. (The process
+//@ reason: finishes every queued job before it exits.)
+//@ run: 123
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    cling::setWorkerLimit(1);
+    int one = 1;
+    int two = 2;
+    int three = 3;
+    spawn(closure Job [one] () {
+        std::cout << one;
+    });
+    spawn(closure Job [two] () {
+        std::cout << two;
+    });
+    spawn(closure Job [three] () {
+        std::cout << three;
+    });
+    return 0;
+}

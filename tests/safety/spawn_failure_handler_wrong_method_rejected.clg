@@ -1,0 +1,25 @@
+//@ expect: reject
+//@ reason: the failure handler's interface must have exactly one virtual method, `void fail(string message)`:
+//@ reason: the runtime calls it by that name when the job throws.
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+class Failure {
+public:
+    Failure() { }
+    virtual void report(string message) { }
+};
+
+int main() {
+    int id = 7;
+    spawn(closure Job [id] () {
+        throw "boom";
+    }, closure Failure [id] (string message) {
+        std::cout << message << std::endl;
+    });
+    return 0;
+}

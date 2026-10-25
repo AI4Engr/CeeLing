@@ -124,6 +124,7 @@ void mergeExternalDeclarations(Program& program, const std::string& baseDir,
         std::string includedSource = readFile(resolvedPath);
         ASTBuilder includedBuilder;
         std::unique_ptr<Program> includedProgram = includedBuilder.buildProgram(includedSource);
+        for (auto& includedStmt : includedProgram->statements) includedStmt->originFile = resolvedPath;
         std::string includedDir = dirnameOf(resolvedPath);
         // Resolve the included file's OWN includes first, so a transitive dependency
         // (parser -> node, parser -> scanner) is visible by the time we merge parser's.
@@ -293,6 +294,7 @@ int main(int argc, char* argv[]) {
         // known (see mergeExternalDeclarations). Codegen is unaffected: those
         // merged declarations are marked external and skipped by AstEmitter.
         std::set<std::string> seenClgFiles{inputFile};
+        for (auto& stmt : program->statements) stmt->originFile = inputFile;
         mergeExternalDeclarations(*program, dirnameOf(inputFile), seenClgFiles);
 
         // Re-attempt any external_method_specialization whose target class

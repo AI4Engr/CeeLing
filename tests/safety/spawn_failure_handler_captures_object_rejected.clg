@@ -1,0 +1,32 @@
+//@ expect: reject
+//@ reason: the failure handler runs on the worker thread too, so it follows the same capture rule as the job and
+//@ reason: may hold plain values only. (An object can be moved into the JOB; moving it into both would be two owners.)
+
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+class Failure {
+public:
+    Failure() { }
+    virtual void fail(string message) { }
+};
+
+int main() {
+    Counter c = new Counter();
+    int id = 1;
+    spawn(closure Job [id] () {
+        throw "boom";
+    }, closure Failure [c] (string message) {
+        c.n = 1;
+    });
+    return 0;
+}
