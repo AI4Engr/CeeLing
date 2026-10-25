@@ -1,0 +1,35 @@
+//@ expect: reject
+//@ reason: a struct's BASE counts too: this struct is made only of an int, but its base struct carries an
+//@ reason: object handle, so the whole value is not plain data.
+
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+struct Base {
+public:
+    Counter c;
+    Base() { c = new Counter(); }
+};
+
+struct Derived : public Base {
+public:
+    int x;
+    Derived() { x = 1; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Derived d = new Derived();
+    spawn(closure Job [d] () {
+        std::cout << d.x << std::endl;
+    });
+    return 0;
+}

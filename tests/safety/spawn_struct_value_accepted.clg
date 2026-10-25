@@ -1,0 +1,38 @@
+//@ expect: accept
+//@ reason: a `struct` is a plain value type (copied, stored bare, never behind a smart pointer), so it may be
+//@ reason: captured by a spawned job when everything it is made of is itself a plain value -- here a nested
+//@ reason: struct and a vector of structs. The job gets its OWN copy: the creating thread changes its struct
+//@ reason: afterwards, and the job must still see the old value. Must be RUN to show the copy is real.
+//@ run: job 3 2 7
+
+struct Inner {
+public:
+    int a;
+    Inner(int x) { a = x; }
+};
+
+struct Packet {
+public:
+    Inner head;
+    std::vector<Inner> items;
+    Packet(int x) {
+        head = new Inner(x);
+        items.push_back(new Inner(2));
+        items.push_back(new Inner(7));
+    }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Packet p = new Packet(3);
+    spawn(closure Job [p] () {
+        std::cout << "job " << p.head.a << " " << p.items[0].a << " " << p.items[1].a << std::endl;
+    });
+    p.head.a = 99;
+    return 0;
+}

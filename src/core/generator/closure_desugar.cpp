@@ -159,9 +159,33 @@ int g_spawnDepth = 0;
 // -- every class-typed object, whatever pointer kind it was inferred -- is refused: an object's graph can
 // be shared with a live owner in the creating thread, and a closure capturing a shared_ptr would carry a
 // live alias of the SAME object across (the hole this rule exists to close).
-bool isSendableValueType(const std::string& type) {
+//
+// A `struct` is a value type too -- copied, stored bare (never behind a smart pointer), and since a struct
+// handle does not exist, its dynamic type is always its static type (no hidden subclass with extra shared
+// fields, which is exactly what rules out moving a heap OBJECT: a base-typed handle can hold a subclass
+// declared in another file, invisible to this translation unit). So a struct crosses by copy iff everything
+// it is made of does: every field is itself a sendable value and so is its base struct. A class-typed field
+// (stored as an owning handle) makes the struct unsendable.
+bool isSendableValueType(const std::string& type,
+                         const std::map<std::string, const ClassDeclaration*>& classesByName,
+                         std::set<std::string>& visiting) {
     if (isPrimitiveType(type)) return true;
-    return isVectorType(type) && isPrimitiveType(vectorElementType(type));
+    if (isVectorType(type)) return isSendableValueType(vectorElementType(type), classesByName, visiting);
+    auto it = classesByName.find(type);
+    if (it == classesByName.end() || !it->second->isValueType) return false;
+    if (!visiting.insert(type).second) return true;   // already being checked higher up: no new information
+    const ClassDeclaration& cls = *it->second;
+    bool ok = cls.baseClass.empty() || isSendableValueType(cls.baseClass, classesByName, visiting);
+    for (const auto& member : cls.members) {
+        if (!ok) break;
+        if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+            ok = !field->isObserver && isSendableValueType(field->type, classesByName, visiting);
+        } else if (auto container = dynamic_cast<const ContainerDeclaration*>(member.get())) {
+            ok = isSendableValueType(container->type, classesByName, visiting);
+        }
+    }
+    visiting.erase(type);
+    return ok;
 }
 
 // Every name a `spawn` body reads or writes, and every name it declares itself. Used to refuse a body that
@@ -284,13 +308,15 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
                    "dangling-reference hole this language exists to prevent -- capture the "
                    "observer's OWNER instead, or restructure so the closure does not need it");
         }
-        if (isSpawn && !isSendableValueType(entry->type)) {
+        std::set<std::string> visiting;
+        if (isSpawn && !isSendableValueType(entry->type, classesByName, visiting)) {
             reject("spawn-captures-object", &closure,
                    "`spawn` captures `" + name + "` of type `" + entry->type + "`, which is not a plain value",
-                   "only primitives, string and std::vector of primitives may cross into a new thread: they are "
-                   "copied, so no memory is shared with the creating thread. An object (whatever pointer kind "
-                   "was inferred for it) may have another live owner here, so it is refused -- serialize it to a "
-                   "string first (e.g. printUnformatted(item)) and rebuild it inside the thread");
+                   "only plain values may cross into a new thread: primitives, string, std::vector of those, and "
+                   "`struct`s made only of those. They are copied, so no memory is shared with the creating thread. "
+                   "A class object (whatever pointer kind was inferred for it) may have another live owner here and "
+                   "may be a subclass declared elsewhere, so it is refused -- make the data a `struct`, or "
+                   "serialize it to a string first (e.g. printUnformatted(item)) and rebuild it inside the thread");
         }
         resolvedCaptures.emplace_back(entry->type, name);
     }

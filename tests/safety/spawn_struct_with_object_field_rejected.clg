@@ -1,0 +1,30 @@
+//@ expect: reject
+//@ reason: a struct that holds an owning handle to a class object is not a plain value: copying it (or
+//@ reason: moving it into a thread) would carry a handle whose object may be shared with the creating thread.
+//@ reason: Only structs made entirely of plain values may cross into a spawned job.
+
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+struct Packet {
+public:
+    Counter c;
+    Packet() { c = new Counter(); }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Packet p = new Packet();
+    spawn(closure Job [p] () {
+        std::cout << p.c.n << std::endl;
+    });
+    return 0;
+}
