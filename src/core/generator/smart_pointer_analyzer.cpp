@@ -1515,6 +1515,10 @@ void SmartPointerAnalyzer::promoteParamsStoredInSharedFields(const Program& prog
         }
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
         if (cls == nullptr) continue;
+        // A spawn job's constructor MOVES its object captures into unique fields; the usual rule ("a parameter
+        // stored into a field is linked, so both become shared") would make the creating thread keep a live
+        // owner of an object that now runs concurrently. DanglingChecker::checkSpawnCall decides what may be moved.
+        if (cls->isSpawnJob) continue;
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
                 promoteParamsInBody(method->body, cls->name, method->parameters, cls->name + "::" + method->name);

@@ -1,6 +1,7 @@
 #include "dangling_checker.h"
 #include "class_hierarchy.h"
 #include "library_summary.h"
+#include "closure_desugar.h"
 
 namespace cling {
 
@@ -48,6 +49,7 @@ std::vector<DanglingError> DanglingChecker::check(const Program& program, const 
     classMethodParams_.clear();
     deriveSummaries(program);
     analyzer_ = &analyzer;
+    program_ = &program;
 
     // Each top-level function / main / method body is analyzed independently.
     for (const auto& stmt : program.statements) {
@@ -537,9 +539,135 @@ bool DanglingChecker::isSharedLocal(const std::string& name) const {
     return analyzer_->getPointerTypeInScope(currentScope_, typeIt->second, name) == PointerType::SHARED;
 }
 
+namespace {
+// Every declaration of / assignment to `name` in `body` (nested blocks included) must be `new <type>(...)`:
+// that proves the variable's dynamic type is exactly `type`. Returns false at the first one that is not.
+bool onlyAssignedFreshNew(const std::vector<StatementPtr>& body, const std::string& name,
+                          const std::string& type) {
+    auto isFresh = [&](const Expression* e) {
+        auto neww = dynamic_cast<const NewExpression*>(e);
+        return neww != nullptr && neww->className == type;
+    };
+    for (const auto& stmt : body) {
+        if (auto d = dynamic_cast<const VariableDeclaration*>(stmt.get())) {
+            if (d->identifier == name && !isFresh(d->expression.get())) return false;
+        } else if (auto a = dynamic_cast<const AssignmentStatement*>(stmt.get())) {
+            if (a->variable == name && a->target == nullptr && !isFresh(a->expression.get())) return false;
+        } else if (auto i = dynamic_cast<const IfStatement*>(stmt.get())) {
+            if (!onlyAssignedFreshNew(i->body, name, type) || !onlyAssignedFreshNew(i->elseBody, name, type)) return false;
+        } else if (auto w = dynamic_cast<const WhileStatement*>(stmt.get())) {
+            if (!onlyAssignedFreshNew(w->body, name, type)) return false;
+        } else if (auto f = dynamic_cast<const ForStatement*>(stmt.get())) {
+            if (f->loopVarName == name) return false;
+            if (!onlyAssignedFreshNew(f->body, name, type)) return false;
+        } else if (auto t = dynamic_cast<const TryStatement*>(stmt.get())) {
+            if (t->catchIdentifier == name) return false;
+            if (!onlyAssignedFreshNew(t->body, name, type) || !onlyAssignedFreshNew(t->catchBody, name, type)) return false;
+        }
+    }
+    return true;
+}
+} // namespace
+
+std::string DanglingChecker::spawnObjectProblem(const std::string& type, const std::string& name) const {
+    const ClassDeclaration* decl = nullptr;
+    bool inherited = false;
+    for (const auto& stmt : program_->statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr) continue;
+        if (cls->name == type) decl = cls;
+        if (cls->baseClass == type) inherited = true;
+    }
+    if (decl == nullptr || decl->isExternalDeclaration) {
+        return "class `" + type + "` is not defined in this file (a class from an included header may have "
+               "subclasses or fields this file cannot see)";
+    }
+    if (decl->isValueType) return "";   // a struct is copied, not moved: handled by the value rules
+    if (!decl->baseClass.empty()) return "class `" + type + "` has a base class";
+    if (inherited) return "class `" + type + "` is inherited by another class in this program";
+    if (analyzer_->classNeedsSharedFromThis(type)) {
+        return "class `" + type + "` hands out `this`, so its objects are shared";
+    }
+    for (const auto& member : decl->members) {
+        if (auto m = dynamic_cast<const MethodDeclaration*>(member.get())) {
+            if (m->isVirtual) return "class `" + type + "` has a virtual method (a subclass could be hiding behind it)";
+        } else if (auto f = dynamic_cast<const VariableDeclaration*>(member.get())) {
+            if (f->isObserver || !isPlainValueType(f->type, *program_)) {
+                return "field `" + f->identifier + "` of class `" + type + "` is not a plain value (type `" +
+                       f->type + "`); only primitives, string, vectors of those and plain structs are allowed";
+            }
+        } else if (auto c = dynamic_cast<const ContainerDeclaration*>(member.get())) {
+            if (!isPlainValueType(c->type, *program_)) {
+                return "field `" + c->identifier + "` of class `" + type + "` is not a plain value (type `" +
+                       c->type + "`)";
+            }
+        }
+    }
+    if (currentParamNames_.count(name) > 0) return "`" + name + "` is a parameter, so its dynamic type is unknown here";
+    if (currentBody_ == nullptr || !onlyAssignedFreshNew(*currentBody_, name, type)) {
+        return "`" + name + "` is not created only by `new " + type + "(...)` in this function, so it might hold a "
+               "subclass object or an object also reachable from elsewhere";
+    }
+    if (analyzer_->getPointerTypeInScope(currentScope_, type, name) != PointerType::UNIQUE) {
+        return "`" + name + "` has more than one owner (it is stored elsewhere or shared), so moving it would leave a "
+               "live alias in this thread";
+    }
+    return "";
+}
+
+void DanglingChecker::checkSpawnCall(const FunctionCall* call) {
+    if (call->arguments.size() != 1) return;
+    auto neww = dynamic_cast<const NewExpression*>(call->arguments[0].get());
+    if (neww == nullptr) return;
+    const ClassDeclaration* job = nullptr;
+    for (const auto& stmt : program_->statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls != nullptr && cls->name == neww->className && cls->isSpawnJob) job = cls;
+    }
+    if (job == nullptr) return;
+    for (const auto& arg : neww->arguments) {
+        auto id = dynamic_cast<const Identifier*>(arg.get());
+        if (id == nullptr) continue;
+        auto typeIt = localType_.find(id->name);
+        if (typeIt == localType_.end() || classNames_.count(typeIt->second) == 0) continue;
+        if (isPlainValueType(typeIt->second, *program_)) continue;   // a struct / vector: copied, source stays usable
+        const std::string problem = spawnObjectProblem(typeIt->second, id->name);
+        if (!problem.empty()) {
+            DanglingError e;
+            e.line = call->loc.line;
+            e.column = call->loc.column;
+            e.message = "`spawn` cannot move `" + id->name + "` into a new thread: " + problem;
+            e.help = "an object may be moved into a thread only if nothing else can reach it and nothing about "
+                     "it is hidden: make the data a `struct` (copied), or serialize it to a string and rebuild it "
+                     "inside the thread";
+            errors_.push_back(e);
+            continue;
+        }
+        // The job holds the object in a unique field; the analysis must agree, or the emitted code would copy.
+        for (const auto& member : job->members) {
+            auto f = dynamic_cast<const VariableDeclaration*>(member.get());
+            if (f != nullptr && f->identifier == id->name &&
+                analyzer_->getPointerTypeInScope(job->name, f->type, f->identifier) != PointerType::UNIQUE) {
+                DanglingError e;
+                e.line = call->loc.line;
+                e.column = call->loc.column;
+                e.message = "internal: the spawn job's field `" + f->identifier + "` was not inferred unique";
+                e.help = "rejected rather than risk a shared handle crossing into the new thread";
+                errors_.push_back(e);
+            }
+        }
+        movedFrom_.insert(id->name);
+    }
+}
+
 void DanglingChecker::applyCallArgMoves(const Expression* expr) {
     auto call = dynamic_cast<const FunctionCall*>(expr);
     if (call == nullptr) return;
+
+    if (call->callee == nullptr && call->function_name == "cling::spawn") {
+        checkSpawnCall(call);
+        return;
+    }
 
     // A known invalidating call (push_back) kills every existing observer of its
     // container receiver first -- runs alongside the argument-move logic below
@@ -811,6 +939,9 @@ void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
     loopStack_.clear();
     currentClass_ = ownerClass;
     currentScope_ = scope;
+    currentBody_ = &body;
+    currentParamNames_.clear();
+    for (const auto& [ptype, pname] : params) currentParamNames_.insert(pname);
 
     // Parameters are always-moved-into owners (CeeLing bans `ref` parameters), so an
     // object-typed parameter participates in move tracking exactly like a local

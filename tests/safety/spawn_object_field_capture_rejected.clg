@@ -1,0 +1,32 @@
+//@ expect: reject
+//@ reason: a field of the enclosing object is reachable through that object, so it cannot be moved out into a
+//@ reason: thread.
+
+class Buffer {
+public:
+    int n;
+    Buffer() { n = 0; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+class Owner {
+public:
+    Buffer b;
+    Owner() { b = new Buffer(); }
+    void go() {
+        spawn(closure Job [b] () {
+            b.n = 1;
+        });
+    }
+};
+
+int main() {
+    Owner o = new Owner();
+    o.go();
+    return 0;
+}

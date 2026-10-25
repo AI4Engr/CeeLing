@@ -1,0 +1,30 @@
+//@ expect: reject
+//@ reason: `b` is also stored into a Holder, so it has two owners and the analysis infers a shared_ptr. Moving a
+//@ reason: shared handle would leave the Holder's alias in this thread while the job runs: refused.
+
+class Buffer {
+public:
+    int n;
+    Buffer() { n = 0; }
+};
+
+class Holder {
+public:
+    Buffer kept;
+    Holder(Buffer x) { kept = x; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Buffer b = new Buffer();
+    Holder h = new Holder(b);
+    spawn(closure Job [b] () {
+        b.n = 1;
+    });
+    return 0;
+}

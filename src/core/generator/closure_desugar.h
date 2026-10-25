@@ -49,4 +49,9 @@ namespace cling {
 //   - a closure whose parameter list doesn't match the interface method's
 void desugarClosures(Program& program);
 
+// True if `type` is a plain value that may be copied into a spawned thread: a primitive (incl. string), a
+// std::vector of such values, or a `struct` made only of such values (base struct included). Used by the
+// desugar pass for capture checks and by DanglingChecker for the fields of a moved-in object.
+bool isPlainValueType(const std::string& type, const Program& program);
+
 } // namespace cling

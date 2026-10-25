@@ -636,6 +636,10 @@ public:
     // picks up a `struct` class for free. Deliberately NOT inferred
     // structurally (see class_declaration's own grammar.js comment for why).
     bool isValueType = false;
+    // True for the class closure_desugar synthesizes for a `spawn(closure ...)` job. Its object-typed
+    // captures are MOVED into the new thread (stored as unique owners), unlike an ordinary closure's
+    // shared captures -- see DanglingChecker::checkSpawnCall for the rules that make that safe.
+    bool isSpawnJob = false;
 
     ClassDeclaration(const std::string& className, std::vector<StatementPtr> classMembers)
         : name(className), members(std::move(classMembers)) {}

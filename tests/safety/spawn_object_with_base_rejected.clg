@@ -1,0 +1,29 @@
+//@ expect: reject
+//@ reason: a class with a base class is refused: its object graph includes the base's, and a base-typed handle
+//@ reason: elsewhere could alias it.
+
+class Base {
+public:
+    int a;
+    Base() { a = 0; }
+};
+
+class Derived : public Base {
+public:
+    int b;
+    Derived() { b = 0; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Derived d = new Derived();
+    spawn(closure Job [d] () {
+        std::cout << d.b << std::endl;
+    });
+    return 0;
+}

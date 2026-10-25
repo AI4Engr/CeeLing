@@ -261,6 +261,12 @@ private:
     // arguments). No-op for non-call expressions.
     void applyCallArgMoves(const Expression* expr);
 
+    // `cling::spawn(new __closure_N(captures...))`: decides which object captures may be MOVED into the
+    // new thread and marks each one moved-from. Rejects the rest. See the rules in the .cpp.
+    void checkSpawnCall(const FunctionCall* call);
+    // The reason object `name` of class `type` may NOT be moved into a thread, or "" if it may.
+    std::string spawnObjectProblem(const std::string& type, const std::string& name) const;
+
     // Return-local-reference check (#2): CeeLing has no `ref` return type, so a
     // function's return is always owning -- returning a `ref` observer hands back a
     // reference into THIS function's own stack frame, which is gone the instant the
@@ -345,6 +351,9 @@ private:
     std::set<std::string> aliasObservers_;
     std::vector<DanglingError> errors_;
     const SmartPointerAnalyzer* analyzer_ = nullptr;  // set for the duration of check()
+    const Program* program_ = nullptr;                // set for the duration of check()
+    const std::vector<StatementPtr>* currentBody_ = nullptr;  // the body checkBody is walking
+    std::set<std::string> currentParamNames_;
 };
 
 } // namespace cling

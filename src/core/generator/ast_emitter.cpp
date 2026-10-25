@@ -1151,9 +1151,13 @@ std::string AstEmitter::factoryFor(const std::string& className, const std::stri
     const std::string kindType = declaredType.empty() ? className : declaredType;
     const std::string ptr = smartPointerType(kindType, varName);
     std::string argText;
+    // A spawn job's object captures are MOVED into the job (and so into the new thread): the creating
+    // thread's local is a unique_ptr that DanglingChecker::checkSpawnCall has marked moved-from.
+    auto jobIt = classByName_.find(className);
+    const bool isSpawnJob = jobIt != classByName_.end() && jobIt->second->isSpawnJob;
     for (size_t i = 0; i < args.size(); ++i) {
         if (i > 0) argText += ", ";
-        argText += emitExpression(args[i].get());
+        argText += isSpawnJob ? emitSpawnJobArg(args[i].get()) : emitExpression(args[i].get());
     }
     if (ptr == "std::unique_ptr") return "std::make_unique<" + className + ">(" + argText + ")";
     return sharedConstruct(className, argText);
@@ -1837,6 +1841,16 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     currentParamNames_ = savedParamNames;
 }
 
+// One constructor argument of a spawn job: a class OBJECT is moved in (the checker marked the source moved-from),
+// everything else -- primitives, strings, vectors, structs -- is a plain copy and the source stays usable.
+std::string AstEmitter::emitSpawnJobArg(const Expression* arg) {
+    if (auto id = dynamic_cast<const Identifier*>(arg)) {
+        auto it = varClass_.find(id->name);
+        if (it != varClass_.end() && !isValueType(it->second) && !isCurrentField(id->name)) return emitMovedArg(arg);
+    }
+    return emitExpression(arg);
+}
+
 std::string AstEmitter::emitMovedArg(const Expression* arg,
                                      const std::pair<std::string, std::string>& targetParam) {
     if (dynamic_cast<const ThisExpression*>(arg) != nullptr && !currentClass_.empty()) {
@@ -2028,6 +2042,14 @@ std::string AstEmitter::selectAssignmentRhs(const AssignmentStatement* assign, c
         // statement -- `bytes` provably has no use after it, so copying the
         // whole buffer here was always wasted work.
         auto rhsId = dynamic_cast<const Identifier*>(assign->expression.get());
+        // A spawn job's constructor stores each object capture into its (unique) field: a move.
+        if (rhsId != nullptr && !currentClass_.empty() && currentParamNames_.count(rhsId->name) > 0) {
+            auto jobIt = classByName_.find(currentClass_);
+            if (jobIt != classByName_.end() && jobIt->second->isSpawnJob && varClass_.count(rhsId->name) > 0 &&
+                !isValueType(varClass_.at(rhsId->name))) {
+                return emitMovedArg(assign->expression.get());
+            }
+        }
         const bool rhsIsLastUseParam = rhsId != nullptr && currentParamNames_.count(rhsId->name) > 0 &&
             (currentClass_.empty() ? analyzer_.isLastUseFieldAssignedParam(currentFunctionName_, rhsId->name)
                                     : analyzer_.isLastUseMethodFieldAssignedParam(currentClass_, currentFunctionName_,
@@ -2639,10 +2661,13 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             s += ")";
             return s;
         }
+        // A spawn job's object captures are moved into it (see factoryFor).
+        auto jobIt = classByName_.find(neww->className);
+        const bool isSpawnJob = jobIt != classByName_.end() && jobIt->second->isSpawnJob;
         std::string argText;
         for (size_t i = 0; i < neww->arguments.size(); ++i) {
             if (i > 0) argText += ", ";
-            argText += emitExpression(neww->arguments[i].get());
+            argText += isSpawnJob ? emitSpawnJobArg(neww->arguments[i].get()) : emitExpression(neww->arguments[i].get());
         }
         return sharedConstruct(neww->className, argText);
     }

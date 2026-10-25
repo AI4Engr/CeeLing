@@ -283,6 +283,7 @@ private:
     // `new T(...)` argument has no variable of its own to key its pointer type off,
     // so `targetParam` (the receiving parameter's (class, name), from calleeParam)
     // tells it which factory (make_unique/make_shared) the callee actually needs.
+    std::string emitSpawnJobArg(const Expression* arg);
     std::string emitMovedArg(const Expression* arg,
                              const std::pair<std::string, std::string>& targetParam = {});
     std::string smartPointerType(const std::string& className, const std::string& varName) const;

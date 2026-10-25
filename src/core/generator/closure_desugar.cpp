@@ -19,9 +19,12 @@ namespace {
 // VariableDeclaration::isObserver so a captured `ref` name can be rejected
 // (see desugarClosures' own doc comment: this is the most important check
 // here).
+enum class ScopeKind { Local, Param, Field };
+
 struct ScopeEntry {
     std::string type;
     bool isObserver = false;
+    ScopeKind kind = ScopeKind::Local;
 };
 
 // A dedicated scope-type stack for THIS pass only -- confirmed via exploration
@@ -39,8 +42,9 @@ public:
     void push() { scopes_.emplace_back(); }
     void pop() { scopes_.pop_back(); }
 
-    void declare(const std::string& name, const std::string& type, bool isObserver) {
-        scopes_.back()[name] = ScopeEntry{type, isObserver};
+    void declare(const std::string& name, const std::string& type, bool isObserver,
+                 ScopeKind kind = ScopeKind::Local) {
+        scopes_.back()[name] = ScopeEntry{type, isObserver, kind};
     }
 
     // Returns nullptr if `name` is not in scope anywhere on the stack.
@@ -309,7 +313,29 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
                    "observer's OWNER instead, or restructure so the closure does not need it");
         }
         std::set<std::string> visiting;
-        if (isSpawn && !isSendableValueType(entry->type, classesByName, visiting)) {
+        // A class object is admitted PROVISIONALLY: whether it may be MOVED into the thread depends on the
+        // pointer kind the analyzer infers for it, which does not exist yet at this stage. The rules that
+        // need it (and the rest of the object rules) run in DanglingChecker::checkSpawnCall. What can be
+        // decided here is decided here: only a plain local of a class declared in this program qualifies.
+        bool movableObject = false;
+        if (isSpawn) {
+            auto clsIt = classesByName.find(entry->type);
+            if (clsIt != classesByName.end() && !clsIt->second->isValueType &&
+                !clsIt->second->isExternalDeclaration) {
+                if (entry->kind != ScopeKind::Local) {
+                    reject("spawn-captures-object", &closure,
+                           "`spawn` captures `" + name + "`, a " +
+                               std::string(entry->kind == ScopeKind::Field ? "field" : "parameter") +
+                               " of class type `" + entry->type + "`",
+                           "an object may be moved into a new thread only from a local variable created in this "
+                           "function with `new " + entry->type + "(...)`: a parameter or field may hold an object "
+                           "of a subclass, or be reachable from elsewhere, which this function cannot see. Make "
+                           "the data a `struct`, or serialize it to a string");
+                }
+                movableObject = true;
+            }
+        }
+        if (isSpawn && !movableObject && !isSendableValueType(entry->type, classesByName, visiting)) {
             reject("spawn-captures-object", &closure,
                    "`spawn` captures `" + name + "` of type `" + entry->type + "`, which is not a plain value",
                    "only plain values may cross into a new thread: primitives, string, std::vector of those, and "
@@ -396,7 +422,7 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
     ScopeStack innerScope;
     innerScope.push();
     for (const auto& [ptype, pname] : closure.parameters) {
-        innerScope.declare(pname, ptype, false);
+        innerScope.declare(pname, ptype, false, ScopeKind::Param);
     }
     if (isSpawn) ++g_spawnDepth;
     walkBody(closure.body, innerScope, classesByName, pendingClasses);
@@ -413,6 +439,7 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
 
     auto closureClass = std::make_unique<ClassDeclaration>(closureClassName, std::move(members));
     closureClass->baseClass = closure.interfaceName;
+    closureClass->isSpawnJob = isSpawn;
     closureClass->loc = closure.loc;
 
     std::vector<ExpressionPtr> ctorArgs;
@@ -578,6 +605,15 @@ void walkBody(std::vector<StatementPtr>& body, ScopeStack& scope,
 
 } // namespace
 
+bool isPlainValueType(const std::string& type, const Program& program) {
+    std::map<std::string, const ClassDeclaration*> classesByName;
+    for (const auto& stmt : program.statements) {
+        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) classesByName[cls->name] = cls;
+    }
+    std::set<std::string> visiting;
+    return isSendableValueType(type, classesByName, visiting);
+}
+
 void desugarClosures(Program& program) {
     std::map<std::string, const ClassDeclaration*> classesByName;
     for (const auto& stmt : program.statements) {
@@ -599,19 +635,19 @@ void desugarClosures(Program& program) {
             // access already used elsewhere) for every method/constructor body.
             for (const auto& member : cls->members) {
                 if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
-                    scope.declare(field->identifier, field->type, false);
+                    scope.declare(field->identifier, field->type, false, ScopeKind::Field);
                 }
             }
             for (auto& member : cls->members) {
                 scope.push();
                 if (auto ctor = dynamic_cast<ConstructorDeclaration*>(member.get())) {
                     for (const auto& [ptype, pname] : ctor->parameters) {
-                        scope.declare(pname, ptype, false);
+                        scope.declare(pname, ptype, false, ScopeKind::Param);
                     }
                     walkBody(ctor->body, scope, classesByName, pendingClasses);
                 } else if (auto method = dynamic_cast<MethodDeclaration*>(member.get())) {
                     for (const auto& [ptype, pname] : method->parameters) {
-                        scope.declare(pname, ptype, false);
+                        scope.declare(pname, ptype, false, ScopeKind::Param);
                     }
                     walkBody(method->body, scope, classesByName, pendingClasses);
                 }
@@ -619,7 +655,7 @@ void desugarClosures(Program& program) {
             }
         } else if (auto fn = dynamic_cast<FunctionDeclaration*>(topLevel.get())) {
             for (const auto& [ptype, pname] : fn->parameters) {
-                scope.declare(pname, ptype, false);
+                scope.declare(pname, ptype, false, ScopeKind::Param);
             }
             walkBody(fn->body, scope, classesByName, pendingClasses);
         } else if (auto main = dynamic_cast<MainFunction*>(topLevel.get())) {

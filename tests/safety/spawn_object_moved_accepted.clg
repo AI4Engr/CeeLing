@@ -1,0 +1,42 @@
+//@ expect: accept
+//@ reason: the v2b rule's positive case. A flat class object (plain-value fields, no base, no virtuals), created
+//@ reason: here with `new Buffer(...)` and never used again, is MOVED into the job: the creating thread's handle
+//@ reason: is gone, the job owns it alone (a unique_ptr, no copy of the data). Must be RUN: the worker mutates
+//@ reason: the object and prints; if the capture had been shared or copied the sum below would differ or the C++
+//@ reason: would not have compiled at all (a unique_ptr cannot be copied into the job).
+//@ run: sum 6 n 3
+
+class Buffer {
+public:
+    std::vector<int> data;
+    int n;
+    Buffer() { n = 0; }
+    void add(int x) {
+        data.push_back(x);
+        n = n + 1;
+    }
+    int sum() {
+        int total = 0;
+        for (int x : data) {
+            total = total + x;
+        }
+        return total;
+    }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Buffer b = new Buffer();
+    b.add(1);
+    b.add(2);
+    b.add(3);
+    spawn(closure Job [b] () {
+        std::cout << "sum " << b.sum() << " n " << b.n << std::endl;
+    });
+    return 0;
+}

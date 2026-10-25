@@ -1,0 +1,29 @@
+//@ expect: reject
+//@ reason: `Base` has a subclass in this program, so a `Base` variable might hold a `Derived` with extra
+//@ reason: fields. Even though `b` here really is a Base, the class as a whole is not closed, so it is refused.
+
+class Base {
+public:
+    int a;
+    Base() { a = 0; }
+};
+
+class Derived : public Base {
+public:
+    int b;
+    Derived() { b = 0; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Base x = new Base();
+    spawn(closure Job [x] () {
+        std::cout << x.a << std::endl;
+    });
+    return 0;
+}

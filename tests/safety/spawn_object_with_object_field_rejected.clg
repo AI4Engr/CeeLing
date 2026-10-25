@@ -1,0 +1,29 @@
+//@ expect: reject
+//@ reason: only FLAT classes may be moved: a class-typed field is another owning handle whose target could be a
+//@ reason: subclass declared elsewhere or be reachable from another object. Use a struct or a string instead.
+
+class Inner {
+public:
+    int a;
+    Inner() { a = 0; }
+};
+
+class Outer {
+public:
+    Inner inner;
+    Outer() { inner = new Inner(); }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Outer o = new Outer();
+    spawn(closure Job [o] () {
+        std::cout << o.inner.a << std::endl;
+    });
+    return 0;
+}

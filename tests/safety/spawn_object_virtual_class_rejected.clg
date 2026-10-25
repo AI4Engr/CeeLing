@@ -1,0 +1,23 @@
+//@ expect: reject
+//@ reason: a class with a virtual method exists to be subclassed, so a handle to it may hide a subclass.
+
+class Shape {
+public:
+    int a;
+    Shape() { a = 0; }
+    virtual int area() { return a; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Shape s = new Shape();
+    spawn(closure Job [s] () {
+        std::cout << s.area() << std::endl;
+    });
+    return 0;
+}

@@ -1,0 +1,24 @@
+//@ expect: reject
+//@ reason: a class that hands out `this` is built behind a shared_ptr (shared_from_this), so its objects are
+//@ reason: shared by nature and cannot be moved as unique.
+
+class Node {
+public:
+    int n;
+    Node() { n = 0; }
+    Node self() { return this; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Node a = new Node();
+    spawn(closure Job [a] () {
+        a.n = 1;
+    });
+    return 0;
+}

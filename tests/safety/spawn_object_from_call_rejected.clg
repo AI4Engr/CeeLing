@@ -1,0 +1,29 @@
+//@ expect: reject
+//@ reason: the variable's dynamic type must be PROVABLE: here it comes from a function result, which could return
+//@ reason: an object of a subclass, or one that is also stored elsewhere. Only variables created exclusively by
+//@ reason: `new T(...)` in the same function qualify.
+
+class Buffer {
+public:
+    int n;
+    Buffer() { n = 0; }
+};
+
+Buffer make() {
+    Buffer b = new Buffer();
+    return b;
+}
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Buffer b = make();
+    spawn(closure Job [b] () {
+        b.n = 1;
+    });
+    return 0;
+}
