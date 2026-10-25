@@ -1,0 +1,36 @@
+//@ expect: accept
+//@ run: 11 3 hello-world 5
+//@ reason: a `string` parameter the body only reads is passed by const reference instead of being copied
+//@ reason: on every call. Reads include copying it onward (`out = p`, `f(p)`, `return p`, `x.append(p)`).
+//@ reason: Output is what by-value gave; the compiler-gate build is the check that the emitted signature
+//@ reason: (const std::string&) accepts every call shape used here, literals and temporaries included.
+
+int countChars(string s) {
+    int n = 0;
+    int i = 0;
+    while (i < s.length()) {
+        n = n + 1;
+        i = i + 1;
+    }
+    return n;
+}
+
+int forward(string s) {
+    return countChars(s);
+}
+
+string both(string a, string b) {
+    return a + "-" + b;
+}
+
+int firstThree(string s) {
+    string t = s.substr(0, 3);
+    return t.length();
+}
+
+int main() {
+    string text = "hello world";
+    std::cout << forward(text) << " " << firstThree(text) << " " << both("hello", "world") << " "
+              << countChars("abcde") << std::endl;
+    return 0;
+}

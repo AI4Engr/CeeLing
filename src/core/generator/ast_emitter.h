@@ -170,6 +170,7 @@ private:
     // object the field's OWN storage depends on during the call. `receiverClass`/
     // `methodName` are the SAME values already resolved at the call site
     // (empty receiverClass means a plain free-function call).
+    bool stringArgCopyType(const FunctionCall& call, size_t argIndex, const std::string& callee) const;
     std::string argNeedsExplicitCopyForReadOnlyContainerParam(const FunctionCall& call, size_t argIndex,
                                                                 const std::string& receiverClass,
                                                                 const std::string& methodName) const;

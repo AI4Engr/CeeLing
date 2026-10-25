@@ -181,6 +181,20 @@ public:
     // is fine (it cannot change or destroy a vector) -- only object/container
     // field/variable assignment and container-mutating method calls
     // disqualify. See classifyHeapPureFunctions.
+    // A `string` parameter the body never mutates (see classifyReadOnlyStringParams): lowered to
+    // `const std::string&`. className is "" for a free function.
+    bool isReadOnlyStringParam(const std::string& className, const std::string& functionName,
+                               const std::string& paramName) const;
+    // May the function/method named `bareName` (transitively) mutate a field called `fieldName`?
+    // True for an unknown callee. Decides whether a FIELD argument to a read-only string parameter
+    // can be passed by reference or needs an explicit copy.
+    bool calleeMayMutateField(const std::string& bareName, const std::string& fieldName) const;
+    // May it write a field that owns objects (a class handle or a container), or reassign an object
+    // parameter -- i.e. free an object that a field argument lives in?
+    bool calleeMayMutateObjects(const std::string& bareName) const;
+    // Does ANY function/method with this bare name have a read-only string parameter at `index`?
+    // (for a call whose receiver class the emitter could not resolve)
+    bool anyReadOnlyStringParamAt(const std::string& bareName, size_t index) const;
     bool isHeapPureFreeFunction(const std::string& fnName) const;
 
     // Same, for a class method.
@@ -343,6 +357,7 @@ private:
     // let them through. Runs independently; does not depend on or feed
     // classifyReadOnlyFreeFunctionParams's own sets.
     void classifyReadOnlyContainerParams(const Program& program);
+    void classifyReadOnlyStringParams(const Program& program);
     // Does expression `expr` use the bare identifier `paramName` (a
     // container-parameter candidate) in a way that disqualifies read-only
     // status? Disqualifying: assignment target, a subscript WRITE
@@ -504,6 +519,10 @@ private:
     // "fnName" / "className::methodName" -> heap-pure (see
     // isHeapPureFreeFunction/isHeapPureMethod).
     std::set<std::string> heapPureFreeFunctions_;
+    std::set<std::string> readOnlyStringParams_;  // "fn::param" / "Class::method::param"
+    std::map<std::string, std::set<std::string>> stringMutatedFieldsByFunction_;
+    std::set<std::string> objectFieldNames_;
+    std::set<std::string> readOnlyStringPositions_;  // "bare#index"
     std::set<std::string> heapPureMethods_;
 
     // Same key shapes as readOnlyContainerParams_/readOnlyMethodContainerParams_

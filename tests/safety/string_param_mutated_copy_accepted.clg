@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: hello! hello 6
+//@ reason: a string parameter the body MUTATES (`s.append`, `s = ...`) must stay a by-value copy: the
+//@ reason: caller's `text` is untouched. If the inference wrongly treated it as read-only the emitted
+//@ reason: const& would not even compile (append on a const string), so this also guards that direction.
+
+string shout(string s) {
+    s.append("!");
+    return s;
+}
+
+int rewritten(string s) {
+    s = "abcdef";
+    return s.length();
+}
+
+int main() {
+    string text = "hello";
+    string loud = shout(text);
+    std::cout << loud << " " << text << " " << rewritten(text) << std::endl;
+    return 0;
+}

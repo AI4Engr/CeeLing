@@ -174,6 +174,7 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     classifyValueTypeClasses(program);
     classifyReadOnlyFreeFunctionParams(program);
     classifyReadOnlyContainerParams(program);
+    classifyReadOnlyStringParams(program);
     classifyHeapPureFunctions(program);
     classifyLastUseFieldAssignedParams(program);
 
@@ -3704,6 +3705,291 @@ void SmartPointerAnalyzer::classifyHeapPureFunctions(const Program& program) {
     // isHeapPureMethod's query already builds, so no split is actually
     // needed -- store verbatim).
     heapPureMethods_ = std::move(pureMethods);
+}
+
+
+// ---- read-only string parameters ---------------------------------------------------------------------
+//
+// CeeLing has no reference parameters, so every `string` argument used to be copied on every call -- the
+// whole string, regardless of whether the callee ever changes it. A `string` parameter is READ-ONLY when the
+// body never mutates it: no `p.append/push_back/clear/reserve(...)`, no `p = ...`, no `p[i] = ...`, and it is
+// not handed to an ext_fn `ref string` (a mutable reference). Copying it onward (`x = p`, `f(p)`, `return p`,
+// `out.append(p)`) is just a read. Such a parameter is lowered to `const std::string&`.
+//
+// The one real hazard is aliasing. For a LOCAL or by-value parameter argument nothing the callee does can
+// reach the caller's string, but for a FIELD argument the callee might mutate that very field while it holds
+// a reference to it (or, without the reference, would have been looking at a snapshot). So the emitter passes
+// an explicit copy for a field argument unless the callee provably mutates no field of that name: this pass
+// also computes, per function and method, the set of field names it (transitively) mutates -- a name-based,
+// conservative set, with "*" meaning "may mutate anything" (a call it could not resolve to code it can see).
+namespace {
+bool isStringMutatorMethod(const std::string& m) {
+    return m == "append" || m == "push_back" || m == "clear" || m == "reserve" || m == "resize" ||
+           m == "insert" || m == "erase" || m == "pop_back" || m == "assign" || m == "replace" ||
+           m == "copyWithin";
+}
+}  // namespace
+
+void SmartPointerAnalyzer::classifyReadOnlyStringParams(const Program& program) {
+    struct Fn {
+        std::string key;                  // "name" for a free function, "Class::name" for a method
+        std::string bareName;
+        std::string className;            // "" for a free function
+        const std::vector<std::pair<std::string, std::string>>* params = nullptr;
+        const std::vector<StatementPtr>* body = nullptr;
+        bool skipParams = false;          // virtual / override / in an inheritance hierarchy
+    };
+    std::vector<Fn> fns;
+    std::set<std::string> freeNames;
+    std::map<std::string, std::set<std::string>> methodsByName;  // bare method name -> class keys
+    std::set<std::string> classesInHierarchy;
+    for (const auto& stmt : program.statements) {
+        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            if (!cls->baseClass.empty()) {
+                classesInHierarchy.insert(cls->name);
+                classesInHierarchy.insert(cls->baseClass);
+            }
+        }
+    }
+    std::map<std::string, std::set<std::string>> fieldNamesByClass;
+    objectFieldNames_.clear();
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            Fn f;
+            f.key = fn->name;
+            f.bareName = fn->name;
+            f.params = &fn->parameters;
+            f.body = &fn->body;
+            fns.push_back(f);
+            freeNames.insert(fn->name);
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                    fieldNamesByClass[cls->name].insert(field->identifier);
+                    // a field that owns objects (a class handle or a container): writing it can free them
+                    if (!isPrimitiveType(field->type)) objectFieldNames_.insert(field->identifier);
+                } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    if (!method->specializationArg.empty() || !method->typeParameter.empty()) continue;
+                    Fn f;
+                    f.key = cls->name + "::" + method->name;
+                    f.bareName = method->name;
+                    f.className = cls->name;
+                    f.params = &method->parameters;
+                    f.body = &method->body;
+                    f.skipParams = method->isVirtual || method->isOverride ||
+                                   classesInHierarchy.count(cls->name) > 0;
+                    fns.push_back(f);
+                    methodsByName[method->name].insert(f.key);
+                } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    Fn f;
+                    f.key = cls->name + "::" + ctor->name;
+                    f.bareName = ctor->name;
+                    f.className = cls->name;
+                    f.params = &ctor->parameters;
+                    f.body = &ctor->body;
+                    f.skipParams = true;  // constructors keep by-value string parameters
+                    fns.push_back(f);
+                    methodsByName["<ctor>" + cls->name].insert(f.key);
+                }
+            }
+        }
+    }
+    // ext_fn `ref string` parameters are mutable references
+    std::map<std::string, std::set<size_t>> extFnMutableStringArgs;
+    for (const auto& stmt : program.statements) {
+        auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt.get());
+        if (extFn == nullptr) continue;
+        for (size_t idx : extFn->refParams) {
+            if (idx < extFn->parameters.size() && isStringType(extFn->parameters[idx].first)) {
+                extFnMutableStringArgs[extFn->name].insert(idx);
+            }
+        }
+    }
+
+    struct Facts {
+        std::set<std::string> mutatedParams;
+        std::set<std::string> mutatedFields;  // may contain "*"
+        std::set<std::string> calls;          // keys of user functions/methods (transitive closure below)
+    };
+    std::map<std::string, Facts> facts;
+
+    // one walk per function
+    for (const auto& f : fns) {
+        Facts& fa = facts[f.key];
+        std::set<std::string> locals;
+        for (const auto& [ptype, pname] : *f.params) locals.insert(pname);
+        std::function<void(const std::vector<StatementPtr>&)> collectLocals =
+            [&](const std::vector<StatementPtr>& stmts) {
+                for (const auto& sp : stmts) {
+                    if (auto d = dynamic_cast<const VariableDeclaration*>(sp.get())) locals.insert(d->identifier);
+                    else if (auto c = dynamic_cast<const ContainerDeclaration*>(sp.get())) locals.insert(c->identifier);
+                    else if (auto i = dynamic_cast<const IfStatement*>(sp.get())) { collectLocals(i->body); collectLocals(i->elseBody); }
+                    else if (auto w = dynamic_cast<const WhileStatement*>(sp.get())) collectLocals(w->body);
+                    else if (auto fo = dynamic_cast<const ForStatement*>(sp.get())) { locals.insert(fo->loopVarName); collectLocals(fo->body); }
+                    else if (auto t = dynamic_cast<const TryStatement*>(sp.get())) { collectLocals(t->body); collectLocals(t->catchBody); }
+                }
+            };
+        collectLocals(*f.body);
+
+        // name of the field a mutation lands on, or "" when the receiver is a local
+        auto fieldOfReceiver = [&](const Expression* recv) -> std::string {
+            if (auto id = dynamic_cast<const Identifier*>(recv)) {
+                return locals.count(id->name) > 0 ? std::string() : id->name;
+            }
+            if (auto m = dynamic_cast<const MemberAccess*>(recv)) return m->member;
+            if (auto sub = dynamic_cast<const SubscriptExpression*>(recv)) {
+                if (auto id = dynamic_cast<const Identifier*>(sub->object.get())) {
+                    return locals.count(id->name) > 0 ? std::string() : id->name;
+                }
+                if (auto m = dynamic_cast<const MemberAccess*>(sub->object.get())) return m->member;
+            }
+            return std::string();
+        };
+        auto noteMutation = [&](const Expression* recv) {
+            if (auto id = dynamic_cast<const Identifier*>(recv)) {
+                if (locals.count(id->name) > 0) { fa.mutatedParams.insert(id->name); return; }
+            }
+            if (auto sub = dynamic_cast<const SubscriptExpression*>(recv)) {
+                if (auto id = dynamic_cast<const Identifier*>(sub->object.get()); id != nullptr && locals.count(id->name) > 0) {
+                    fa.mutatedParams.insert(id->name);
+                    return;
+                }
+            }
+            const std::string field = fieldOfReceiver(recv);
+            if (!field.empty()) fa.mutatedFields.insert(field);
+            else fa.mutatedFields.insert("*");
+        };
+
+        std::function<void(const Expression*)> visitExpr = [&](const Expression* e) {
+            if (e == nullptr) return;
+            if (auto b = dynamic_cast<const BinaryExpression*>(e)) { visitExpr(b->left.get()); visitExpr(b->right.get()); return; }
+            if (auto u = dynamic_cast<const UnaryExpression*>(e)) { visitExpr(u->operand.get()); return; }
+            if (auto m = dynamic_cast<const MemberAccess*>(e)) { visitExpr(m->object.get()); return; }
+            if (auto s = dynamic_cast<const SubscriptExpression*>(e)) { visitExpr(s->object.get()); visitExpr(s->index.get()); return; }
+            if (auto n = dynamic_cast<const NewExpression*>(e)) { for (const auto& a : n->arguments) visitExpr(a.get()); return; }
+            if (auto call = dynamic_cast<const FunctionCall*>(e)) {
+                for (const auto& a : call->arguments) visitExpr(a.get());
+                if (call->callee) {
+                    visitExpr(call->callee.get());
+                    if (auto m = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+                        if (isStringMutatorMethod(m->member)) noteMutation(m->object.get());
+                        // a call to a user method of that name (receiver class not resolved here: every class
+                        // that has a method of this name is a candidate)
+                        auto it = methodsByName.find(m->member);
+                        if (it != methodsByName.end()) {
+                            for (const auto& k : it->second) fa.calls.insert(k);
+                        }
+                    }
+                } else {
+                    const std::string& name = call->function_name;
+                    if (freeNames.count(name) > 0) fa.calls.insert(name);
+                    // implicit-this call to a method of the current class
+                    if (!f.className.empty()) {
+                        auto it = methodsByName.find(name);
+                        if (it != methodsByName.end()) for (const auto& k : it->second) fa.calls.insert(k);
+                    }
+                    // a constructor-style or unknown name resolves to nothing we can see: no effect on fields
+                    if (auto ext = extFnMutableStringArgs.find(name); ext != extFnMutableStringArgs.end()) {
+                        for (size_t idx : ext->second) {
+                            if (idx < call->arguments.size()) noteMutation(call->arguments[idx].get());
+                        }
+                    }
+                }
+                return;
+            }
+        };
+        std::function<void(const std::vector<StatementPtr>&)> visitStmts = [&](const std::vector<StatementPtr>& stmts) {
+            for (const auto& sp : stmts) {
+                const Statement* st = sp.get();
+                if (auto d = dynamic_cast<const VariableDeclaration*>(st)) visitExpr(d->expression.get());
+                else if (auto a = dynamic_cast<const AssignmentStatement*>(st)) {
+                    visitExpr(a->expression.get());
+                    if (a->target) {
+                        visitExpr(a->target.get());
+                        noteMutation(a->target.get());
+                    } else if (locals.count(a->variable) > 0) {
+                        fa.mutatedParams.insert(a->variable);
+                        // reassigning an object-typed PARAMETER drops the handle the caller passed in, which can
+                        // free the object a field argument lives in
+                        for (const auto& [ptype2, pname2] : *f.params) {
+                            if (pname2 == a->variable && !isPrimitiveType(ptype2)) fa.mutatedFields.insert("*");
+                        }
+                    } else {
+                        fa.mutatedFields.insert(a->variable);
+                    }
+                }
+                else if (auto es = dynamic_cast<const ExpressionStatement*>(st)) visitExpr(es->expression.get());
+                else if (auto r = dynamic_cast<const ReturnStatement*>(st)) visitExpr(r->expression.get());
+                else if (auto th = dynamic_cast<const ThrowStatement*>(st)) visitExpr(th->expression.get());
+                else if (auto i = dynamic_cast<const IfStatement*>(st)) { visitExpr(i->condition.get()); visitStmts(i->body); visitStmts(i->elseBody); }
+                else if (auto w = dynamic_cast<const WhileStatement*>(st)) { visitExpr(w->condition.get()); visitStmts(w->body); }
+                else if (auto fo = dynamic_cast<const ForStatement*>(st)) { visitExpr(fo->container.get()); visitStmts(fo->body); }
+                else if (auto t = dynamic_cast<const TryStatement*>(st)) { visitStmts(t->body); visitStmts(t->catchBody); }
+            }
+        };
+        visitStmts(*f.body);
+    }
+
+    // transitive closure of the mutated-field sets over the call graph
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto& [key, fa] : facts) {
+            for (const auto& callee : std::set<std::string>(fa.calls)) {
+                auto it = facts.find(callee);
+                if (it == facts.end()) continue;
+                for (const auto& fld : it->second.mutatedFields) {
+                    if (fa.mutatedFields.insert(fld).second) changed = true;
+                }
+            }
+        }
+    }
+
+    readOnlyStringParams_.clear();
+    readOnlyStringPositions_.clear();
+    stringMutatedFieldsByFunction_.clear();
+    for (const auto& f : fns) {
+        const Facts& fa = facts[f.key];
+        // keyed by the BARE callee name (free function or method): the emitter does not always know the
+        // receiver's class, so a call site unions every function/method of that name
+        auto& set = stringMutatedFieldsByFunction_[f.bareName];
+        set.insert(fa.mutatedFields.begin(), fa.mutatedFields.end());
+        if (f.skipParams) continue;
+        for (const auto& [ptype, pname] : *f.params) {
+            if (!isStringType(ptype)) continue;
+            if (fa.mutatedParams.count(pname) > 0) continue;
+            readOnlyStringParams_.insert(f.key + "::" + pname);
+            for (size_t pi = 0; pi < f.params->size(); ++pi) {
+                if ((*f.params)[pi].second == pname) readOnlyStringPositions_.insert(f.bareName + "#" + std::to_string(pi));
+            }
+        }
+    }
+}
+
+bool SmartPointerAnalyzer::isReadOnlyStringParam(const std::string& className, const std::string& functionName,
+                                                 const std::string& paramName) const {
+    const std::string key = className.empty() ? functionName : className + "::" + functionName;
+    return readOnlyStringParams_.count(key + "::" + paramName) > 0;
+}
+
+bool SmartPointerAnalyzer::anyReadOnlyStringParamAt(const std::string& bareName, size_t index) const {
+    return readOnlyStringPositions_.count(bareName + "#" + std::to_string(index)) > 0;
+}
+
+bool SmartPointerAnalyzer::calleeMayMutateObjects(const std::string& bareName) const {
+    auto it = stringMutatedFieldsByFunction_.find(bareName);
+    if (it == stringMutatedFieldsByFunction_.end()) return true;
+    if (it->second.count("*") > 0) return true;
+    for (const auto& fld : it->second) {
+        if (objectFieldNames_.count(fld) > 0) return true;
+    }
+    return false;
+}
+
+bool SmartPointerAnalyzer::calleeMayMutateField(const std::string& bareName, const std::string& fieldName) const {
+    auto it = stringMutatedFieldsByFunction_.find(bareName);
+    if (it == stringMutatedFieldsByFunction_.end()) return true;  // unknown callee: assume it may
+    return it->second.count("*") > 0 || it->second.count(fieldName) > 0;
 }
 
 bool SmartPointerAnalyzer::isReadOnlyFreeFunctionParam(const std::string& fnName,

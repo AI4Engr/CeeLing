@@ -1,0 +1,30 @@
+//@ expect: accept
+//@ run: 5 5 abcdef 6
+//@ reason: the aliasing hazard of a const& parameter: the ARGUMENT is a field the callee rewrites. `grow`
+//@ reason: reads its parameter, appends to the field it was given, then reads the parameter again. By value
+//@ reason: the second read still sees the original 5 characters; through a reference it would see 6 (or a
+//@ reason: dangling reference after reallocation). The emitter must pass an explicit copy for a field
+//@ reason: argument when the callee may mutate a field of that name -- the output 5 5 shows it did.
+
+class Buffer {
+public:
+    string data;
+    Buffer() { data = "abcde"; }
+    int grow(string snapshot) {
+        int before = snapshot.length();
+        data.append("f");
+        int after = snapshot.length();
+        std::cout << before << " " << after << " ";
+        return data.length();
+    }
+    int callWithOwnField() {
+        return grow(data);
+    }
+};
+
+int main() {
+    Buffer b = new Buffer();
+    int n = b.callWithOwnField();
+    std::cout << b.data << " " << n << std::endl;
+    return 0;
+}

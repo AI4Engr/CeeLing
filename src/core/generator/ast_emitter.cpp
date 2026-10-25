@@ -639,6 +639,42 @@ std::pair<std::string, std::string> AstEmitter::calleeParam(const FunctionCall& 
     return isClassType(ptype) ? std::make_pair(ptype, pname) : std::pair<std::string, std::string>{};
 }
 
+// Must the string argument at `argIndex` be copied (rather than bound by const&) at this call? Only if it
+// is a live alias the callee could reach: rooted in a field of this object, and the callee may rewrite that
+// field (or free the objects it lives in).
+bool AstEmitter::stringArgCopyType(const FunctionCall& call, size_t argIndex, const std::string& callee) const {
+    const Expression* sarg = call.arguments[argIndex].get();
+    const Expression* root = sarg;
+    std::string fieldName;
+    bool sawMember = false;
+    while (true) {
+        if (auto m = dynamic_cast<const MemberAccess*>(root)) {
+            if (!sawMember) { fieldName = m->member; sawMember = true; }
+            root = m->object.get();
+        } else if (auto sub = dynamic_cast<const SubscriptExpression*>(root)) {
+            root = sub->object.get();
+        } else {
+            break;
+        }
+    }
+    bool rootIsField = false;
+    if (auto id = dynamic_cast<const Identifier*>(root)) {
+        rootIsField = isCurrentField(id->name);
+        if (!sawMember) fieldName = id->name;
+        if (!sawMember && !rootIsField) return false;  // a plain local or parameter: unreachable by the callee
+    } else if (dynamic_cast<const ThisExpression*>(root) != nullptr) {
+        rootIsField = true;
+    } else {
+        return false;  // a literal, or rooted in a call result: not a live alias of anything
+    }
+    // An argument living inside a LOCAL's object (`item.key` with `item` a local handle) can still be
+    // rewritten by the callee through another handle to the same object; the name-based check below covers
+    // a rewrite of that field, and the object check covers freeing it.
+    if (analyzer_.calleeMayMutateField(callee, fieldName)) return true;
+    if (analyzer_.calleeMayMutateObjects(callee)) return true;
+    return false;
+}
+
 std::string AstEmitter::argNeedsExplicitCopyForReadOnlyContainerParam(const FunctionCall& call, size_t argIndex,
                                                                        const std::string& receiverClass,
                                                                        const std::string& methodName) const {
@@ -646,6 +682,14 @@ std::string AstEmitter::argNeedsExplicitCopyForReadOnlyContainerParam(const Func
     // calleeParam's own lookup (kept separate rather than widening
     // calleeParam's contract, which is documented class-type-only).
     const std::vector<std::pair<std::string, std::string>>* params = nullptr;
+    if (receiverClass.empty() && call.callee != nullptr && !methodName.empty()) {
+        // A method call whose receiver's class could not be resolved: the callee might take a `const&`
+        // string at this position. Decide from the name alone, conservatively.
+        if (analyzer_.anyReadOnlyStringParamAt(methodName, argIndex) && stringArgCopyType(call, argIndex, methodName)) {
+            return "std::string";
+        }
+        return "";
+    }
     if (!receiverClass.empty()) {
         auto clsIt = classMethodParams_.find(receiverClass);
         if (clsIt == classMethodParams_.end()) return "";
@@ -662,6 +706,12 @@ std::string AstEmitter::argNeedsExplicitCopyForReadOnlyContainerParam(const Func
     }
     if (argIndex >= params->size()) return "";
     const auto& [ptype, pname] = (*params)[argIndex];
+    if (isStringType(ptype)) {
+        if (!analyzer_.isReadOnlyStringParam(receiverClass, receiverClass.empty() ? call.function_name : methodName, pname)) {
+            return "";
+        }
+        return stringArgCopyType(call, argIndex, receiverClass.empty() ? call.function_name : methodName) ? ptype : std::string();
+    }
     if (!isVectorType(ptype)) return "";
     const bool isReadOnlyContainer = receiverClass.empty()
         ? analyzer_.isReadOnlyContainerParam(call.function_name, pname)
@@ -1659,6 +1709,11 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
             } else {
                 sig += cppTypeFor(ptype, pname) + "& " + pname;
             }
+            noteVar(pname, VarKind::Value);
+        } else if (isStringType(ptype) && analyzer_.isReadOnlyStringParam(ownerClass, ownerClass.empty() ? name : methodName, pname)) {
+            // A string the body never mutates (SmartPointerAnalyzer::classifyReadOnlyStringParams): passed by
+            // const reference instead of copying the whole string on every call.
+            sig += "const std::string& " + pname;
             noteVar(pname, VarKind::Value);
         } else if (isVectorType(ptype) &&
                    (ownerClass.empty() ? analyzer_.isReadOnlyContainerParam(name, pname)
