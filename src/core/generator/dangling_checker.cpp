@@ -636,6 +636,7 @@ void DanglingChecker::checkSpawnCall(const FunctionCall* call) {
             DanglingError e;
             e.line = call->loc.line;
             e.column = call->loc.column;
+            e.code = "spawn-captures-object";
             e.message = "`spawn` cannot move `" + id->name + "` into a new thread: " + problem;
             e.help = "an object may be moved into a thread only if nothing else can reach it and nothing about "
                      "it is hidden: make the data a `struct` (copied), or serialize it to a string and rebuild it "
@@ -651,6 +652,7 @@ void DanglingChecker::checkSpawnCall(const FunctionCall* call) {
                 DanglingError e;
                 e.line = call->loc.line;
                 e.column = call->loc.column;
+                e.code = "spawn-captures-object";
                 e.message = "internal: the spawn job's field `" + f->identifier + "` was not inferred unique";
                 e.help = "rejected rather than risk a shared handle crossing into the new thread";
                 errors_.push_back(e);

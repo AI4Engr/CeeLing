@@ -49,6 +49,7 @@ Each chapter: *the C++ problem → how CeeLing solves it → proof by example.*
 17. [Sealed Escape Hatches](17-escape-hatches.md) — `.get()`, casts, raw `new`
 18. [Implementation Notes](18-implementation-notes.md) — what is actually built, and how
 19. [Case Study: cJSON's 33 Published Vulnerabilities](19-case-study-cjson.md) — the claims above, tested on a real library
+20. [Threads — Only Values Cross](20-threads.md) — the one carve-out from the single-thread contract, and its limits
 
 ## Part III — Context
 

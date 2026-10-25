@@ -349,7 +349,7 @@ int main(int argc, char* argv[]) {
         std::vector<DanglingError> danglingErrors = danglingChecker.check(*program, analyzer);
         if (!danglingErrors.empty()) {
             for (const auto& err : danglingErrors) {
-                std::cerr << "error[semantic/use-after-move]: " << err.message << "\n";
+                std::cerr << "error[semantic/" << err.code << "]: " << err.message << "\n";
                 if (err.line > 0) {
                     std::cerr << "  --> " << inputFile << ":" << err.line << ":" << err.column << "\n";
                 }

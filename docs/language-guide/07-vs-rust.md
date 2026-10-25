@@ -17,7 +17,9 @@ valuable, and non-imitable position: **Rust cannot offer Eigen.**
 This is the *other half* of Rust's safety ("fearless concurrency") and its biggest
 differentiator. It is **out of scope for v1**. Consequence: **under multithreading the
 memory-safety promise does not hold, and the compiler will not stop you.** This is the
-largest gap, and it is by design.
+largest gap, and it is by design. (The one narrow exception, `spawn`, lets a thread start with
+only copied values and moved-in flat objects; it proves nothing about shared state reached any
+other way. See [Chapter 20](20-threads.md).)
 
 ### 2. Aliasing guarantees — deliberately not attempted
 

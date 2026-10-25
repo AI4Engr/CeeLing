@@ -2,7 +2,8 @@
 
 > **If a program compiles under CeeLing, it contains no dangling references.**
 > *(Single-threaded. Concurrency is out of scope for v1 — see
-> [Chapter 7](07-vs-rust.md).)*
+> [Chapter 7](07-vs-rust.md) — except that threads can be started with only values and
+> moved-in objects crossing the boundary: [Chapter 20](20-threads.md).)*
 
 This is a **falsifiable, testable promise**, not a slogan. It is backed by fixtures:
 the `tests/safety/*.clg` files are the test suite for the contract, run via

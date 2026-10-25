@@ -14,7 +14,9 @@ memory safety means closing every item below.
   over-reject to the point of unusability.
 - **Single-thread scope for v1.** Data-race / concurrency safety (Rust's Send/Sync
   half) is **explicitly out of scope for v1.** The contract guarantees single-threaded
-  memory safety only; this limitation is stated honestly to users.
+  memory safety only; this limitation is stated honestly to users. The single exception is
+  `spawn` ([Chapter 20](20-threads.md)): the compiler checks what is handed to a new thread,
+  and nothing else about threads.
 
 ## The threat table
 
@@ -42,7 +44,7 @@ memory safety means closing every item below.
 | 17 | `union` / `variant` type confusion | forbid raw union; guard variant | static |
 | 18 | Read of uninitialized variable | require definite-init | static |
 | **Out of scope (v1)** | | | |
-| 19 | Data races / concurrency | — (single-thread contract) | out of scope |
+| 19 | Data races / concurrency | — (single-thread contract); the one exception is `spawn`, which admits only copied values and moved-in flat objects ([Chapter 20](20-threads.md)) | static for what crosses into a spawned job; everything else out of scope |
 
 ## Key implications
 

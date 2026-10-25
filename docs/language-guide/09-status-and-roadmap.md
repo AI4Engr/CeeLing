@@ -612,7 +612,9 @@ Compiler-inserted bounds checks (#11) and null checks (#9) that panic/throw.
 
 ## Out of scope for v1
 
-Data-race / concurrency safety (#19). See [Chapter 7](07-vs-rust.md).
+Data-race / concurrency safety (#19). See [Chapter 7](07-vs-rust.md). The `spawn` carve-out
+(values copied, flat objects moved; implemented 2026-10-24) is described in
+[Chapter 20](20-threads.md).
 
 ## What "done enough" means
 

@@ -15,6 +15,9 @@ struct DanglingError {
     int column = 0;
     std::string message;
     std::string help;
+    // The `semantic/<code>` category printed with the error; every error of this checker used to be
+    // labelled use-after-move, which was wrong for the ones that are not.
+    std::string code = "use-after-move";
 };
 
 // Minimal single-pass use-after-move / dangling checker (Phase 2 seed).
