@@ -1,0 +1,25 @@
+//@ expect: reject
+//@ reason: an object may not be captured by a spawned job. Its graph can have another live owner in the
+//@ reason: creating thread, and the job would run concurrently with that owner -- an unchecked data race.
+//@ reason: Only plain values (copied on capture) may cross into a new thread.
+
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Counter c = new Counter();
+    spawn(closure Job [c] () {
+        c.n = c.n + 1;
+    });
+    c.n = c.n + 1;
+    return 0;
+}

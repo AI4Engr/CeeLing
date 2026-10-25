@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ reason: strings and primitives are COPIED into the job, so the creating thread keeps its own value and may
+//@ reason: go on using (and changing) it -- no sharing exists. Contrast with an object capture, which is refused.
+//@ run: job saw 5
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    int n = 5;
+    spawn(closure Job [n] () {
+        std::cout << "job saw " << n << std::endl;
+    });
+    n = n + 1;
+    return 0;
+}

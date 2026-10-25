@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ reason: spawn takes a closure LITERAL, because only the capture list is checked for what crosses into the
+//@ reason: new thread. Spawning an already-built object would skip that check.
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Job j = new Job();
+    spawn(j);
+    return 0;
+}

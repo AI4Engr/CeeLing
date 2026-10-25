@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ reason: the job body sees only its captures and parameters. A local of the creating function that is not
+//@ reason: in the capture list is simply not visible -- it must not leak in by name.
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    int hidden = 5;
+    int n = 1;
+    spawn(closure Job [n] () {
+        std::cout << hidden << std::endl;
+    });
+    return 0;
+}

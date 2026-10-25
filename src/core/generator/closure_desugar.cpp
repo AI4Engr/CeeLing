@@ -1,5 +1,8 @@
 #include "closure_desugar.h"
 
+#include "library_summary.h"
+
+#include <algorithm>
 #include <map>
 #include <set>
 #include <sstream>
@@ -146,9 +149,90 @@ void walkBody(std::vector<StatementPtr>& body, ScopeStack& scope,
              const std::map<std::string, const ClassDeclaration*>& classesByName,
              std::vector<StatementPtr>& pendingClasses);
 
+// Nesting depth of `spawn` bodies currently being walked: a `spawn` inside a `spawn` body is rejected
+// (v1 -- no unbounded thread multiplication, and the inner body's captures would be a second hop the
+// sendable-value check below was not written for).
+int g_spawnDepth = 0;
+
+// A value that may cross into another thread: copied on capture, so nothing the new thread can reach is
+// reachable from the creating thread. Primitives (incl. string) and vectors of primitives. Everything else
+// -- every class-typed object, whatever pointer kind it was inferred -- is refused: an object's graph can
+// be shared with a live owner in the creating thread, and a closure capturing a shared_ptr would carry a
+// live alias of the SAME object across (the hole this rule exists to close).
+bool isSendableValueType(const std::string& type) {
+    if (isPrimitiveType(type)) return true;
+    return isVectorType(type) && isPrimitiveType(vectorElementType(type));
+}
+
+// Every name a `spawn` body reads or writes, and every name it declares itself. Used to refuse a body that
+// reaches an enclosing local that was not captured: in C++ it would fail to compile anyway, but CeeLing's
+// own message is clearer about the rule, and the rule should not depend on the C++ compile gate.
+void collectNamesInExpr(const Expression* e, std::set<std::string>& used) {
+    if (e == nullptr) return;
+    if (auto id = dynamic_cast<const Identifier*>(e)) {
+        used.insert(id->name);
+    } else if (auto call = dynamic_cast<const FunctionCall*>(e)) {
+        collectNamesInExpr(call->callee.get(), used);
+        for (const auto& a : call->arguments) collectNamesInExpr(a.get(), used);
+    } else if (auto nw = dynamic_cast<const NewExpression*>(e)) {
+        for (const auto& a : nw->arguments) collectNamesInExpr(a.get(), used);
+    } else if (auto bin = dynamic_cast<const BinaryExpression*>(e)) {
+        collectNamesInExpr(bin->left.get(), used);
+        collectNamesInExpr(bin->right.get(), used);
+    } else if (auto un = dynamic_cast<const UnaryExpression*>(e)) {
+        collectNamesInExpr(un->operand.get(), used);
+    } else if (auto mem = dynamic_cast<const MemberAccess*>(e)) {
+        collectNamesInExpr(mem->object.get(), used);
+    } else if (auto sub = dynamic_cast<const SubscriptExpression*>(e)) {
+        collectNamesInExpr(sub->object.get(), used);
+        collectNamesInExpr(sub->index.get(), used);
+    } else if (auto inner = dynamic_cast<const ClosureExpression*>(e)) {
+        // a closure literal inside the body: its capture list reads names of THIS body; its own body is
+        // checked on its own when it is desugared
+        for (const auto& c : inner->captures) used.insert(c);
+    }
+}
+
+void collectNamesInBody(const std::vector<StatementPtr>& body, std::set<std::string>& used,
+                        std::set<std::string>& declared) {
+    for (const auto& stmt : body) {
+        if (auto d = dynamic_cast<const VariableDeclaration*>(stmt.get())) {
+            declared.insert(d->identifier);
+            collectNamesInExpr(d->expression.get(), used);
+        } else if (auto c = dynamic_cast<const ContainerDeclaration*>(stmt.get())) {
+            declared.insert(c->identifier);
+        } else if (auto a = dynamic_cast<const AssignmentStatement*>(stmt.get())) {
+            used.insert(a->variable);
+            collectNamesInExpr(a->expression.get(), used);
+            collectNamesInExpr(a->target.get(), used);
+        } else if (auto es = dynamic_cast<const ExpressionStatement*>(stmt.get())) {
+            collectNamesInExpr(es->expression.get(), used);
+        } else if (auto r = dynamic_cast<const ReturnStatement*>(stmt.get())) {
+            collectNamesInExpr(r->expression.get(), used);
+        } else if (auto t = dynamic_cast<const ThrowStatement*>(stmt.get())) {
+            collectNamesInExpr(t->expression.get(), used);
+        } else if (auto i = dynamic_cast<const IfStatement*>(stmt.get())) {
+            collectNamesInExpr(i->condition.get(), used);
+            collectNamesInBody(i->body, used, declared);
+            collectNamesInBody(i->elseBody, used, declared);
+        } else if (auto w = dynamic_cast<const WhileStatement*>(stmt.get())) {
+            collectNamesInExpr(w->condition.get(), used);
+            collectNamesInBody(w->body, used, declared);
+        } else if (auto f = dynamic_cast<const ForStatement*>(stmt.get())) {
+            declared.insert(f->loopVarName);
+            collectNamesInExpr(f->container.get(), used);
+            collectNamesInBody(f->body, used, declared);
+        } else if (auto tr = dynamic_cast<const TryStatement*>(stmt.get())) {
+            declared.insert(tr->catchIdentifier);
+            collectNamesInBody(tr->body, used, declared);
+            collectNamesInBody(tr->catchBody, used, declared);
+        }
+    }
+}
+
 DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
                          const std::map<std::string, const ClassDeclaration*>& classesByName,
-                         std::vector<StatementPtr>& pendingClasses) {
+                         std::vector<StatementPtr>& pendingClasses, bool isSpawn = false) {
     auto ifaceIt = classesByName.find(closure.interfaceName);
     if (ifaceIt == classesByName.end()) {
         reject("closure-unknown-interface", &closure,
@@ -161,6 +245,13 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
     const ClassDeclaration& iface = *ifaceIt->second;
     const MethodDeclaration* ifaceMethod = findSoleVirtualMethod(iface, closure);
     checkSignatureMatches(closure, *ifaceMethod, iface.name);
+    if (isSpawn && (ifaceMethod->returnType != "void" || !ifaceMethod->parameters.empty())) {
+        reject("spawn-interface-shape", &closure,
+               "`spawn` needs a closure whose interface method is `void run()` -- `" + iface.name + "::" +
+                   ifaceMethod->name + "` is not",
+               "a spawned job has no caller to return to and no arguments to receive; hand data in through the "
+               "capture list and results out through an ext_fn such as app_return");
+    }
 
     // Resolve every capture's type from the enclosing scope BEFORE building
     // anything -- reject on the first unresolvable/forbidden name rather than
@@ -193,7 +284,32 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
                    "dangling-reference hole this language exists to prevent -- capture the "
                    "observer's OWNER instead, or restructure so the closure does not need it");
         }
+        if (isSpawn && !isSendableValueType(entry->type)) {
+            reject("spawn-captures-object", &closure,
+                   "`spawn` captures `" + name + "` of type `" + entry->type + "`, which is not a plain value",
+                   "only primitives, string and std::vector of primitives may cross into a new thread: they are "
+                   "copied, so no memory is shared with the creating thread. An object (whatever pointer kind "
+                   "was inferred for it) may have another live owner here, so it is refused -- serialize it to a "
+                   "string first (e.g. printUnformatted(item)) and rebuild it inside the thread");
+        }
         resolvedCaptures.emplace_back(entry->type, name);
+    }
+
+
+    if (isSpawn) {
+        std::set<std::string> used, declared;
+        collectNamesInBody(closure.body, used, declared);
+        for (const auto& u : used) {
+            if (declared.count(u) > 0) continue;
+            if (std::find(closure.captures.begin(), closure.captures.end(), u) != closure.captures.end()) continue;
+            bool isParam = false;
+            for (const auto& p : closure.parameters) if (p.second == u) isParam = true;
+            if (isParam || scope.find(u) == nullptr) continue;
+            reject("spawn-uncaptured-name", &closure,
+                   "the `spawn` body uses `" + u + "`, which belongs to the enclosing scope but is not in the capture list",
+                   "a spawned job sees only what it captures (copies of plain values); add `" + u +
+                       "` to the capture list if it is a plain value, or pass what you need another way");
+        }
     }
 
     const std::string closureClassName = "__closure_" + std::to_string(g_closureCounter++);
@@ -256,7 +372,9 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
     for (const auto& [ptype, pname] : closure.parameters) {
         innerScope.declare(pname, ptype, false);
     }
+    if (isSpawn) ++g_spawnDepth;
     walkBody(closure.body, innerScope, classesByName, pendingClasses);
+    if (isSpawn) --g_spawnDepth;
 
     // The overriding method: same name/return type/parameters as the
     // interface's sole virtual method, body is the closure's own body (now
@@ -301,6 +419,32 @@ void rewriteExpr(ExpressionPtr& expr, const ScopeStack& scope,
         return;
     }
     if (auto call = dynamic_cast<FunctionCall*>(expr.get())) {
+        if (call->callee == nullptr && call->function_name == "cling::spawn") {
+            reject("spawn-reserved", call, "`cling::spawn` is reserved for the compiler",
+                   "write `spawn(closure Job [values] () { ... })` instead -- calling the runtime helper directly "
+                   "would skip the check on what is captured");
+        }
+        if (call->callee == nullptr && call->function_name == "spawn") {
+            auto closure = call->arguments.size() == 1
+                ? dynamic_cast<ClosureExpression*>(call->arguments[0].get()) : nullptr;
+            if (closure == nullptr) {
+                reject("spawn-form", call, "`spawn` takes exactly one closure literal",
+                       "write `spawn(closure Job [values] () { ... })` -- a named object cannot be spawned, "
+                       "because only the capture list is checked for what crosses into the new thread");
+            }
+            if (g_spawnDepth > 0) {
+                reject("spawn-nested", call, "`spawn` inside a `spawn` body",
+                       "a spawned job may not start more threads (v1) -- start both from the creating thread");
+            }
+            DesugarResult result = desugarOne(*closure, scope, classesByName, pendingClasses, true);
+            pendingClasses.push_back(std::move(result.closureClass));
+            std::vector<ExpressionPtr> args;
+            args.push_back(std::move(result.replacement));
+            auto replaced = std::make_unique<FunctionCall>("cling::spawn", std::move(args));
+            replaced->loc = call->loc;
+            expr = std::move(replaced);
+            return;
+        }
         for (auto& arg : call->arguments) {
             rewriteExpr(arg, scope, classesByName, pendingClasses);
         }
@@ -308,6 +452,10 @@ void rewriteExpr(ExpressionPtr& expr, const ScopeStack& scope,
         return;
     }
     if (auto neww = dynamic_cast<NewExpression*>(expr.get())) {
+        if (neww->className.rfind("__closure_", 0) == 0) {
+            reject("closure-reserved-name", neww, "`" + neww->className + "` is a compiler-generated name",
+                   "a closure class cannot be constructed by hand -- write a `closure` expression");
+        }
         // `new Holder(closure ...)` -- a closure passed as a CONSTRUCTOR
         // argument, not a plain function-call argument. Found as a real gap
         // via probe: without this case, a closure inside `new T(...)`'s

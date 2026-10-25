@@ -129,7 +129,7 @@ run_one_fixture() {
                 # -O2, deliberately: libstdc++ turns its own operator[] assertions ON for unoptimized
                 # builds only, so without it a fixture could "pass" because the LIBRARY aborted, not
                 # because the check CeeLing inserted fired. Optimized, only our check can stop it.
-                if ! "$CXX" -std=c++17 -O2 "$gen" -o "$exe" >/dev/null 2>&1; then
+                if ! "$CXX" -std=c++17 -pthread -O2 "$gen" -o "$exe" >/dev/null 2>&1; then
                     printf '%-48s %-8s %s\n' "$name" "$expect" "FAIL (generated C++ does not compile)" > "$report_file"
                     echo "FAIL" > "$status_file"
                     return 0
@@ -152,7 +152,7 @@ run_one_fixture() {
                         ;;
                 esac
             elif [ -n "$want_run" ]; then
-                if ! "$CXX" -std=c++17 "$gen" -o "$exe" >/dev/null 2>&1; then
+                if ! "$CXX" -std=c++17 -pthread "$gen" -o "$exe" >/dev/null 2>&1; then
                     printf '%-48s %-8s %s\n' "$name" "$expect" "FAIL (generated C++ does not compile)" > "$report_file"
                     echo "FAIL" > "$status_file"
                     return 0
@@ -164,7 +164,7 @@ run_one_fixture() {
                     echo "FAIL" > "$status_file"
                     return 0
                 fi
-            elif ! "$CXX" -std=c++17 -fsyntax-only "$gen" >/dev/null 2>&1; then
+            elif ! "$CXX" -std=c++17 -pthread -fsyntax-only "$gen" >/dev/null 2>&1; then
                 printf '%-48s %-8s %s\n' "$name" "$expect" "FAIL (generated C++ does not compile)" > "$report_file"
                 echo "FAIL" > "$status_file"
                 return 0

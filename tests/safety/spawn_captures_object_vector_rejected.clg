@@ -1,0 +1,23 @@
+//@ expect: reject
+//@ reason: only vectors of PRIMITIVES are plain values. A vector of objects carries those objects' handles,
+//@ reason: which may be shared with the creating thread.
+
+class Item {
+public:
+    int n;
+    Item() { n = 0; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    std::vector<Item> items;
+    spawn(closure Job [items] () {
+        std::cout << items.size() << std::endl;
+    });
+    return 0;
+}

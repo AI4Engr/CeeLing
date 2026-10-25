@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ reason: a spawned job has no caller to return a value to and no one to pass arguments: its interface
+//@ reason: method must be `void run()`.
+
+class Task {
+public:
+    Task() { }
+    virtual int compute(int x) { return x; }
+};
+
+int main() {
+    int n = 1;
+    spawn(closure Task [n] (int x) {
+        return x + n;
+    });
+    return 0;
+}

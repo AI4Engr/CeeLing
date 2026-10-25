@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ reason: an error thrown inside a spawned job ends that job's thread and is reported on stderr; it never
+//@ reason: reaches std::terminate, so the creating thread and the process carry on. Must be RUN: an escaped
+//@ reason: exception from a std::thread body aborts the whole process, which -fsyntax-only cannot show.
+//@ run: main done
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    int n = 1;
+    spawn(closure Job [n] () {
+        throw "job failed";
+    });
+    std::cout << "main done" << std::endl;
+    return 0;
+}

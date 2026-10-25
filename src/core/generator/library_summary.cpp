@@ -209,8 +209,10 @@ bool isKnownBorrowingMethod(const std::string& className, const std::string& met
 }
 
 bool isKnownRuntimeHelper(const std::string& qualifiedName) {
+    // cling::spawn is produced only by closure_desugar's `spawn(closure ...)` rewrite (a hand-written call is
+    // rejected there): it is what makes the sendable-capture check unavoidable.
     static const std::set<std::string> kKnown = {"cling::readFileToString", "cling::fileExists",
-                                                  "cling::readFileToBytes"};
+                                                  "cling::readFileToBytes", "cling::spawn"};
     return kKnown.count(qualifiedName) > 0;
 }
 
@@ -251,6 +253,48 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used) 
             "}\n";
     }
     if (needNamespace) out += "} // namespace cling\n";
+    if (used.count("cling::spawn") > 0) {
+        // One std::thread per spawn, joined when the process exits (the registry is a function-local static, so
+        // it is destroyed before anything constructed earlier -- the pool allocator, a shim's tables). A job
+        // that throws is reported on stderr and ends its thread; it never reaches std::terminate.
+        out +=
+            "#ifndef CLING_SPAWN_DEFINED\n"
+            "#define CLING_SPAWN_DEFINED\n"
+            "#include <cstdio>\n"
+            "#include <exception>\n"
+            "#include <mutex>\n"
+            "#include <thread>\n"
+            "namespace cling {\n"
+            "struct WorkerRegistry {\n"
+            "    std::mutex m;\n"
+            "    std::vector<std::thread> threads;\n"
+            "    void joinAll() {\n"
+            "        for (;;) {\n"
+            "            std::vector<std::thread> batch;\n"
+            "            { std::lock_guard<std::mutex> lock(m); batch.swap(threads); }\n"
+            "            if (batch.empty()) return;\n"
+            "            for (auto& t : batch) t.join();\n"
+            "        }\n"
+            "    }\n"
+            "    ~WorkerRegistry() { joinAll(); }\n"
+            "};\n"
+            "inline WorkerRegistry& workers() { static WorkerRegistry r; return r; }\n"
+            "inline void joinWorkers() { workers().joinAll(); }\n"
+            "template <typename P>\n"
+            "inline void spawn(P job) {\n"
+            "    WorkerRegistry& r = workers();\n"
+            "    std::thread t([job = std::move(job)]() mutable {\n"
+            "        try { job->run(); }\n"
+            "        catch (const std::string& e) { std::fprintf(stderr, \"cling: unhandled error in spawned job: %s\\n\", e.c_str()); }\n"
+            "        catch (const std::exception& e) { std::fprintf(stderr, \"cling: unhandled error in spawned job: %s\\n\", e.what()); }\n"
+            "        catch (...) { std::fprintf(stderr, \"cling: unhandled error in spawned job\\n\"); }\n"
+            "    });\n"
+            "    std::lock_guard<std::mutex> lock(r.m);\n"
+            "    r.threads.push_back(std::move(t));\n"
+            "}\n"
+            "} // namespace cling\n"
+            "#endif\n";
+    }
     return out;
 }
 

@@ -1,0 +1,33 @@
+//@ expect: reject
+//@ reason: the loophole that motivated the thread rule. `holder` and `mine` are two live owners of one
+//@ reason: object, so the analysis infers a shared_ptr; a closure capturing it by value would hand the new
+//@ reason: thread a live ALIAS of the same object while this thread keeps using its own handle. Captures of
+//@ reason: object type are refused whatever pointer kind was inferred.
+
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+class Holder {
+public:
+    Counter held;
+    Holder(Counter c) { held = c; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Counter mine = new Counter();
+    Holder holder = new Holder(mine);
+    spawn(closure Job [mine] () {
+        mine.n = mine.n + 1;
+    });
+    mine.n = mine.n + 1;
+    return 0;
+}
