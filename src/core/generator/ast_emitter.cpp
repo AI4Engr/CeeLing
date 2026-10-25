@@ -2708,6 +2708,8 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             receiverContainerType = containerVarType(m->object.get());
             if (auto id = dynamic_cast<const Identifier*>(m->object.get())) {
                 receiverName = id->name;
+            } else if (auto field = dynamic_cast<const MemberAccess*>(m->object.get())) {
+                receiverName = field->member;   // `obj.items.push_back(x)`: containers are keyed by the field's name
             }
             receiverClass = mClass;
             methodName = m->member;

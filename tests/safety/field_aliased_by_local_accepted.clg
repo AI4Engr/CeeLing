@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ reason: `Registry r = reg;` inside a method copies a handle out of a FIELD: the local and the field are two owners from
+//@ reason: then on, whether or not the field is touched again (a copy never moves a field). Both must be shared_ptr; the
+//@ reason: analysis used to promote only the local, so the generated `std::shared_ptr<Registry> r = this->reg;` copied from
+//@ reason: a unique_ptr field and did not compile. Must be RUN: the increment made through the local is seen through the
+//@ reason: field, proving they really are the same object.
+//@ run: 1 1
+
+class Registry {
+public:
+    int n;
+    Registry() { n = 0; }
+};
+
+class Owner {
+public:
+    Registry reg;
+    Owner() { reg = new Registry(); }
+    int bump() {
+        Registry r = reg;
+        r.n = r.n + 1;
+        return 0;
+    }
+    int peek() {
+        Registry r = reg;
+        return r.n;
+    }
+};
+
+int main() {
+    Owner o = new Owner();
+    o.bump();
+    std::cout << o.peek() << " " << o.peek() << std::endl;
+    return 0;
+}

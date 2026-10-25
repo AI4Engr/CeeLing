@@ -1,0 +1,37 @@
+//@ expect: accept
+//@ reason: `Item x = b.items[0];` copies a handle out of a container reached THROUGH A FIELD of another object. The element
+//@ reason: kind of the container `items` is shared (Bag::at copies an element too), so the local must be a shared_ptr as well;
+//@ reason: only the plain `items[i]` form used to be recognised, and the member-access form left the local unique, which did
+//@ reason: not compile against the shared element. Must be RUN: the copy sees the element that was pushed.
+//@ run: 5 5
+
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+};
+
+class Bag {
+public:
+    std::vector<Item> items;
+    Bag() { }
+    void add(Item i) { items.push_back(i); }
+    int at(int k) {
+        Item x = items[k];
+        return x.v;
+    }
+};
+
+int firstValue(Bag b) {
+    Item x = b.items[0];
+    return x.v;
+}
+
+int main() {
+    Bag bag = new Bag();
+    Item a = new Item(5);
+    bag.add(a);
+    std::cout << bag.at(0) << " ";
+    std::cout << firstValue(bag) << std::endl;
+    return 0;
+}

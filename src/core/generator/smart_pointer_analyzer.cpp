@@ -453,9 +453,13 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
         if (call == nullptr || !call->callee) return;
         auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
         if (member == nullptr || member->member != "push_back" || call->arguments.empty()) return;
-        const Identifier* recv = asIdentifier(member->object.get());
+        const Identifier* recvId = asIdentifier(member->object.get());
         const Identifier* arg = asIdentifier(call->arguments[0].get());
-        if (recv == nullptr || arg == nullptr) return;
+        // the container is a variable (`v.push_back(x)`) or a field reached through an object (`obj.items.push_back(x)`,
+        // keyed by the field's name like every other container here)
+        const MemberAccess* recvField = dynamic_cast<const MemberAccess*>(member->object.get());
+        if ((recvId == nullptr && recvField == nullptr) || arg == nullptr) return;
+        const std::string recvName = recvId != nullptr ? recvId->name : recvField->member;
 
         // Resolve the argument's OWN already-decided pointer kind via its symbol
         // type (registered the same way locals/parameters/fields already are).
@@ -471,11 +475,11 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
         // fallback is SHARED, so a string / int / vector variable (`parts.push_back(current)`) used to make a
         // vector<string> look like a vector of shared objects and emit `std::shared_ptr<>(current)`.
         if (classNames.count(typeIt->second) == 0) return;
-        pushedArgs_.push_back({scopeName, typeIt->second, arg->name, recv->name});
+        pushedArgs_.push_back({scopeName, typeIt->second, arg->name, recvName});
         if (getPointerType(typeIt->second, arg->name) == PointerType::SHARED) {
-            containerElementShared_[recv->name] = true;
-        } else if (containerElementShared_.find(recv->name) == containerElementShared_.end()) {
-            containerElementShared_[recv->name] = false;
+            containerElementShared_[recvName] = true;
+        } else if (containerElementShared_.find(recvName) == containerElementShared_.end()) {
+            containerElementShared_[recvName] = false;
         }
     };
 
@@ -489,6 +493,8 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
             if (auto sub = dynamic_cast<const SubscriptExpression*>(decl->expression.get())) {
                 if (auto cid = dynamic_cast<const Identifier*>(sub->object.get())) {
                     containerElementShared_[cid->name] = true;
+                } else if (auto cmem = dynamic_cast<const MemberAccess*>(sub->object.get())) {
+                    containerElementShared_[cmem->member] = true;   // `obj.items[i]`: the container is the field `items`
                 }
             }
         }
@@ -1460,12 +1466,40 @@ void SmartPointerAnalyzer::promoteAliasedLocalsInBody(
         } else {
             continue;
         }
-        // `T x = v[i];` copies a handle out of a container element: x and the element are two owners.
+        // `T x = v[i];` / `T x = obj.items[i];` copies a handle out of a container element: x and the element
+        // are two owners.
         if (auto sub = dynamic_cast<const SubscriptExpression*>(rhs);
-            sub != nullptr && dynamic_cast<const Identifier*>(sub->object.get()) != nullptr &&
-            types.find(target) != types.end()) {
+            sub != nullptr && types.find(target) != types.end() &&
+            (dynamic_cast<const Identifier*>(sub->object.get()) != nullptr ||
+             dynamic_cast<const MemberAccess*>(sub->object.get()) != nullptr)) {
             promote(target);
             continue;
+        }
+        // `T x = field;` inside a method: the local and the field are two owners from this point on, whether or
+        // not the field is touched again (a field copy never moves the field). Both sides become shared;
+        // otherwise the local is a shared_ptr initialised from a unique_ptr field.
+        if (auto fieldId = dynamic_cast<const Identifier*>(rhs);
+            fieldId != nullptr && types.find(fieldId->name) == types.end() && types.find(target) != types.end()) {
+            const size_t sep = scope.find("::");
+            if (sep != std::string::npos) {
+                const std::string cls = scope.substr(0, sep);
+                auto members = classMembersByClass_.find(cls);
+                if (members != classMembersByClass_.end()) {
+                    auto fieldType = members->second.find(fieldId->name);
+                    if (fieldType != members->second.end() && classNames.count(fieldType->second) > 0) {
+                        for (auto& [key, ref] : variableReferences) {
+                            if (ref.className != fieldType->second || ref.variableName != fieldId->name) continue;
+                            if (ref.containingScope != normalizeScope(cls) || ref.hasExplicitHint) continue;
+                            auto dec = pointerDecisions.find(key);
+                            if (dec == pointerDecisions.end() || dec->second == PointerType::WEAK) continue;
+                            dec->second = PointerType::SHARED;
+                            pointerReasons[key] = "copied into a local handle (two live owners)";
+                        }
+                        promote(target);
+                        continue;
+                    }
+                }
+            }
         }
         auto rhsId = dynamic_cast<const Identifier*>(rhs);
         if (rhsId == nullptr || types.find(rhsId->name) == types.end() || types.find(target) == types.end()) {
