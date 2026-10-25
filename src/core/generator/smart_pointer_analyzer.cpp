@@ -383,24 +383,54 @@ void SmartPointerAnalyzer::scanContainerElementKinds(const Program& program) {
     }
 }
 
+namespace {
+void collectDeclaredNames(const std::vector<StatementPtr>& body, std::set<std::string>& names) {
+    for (const auto& st : body) {
+        if (auto d = dynamic_cast<const VariableDeclaration*>(st.get())) {
+            names.insert(d->identifier);
+        } else if (auto c = dynamic_cast<const ContainerDeclaration*>(st.get())) {
+            names.insert(c->identifier);
+        } else if (auto i = dynamic_cast<const IfStatement*>(st.get())) {
+            collectDeclaredNames(i->body, names);
+            collectDeclaredNames(i->elseBody, names);
+        } else if (auto w = dynamic_cast<const WhileStatement*>(st.get())) {
+            collectDeclaredNames(w->body, names);
+        } else if (auto f = dynamic_cast<const ForStatement*>(st.get())) {
+            names.insert(f->loopVarName);
+            collectDeclaredNames(f->body, names);
+        } else if (auto t = dynamic_cast<const TryStatement*>(st.get())) {
+            names.insert(t->catchIdentifier);
+            collectDeclaredNames(t->body, names);
+            collectDeclaredNames(t->catchBody, names);
+        }
+    }
+}
+}  // namespace
+
 void SmartPointerAnalyzer::scanContainerElementKindsImpl(const Program& program) {
+    auto scanBody = [this](const std::vector<StatementPtr>& body,
+                           const std::vector<std::pair<std::string, std::string>>& params, const std::string& scope) {
+        scanLocals_.clear();
+        collectDeclaredNames(body, scanLocals_);
+        for (const auto& p : params) scanLocals_.insert(p.second);
+        for (const auto& inner : body) scanContainerElementKindsInStatement(*inner, scope);
+    };
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
-            for (const auto& inner : fn->body) scanContainerElementKindsInStatement(*inner, fn->name);
+            scanBody(fn->body, fn->parameters, fn->name);
         } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
-            for (const auto& inner : mn->body) scanContainerElementKindsInStatement(*inner, "main");
+            scanBody(mn->body, {}, "main");
         } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
             for (const auto& member : cls->members) {
                 if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                    const std::string scope = cls->name + "::" + method->name;
-                    for (const auto& inner : method->body) scanContainerElementKindsInStatement(*inner, scope);
+                    scanBody(method->body, method->parameters, cls->name + "::" + method->name);
                 } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
-                    const std::string scope = cls->name + "::" + ctor->name;
-                    for (const auto& inner : ctor->body) scanContainerElementKindsInStatement(*inner, scope);
+                    scanBody(ctor->body, ctor->parameters, cls->name + "::" + ctor->name);
                 }
             }
         }
     }
+    scanLocals_.clear();
 }
 
 namespace {
@@ -433,10 +463,14 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
         // header comment for why the kGlobalScope fallback alone collides
         // across unrelated functions/methods sharing a local's bare name.
         auto typeIt = symbolTypesByScope.find(makeSymbolKey(scopeName, arg->name));
-        if (typeIt == symbolTypesByScope.end()) {
+        if (typeIt == symbolTypesByScope.end() && scanLocals_.count(arg->name) == 0) {
             typeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, arg->name));
         }
         if (typeIt == symbolTypesByScope.end()) return;
+        // Only an OBJECT argument says anything about the container's element kind. getPointerType's not-found
+        // fallback is SHARED, so a string / int / vector variable (`parts.push_back(current)`) used to make a
+        // vector<string> look like a vector of shared objects and emit `std::shared_ptr<>(current)`.
+        if (classNames.count(typeIt->second) == 0) return;
         pushedArgs_.push_back({scopeName, typeIt->second, arg->name, recv->name});
         if (getPointerType(typeIt->second, arg->name) == PointerType::SHARED) {
             containerElementShared_[recv->name] = true;

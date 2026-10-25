@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ reason: pushing a string VARIABLE into a vector<string> is plain value semantics, and the variable stays usable.
+//@ reason: Regression guard, honestly limited: the bug that prompted it (the container scan took `current`, a string,
+//@ reason: for a same-named `Item current` local of another file merged in through an include, and emitted
+//@ reason: `std::shared_ptr<>(current)`) cannot be reproduced in ONE file, so the test that failed before the fix is
+//@ reason: app-cling's own build (src/app.clg splitFields + cjson-cling's Item); this fixture covers the plain case.
+//@ run: 3 a,bb,ccc x
+
+std::vector<string> split(string text) {
+    std::vector<string> parts;
+    string current = "";
+    int i = 0;
+    while (i < text.length()) {
+        if (text[i] == ',') {
+            parts.push_back(current);
+            current = "";
+        } else {
+            current.push_back(text[i]);
+        }
+        i = i + 1;
+    }
+    parts.push_back(current);
+    return parts;
+}
+
+int main() {
+    std::vector<string> parts = split("a,bb,ccc");
+    string joined = parts[0] + "," + parts[1] + "," + parts[2];
+    string again = "x";
+    std::vector<string> kept;
+    kept.push_back(again);
+    again.push_back('y');
+    std::cout << parts.size() << " " << joined << " " << kept[0] << std::endl;
+    return 0;
+}

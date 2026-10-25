@@ -258,6 +258,10 @@ private:
     // locals colliding in that fallback (see scanContainerElementKinds's
     // callers, which now pass this precisely).
     void scanContainerElementKindsInStatement(const Statement& stmt, const std::string& scopeName);
+    // Every name declared in the body being scanned (locals of any type, loop variables, parameters). A name in this
+    // set that has no entry in the body's own scope is a local of a type the symbol table does not record (string,
+    // int, vector...), NOT the same-named class variable some other function happens to have.
+    std::set<std::string> scanLocals_;
 
     // A parameter that a method/constructor body stores into an already-SHARED
     // field must itself be SHARED (a `shared_ptr` field can't hold a moved-in
