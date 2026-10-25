@@ -194,6 +194,7 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     // "multiple live owners => shared_ptr" rule. Without this the assignment moves `a` and every
     // later use is rejected, which makes ordinary Java-style aliasing (a `head` and a `current`
     // walking the same list) unwritable.
+    forceVirtualSignaturesShared(program);
     promoteAliasedLocals(program);
 
     // Container element-kind scan runs AFTER the two-pass decision above, since it
@@ -366,6 +367,23 @@ bool SmartPointerAnalyzer::classNeedsSharedFromThis(const std::string& className
 }
 
 void SmartPointerAnalyzer::scanContainerElementKinds(const Program& program) {
+    pushedArgs_.clear();
+    scanContainerElementKindsImpl(program);
+    // A value pushed into a container whose elements are shared must itself be shared -- decided only
+    // once every push and every element copy has been seen. (A parameter that is pushed then makes its
+    // callers pass a shared object, via the call-site promotion that runs after this.)
+    for (const auto& p : pushedArgs_) {
+        auto it = containerElementShared_.find(p[3]);
+        if (it == containerElementShared_.end() || !it->second) continue;
+        auto dec = pointerDecisions.find(buildKey(p[0], p[1], p[2]));
+        if (dec != pointerDecisions.end() && dec->second == PointerType::UNIQUE) {
+            dec->second = PointerType::SHARED;
+            pointerReasons[dec->first] = "pushed into a container whose elements are shared";
+        }
+    }
+}
+
+void SmartPointerAnalyzer::scanContainerElementKindsImpl(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             for (const auto& inner : fn->body) scanContainerElementKindsInStatement(*inner, fn->name);
@@ -419,6 +437,7 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
             typeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, arg->name));
         }
         if (typeIt == symbolTypesByScope.end()) return;
+        pushedArgs_.push_back({scopeName, typeIt->second, arg->name, recv->name});
         if (getPointerType(typeIt->second, arg->name) == PointerType::SHARED) {
             containerElementShared_[recv->name] = true;
         } else if (containerElementShared_.find(recv->name) == containerElementShared_.end()) {
@@ -430,6 +449,15 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
         visitExpr(exprStmt->expression.get());
     } else if (auto decl = dynamic_cast<const VariableDeclaration*>(&stmt)) {
         if (decl->expression) visitExpr(decl->expression.get());
+        // `Cmd c = items[i];` -- an owning local initialised from a container element: two owners of one
+        // object, so the elements must be shared (a unique_ptr element cannot be copied out).
+        if (!decl->isObserver && classNames.count(decl->type) > 0) {
+            if (auto sub = dynamic_cast<const SubscriptExpression*>(decl->expression.get())) {
+                if (auto cid = dynamic_cast<const Identifier*>(sub->object.get())) {
+                    containerElementShared_[cid->name] = true;
+                }
+            }
+        }
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(&stmt)) {
         if (assign->expression) visitExpr(assign->expression.get());
     } else if (auto ifs = dynamic_cast<const IfStatement*>(&stmt)) {
@@ -1398,6 +1426,13 @@ void SmartPointerAnalyzer::promoteAliasedLocalsInBody(
         } else {
             continue;
         }
+        // `T x = v[i];` copies a handle out of a container element: x and the element are two owners.
+        if (auto sub = dynamic_cast<const SubscriptExpression*>(rhs);
+            sub != nullptr && dynamic_cast<const Identifier*>(sub->object.get()) != nullptr &&
+            types.find(target) != types.end()) {
+            promote(target);
+            continue;
+        }
         auto rhsId = dynamic_cast<const Identifier*>(rhs);
         if (rhsId == nullptr || types.find(rhsId->name) == types.end() || types.find(target) == types.end()) {
             continue;
@@ -1423,6 +1458,28 @@ void SmartPointerAnalyzer::promoteAliasedLocalsInBody(
         if (usedAgain) {
             promote(src);
             promote(target);
+        }
+    }
+}
+
+void SmartPointerAnalyzer::forceVirtualSignaturesShared(const Program& program) {
+    for (const auto& stmt : program.statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr) continue;
+        for (const auto& member : cls->members) {
+            auto method = dynamic_cast<const MethodDeclaration*>(member.get());
+            if (method == nullptr || !(method->isVirtual || method->isOverride)) continue;
+            const std::string scope = cls->name + "::" + method->name;
+            for (const auto& [ptype, pname] : method->parameters) {
+                if (classNames.count(ptype) == 0) continue;
+                const std::string key = buildKey(scope, ptype, pname);
+                if (variableReferences.find(key) == variableReferences.end()) continue;
+                pointerDecisions[key] = PointerType::SHARED;
+                pointerReasons[key] = "parameter of a virtual / override method (signatures must agree across the hierarchy)";
+            }
+            if (classNames.count(method->returnType) > 0) {
+                methodReturnKinds_[makeMemberKey(cls->name, method->name)] = PointerType::SHARED;
+            }
         }
     }
 }

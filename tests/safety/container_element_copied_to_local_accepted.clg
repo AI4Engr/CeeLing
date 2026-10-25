@@ -1,0 +1,32 @@
+//@ expect: accept
+//@ run: 15
+//@ reason: `Cmd c = items[i];` copies a handle out of a vector element, so element and local are two owners.
+//@ reason: The elements were inferred unique_ptr (the only push was of a parameter), and a unique_ptr cannot be
+//@ reason: copied out: the generated C++ did not compile. Now a local initialised from `v[i]` makes the
+//@ reason: container's elements shared, promotes the local, and promotes the values pushed into that container.
+//@ reason: (Found by app-cling's command table: a registry of handlers is exactly this shape.)
+
+class Cmd {
+public:
+    int n;
+    Cmd(int x) { n = x; }
+    virtual int call(int x) { return n + x; }
+};
+
+class Table {
+public:
+    std::vector<Cmd> items;
+    Table() { }
+    void add(Cmd c) { items.push_back(c); }
+    int run(int i, int x) {
+        Cmd c = items[i];
+        return c.call(x);
+    }
+};
+
+int main() {
+    Table t = new Table();
+    t.add(new Cmd(10));
+    std::cout << t.run(0, 5) << std::endl;
+    return 0;
+}

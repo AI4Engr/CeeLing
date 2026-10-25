@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ run: 2
+//@ reason: a virtual method whose body returns the result of a free function that hands out a SHARED handle
+//@ reason: (`return firstChild(args);`). The method's return type was inferred unique_ptr, so the generated
+//@ reason: C++ did not compile. A virtual / override method's object parameters and return are now always
+//@ reason: shared: the base declaration and every override must have the identical C++ signature, which
+//@ reason: per-body inference cannot guarantee across a hierarchy. (Found by app-cling's command table.)
+
+class Item {
+public:
+    Item child;
+    int v;
+    Item(int x) { v = x; }
+};
+
+Item firstChild(Item p) {
+    return p.child;
+}
+
+class Cmd {
+public:
+    Cmd() { }
+    virtual Item call(Item args) {
+        return firstChild(args);
+    }
+};
+
+int main() {
+    Item root = new Item(1);
+    root.child = new Item(2);
+    Cmd c = new Cmd();
+    Item r = c.call(root);
+    std::cout << r.v << std::endl;
+    return 0;
+}

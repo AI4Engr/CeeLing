@@ -250,6 +250,7 @@ private:
     // data, own recursive statement walk) to decide each container variable's
     // element pointer kind. Runs once per analyzeProgram call.
     void scanContainerElementKinds(const Program& program);
+    void scanContainerElementKindsImpl(const Program& program);
     // `scopeName` is the precise scope (free function name, "main", or
     // "Class::method") this statement's own body belongs to -- tried before
     // symbolTypesByScope's kGlobalScope fallback when resolving a bare
@@ -266,6 +267,13 @@ private:
     // fields' own already-decided pointer kind), single pass (no fixed-point
     // iteration -- see .cpp for the documented limitation this leaves).
     // Two handles to one object (`b = a;` then `a` used again) are both shared. See the call site.
+    // Object parameters and the object return of a virtual / override method are always SHARED: the
+    // base declaration and every override must have the identical C++ signature, but each class's
+    // pointer kinds are otherwise inferred from its own body (an unused parameter is unique, a read
+    // one is shared), which cannot agree across a hierarchy.
+    void forceVirtualSignaturesShared(const Program& program);
+    // (scope, type, name, container) of every `container.push_back(identifier)` seen by the container scan
+    std::vector<std::vector<std::string>> pushedArgs_;
     void promoteAliasedLocals(const Program& program);
     void promoteAliasedLocalsInBody(const std::vector<StatementPtr>& body,
                                     const std::vector<std::pair<std::string, std::string>>& params,
