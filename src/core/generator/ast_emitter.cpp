@@ -1,4 +1,5 @@
 #include "ast_emitter.h"
+#include <functional>
 #include "class_hierarchy.h"
 #include "library_summary.h"
 
@@ -8,6 +9,48 @@ namespace {
 bool isNullptrLiteral(const Expression* expr) {
     auto id = dynamic_cast<const Identifier*>(expr);
     return id != nullptr && id->name == "nullptr";
+}
+
+// Is `expr` safe to move into a constructor's member-initializer list? C++ runs an initializer list in DECLARATION order, not in the order the
+// entries are written, and an entry sees only the members declared before it. So an initializer expression may read: parameters, names that
+// are not this class's own fields (free functions, enums, inherited fields -- the base is built first), and fields hoisted EARLIER (declared
+// earlier too: emitFunction enforces that order). It may not read another own field of this class (not constructed yet, or it would read
+// before the body's assignment that was written ahead of it), `this`, or call a method of the class (which may read any field). When it
+// does, hoisting stops there and the statement stays an ordinary body statement, in the order it was written.
+bool initializerExprIsSafe(const Expression* expr, const std::set<std::string>& ownFields, const std::set<std::string>& hoisted,
+                           const std::set<std::string>& params, const std::function<bool(const std::string&)>& isMethodName) {
+    if (expr == nullptr) return true;
+    if (dynamic_cast<const ThisExpression*>(expr) != nullptr) return false;
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        if (params.count(id->name) > 0) return true;
+        if (ownFields.count(id->name) > 0) return hoisted.count(id->name) > 0;
+        return true;
+    }
+    if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+        return initializerExprIsSafe(bin->left.get(), ownFields, hoisted, params, isMethodName) &&
+               initializerExprIsSafe(bin->right.get(), ownFields, hoisted, params, isMethodName);
+    }
+    if (auto un = dynamic_cast<const UnaryExpression*>(expr)) return initializerExprIsSafe(un->operand.get(), ownFields, hoisted, params, isMethodName);
+    if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        return initializerExprIsSafe(sub->object.get(), ownFields, hoisted, params, isMethodName) &&
+               initializerExprIsSafe(sub->index.get(), ownFields, hoisted, params, isMethodName);
+    }
+    if (auto mem = dynamic_cast<const MemberAccess*>(expr)) return initializerExprIsSafe(mem->object.get(), ownFields, hoisted, params, isMethodName);
+    if (auto made = dynamic_cast<const NewExpression*>(expr)) {
+        for (const auto& a : made->arguments) if (!initializerExprIsSafe(a.get(), ownFields, hoisted, params, isMethodName)) return false;
+        return true;
+    }
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        if (call->callee != nullptr) {
+            auto access = dynamic_cast<const MemberAccess*>(call->callee.get());
+            if (access == nullptr || !initializerExprIsSafe(access->object.get(), ownFields, hoisted, params, isMethodName)) return false;
+        } else if (isMethodName(call->function_name)) {
+            return false;
+        }
+        for (const auto& a : call->arguments) if (!initializerExprIsSafe(a.get(), ownFields, hoisted, params, isMethodName)) return false;
+        return true;
+    }
+    return true;   // literals and qualified names
 }
 } // namespace
 
@@ -1800,19 +1843,38 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
         // cls->members directly mirrors the exact pattern emitClass/
         // emitClassHeader already use for field declarations.
         std::set<std::string> ownFieldNames;
+        std::map<std::string, size_t> declarationIndex;
         if (auto clsIt = classByName_.find(ownerClass); clsIt != classByName_.end()) {
             for (const auto& member : clsIt->second->members) {
                 if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
                     ownFieldNames.insert(field->identifier);
+                    declarationIndex.emplace(field->identifier, declarationIndex.size());
                 }
             }
         }
+        // a method of this class or of a class it inherits from (a bare call to one is a call on `this`)
+        const auto isMethodName = [&](const std::string& called) {
+            for (std::string cls = ownerClass; !cls.empty();) {
+                auto it = classByName_.find(cls);
+                if (it == classByName_.end()) break;
+                for (const auto& member : it->second->members) {
+                    if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) if (method->name == called) return true;
+                }
+                cls = it->second->baseClass;
+            }
+            return false;
+        };
         std::set<std::string> hoistedFields;
+        long lastDeclared = -1;
         for (size_t i = 0; i < body.size(); ++i) {
             auto assign = dynamic_cast<const AssignmentStatement*>(body[i].get());
             if (assign == nullptr || assign->target != nullptr) break;  // non-assignment, or member/subscript target
             if (ownFieldNames.count(assign->variable) == 0) break;      // not this class's own field
             if (hoistedFields.count(assign->variable) > 0) break;       // already hoisted once
+            // C++ runs the list in declaration order: an entry written out of that order would change the order its expression runs in
+            if (static_cast<long>(declarationIndex[assign->variable]) < lastDeclared) break;
+            if (!initializerExprIsSafe(assign->expression.get(), ownFieldNames, hoistedFields, currentParamNames_, isMethodName)) break;
+            lastDeclared = static_cast<long>(declarationIndex[assign->variable]);
             hoistedFields.insert(assign->variable);
             hoistedIndices.insert(i);
             const std::string rhs = selectAssignmentRhs(assign, assign->variable, false, false);

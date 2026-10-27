@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ run: 15
+//@ reason: `total` is assigned from `base`, a field of the same class that this constructor assigns AFTER it is
+//@ reason: declared but that is not itself hoisted (its assignment comes second). An initializer expression may only
+//@ reason: read parameters and fields hoisted earlier; reading any other own field from the initializer list would
+//@ reason: depend on C++'s declaration-order construction instead of on the order the statements were written. The
+//@ reason: statement stays in the body, so `total` sees `base` after `base = v`.
+//@ reason: (A guard for the rule: the compiler before the fix also happened to print this, because the field read was in order.)
+
+class Sum {
+public:
+    int base;
+    int total;
+    Sum(int v) {
+        base = v;
+        total = base + 8;
+    }
+};
+
+int main() {
+    Sum s = new Sum(7);
+    std::cout << s.total << std::endl;
+    return 0;
+}

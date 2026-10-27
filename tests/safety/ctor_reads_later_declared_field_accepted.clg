@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ run: xy
+//@ reason: `b` is declared BEFORE `a`, but the constructor assigns `a` first and then builds `b` from it. Hoisted
+//@ reason: into a member-initializer list (`: a("x"), b(a + "y")`) it would run in C++'s DECLARATION order: b's
+//@ reason: initializer would read `a` before `a` was constructed (a std::string, so undefined behaviour -- in practice a
+//@ reason: silent crash or an empty result). Found by app-cling, where a constructor's call filled the earlier-declared
+//@ reason: fields through `ref` arguments. The hoisting pass now stops at the first assignment that is out of declaration
+//@ reason: order, and the rest stay ordinary body statements in the order they were written.
+
+class Pair {
+public:
+    string b;
+    string a;
+    Pair() {
+        a = "x";
+        b = a + "y";
+    }
+};
+
+int main() {
+    Pair p = new Pair();
+    std::cout << p.b << std::endl;
+    return 0;
+}

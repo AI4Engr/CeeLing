@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: 14
+//@ reason: `doubled = twice();` calls a method of the class, which can read any field -- including ones not constructed
+//@ reason: yet if the assignment were moved into the member-initializer list. A bare call to a method of this class (or of
+//@ reason: a class it inherits from) is never hoisted; the statement stays in the body, after `base = v`.
+//@ reason: (A guard for the rule: the compiler before the fix also happened to print this, because the field read was in order.)
+
+class Counter {
+public:
+    int base;
+    int doubled;
+    int twice() { return base * 2; }
+    Counter(int v) {
+        base = v;
+        doubled = twice();
+    }
+};
+
+int main() {
+    Counter c = new Counter(7);
+    std::cout << c.doubled << std::endl;
+    return 0;
+}

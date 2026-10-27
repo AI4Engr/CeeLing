@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: 3 4 7
+//@ reason: the ordinary case must keep working and keep being hoisted: assignments in declaration order whose right-hand
+//@ reason: sides read only parameters and earlier hoisted fields (`sum` reads `x` and `y`, both hoisted before it).
+
+class Point {
+public:
+    int x;
+    int y;
+    int sum;
+    Point(int px, int py) {
+        x = px;
+        y = py;
+        sum = x + y;
+    }
+};
+
+int main() {
+    Point p = new Point(3, 4);
+    std::cout << p.x << " " << p.y << " " << p.sum << std::endl;
+    return 0;
+}

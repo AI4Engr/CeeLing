@@ -1,0 +1,29 @@
+//@ expect: accept
+//@ run: 1;2;
+//@ reason: `second` is declared BEFORE `first`, but the constructor assigns `first` first. The emitter used to hoist leading
+//@ reason: assignments into a member-initializer list in the order they were WRITTEN; C++ runs that list in DECLARATION
+//@ reason: order, so `second`'s initializer ran first and the calls came out as "2;1;" -- and a right-hand side that read a field
+//@ reason: declared later was undefined behaviour (app-cling's `Fetched` crashed silently with exit 127). Hoisting now stops at the
+//@ reason: first assignment that is out of declaration order, so the rest stay body statements in the order written. The side
+//@ reason: effects of `note` make the order observable without relying on undefined behaviour.
+
+int note(int v) {
+    std::cout << v << ";";
+    return v;
+}
+
+class Order {
+public:
+    int second;
+    int first;
+    Order() {
+        first = note(1);
+        second = note(2);
+    }
+};
+
+int main() {
+    Order o = new Order();
+    std::cout << std::endl;
+    return 0;
+}
