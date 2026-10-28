@@ -1,0 +1,21 @@
+//@ expect: reject
+//@ reason: the generated code calls cjson-cling's names (Item, isObject, getObjectItem, ...). A program that does not have them
+//@ reason: gets an error that says so, not an obscure "unknown function" from deep inside generated code.
+
+struct Thing {
+public:
+    string a;
+    Thing(string x) { a = x; }
+};
+
+class Item {
+public:
+    Item() { }
+};
+
+int main() {
+    Item doc = new Item();
+    Thing t = decodeThing(doc);
+    std::cout << t.a << std::endl;
+    return 0;
+}

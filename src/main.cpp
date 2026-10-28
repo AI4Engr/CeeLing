@@ -4,6 +4,7 @@
 #include "core/generator/escape_hatch_checker.h"
 #include "core/generator/pairing_checker.h"
 #include "core/generator/closure_desugar.h"
+#include "core/generator/struct_json.h"
 #include "core/generator/ast_emitter.h"
 #include "core/generator/smart_pointer_analyzer.h"
 #include <iostream>
@@ -314,6 +315,8 @@ int main(int argc, char* argv[]) {
         // about to become. See closure_desugar.h's own doc comment for the full
         // design (why this needs its own scope-type pass rather than reusing
         // ASTBuilder's or SmartPointerAnalyzer's, and why it must run exactly here).
+        // `decodeX(item)` for a struct X: generate the decoder (struct_json.h) so the checkers below see ordinary code
+        desugarStructJson(*program);
         desugarClosures(*program);
 #else
         throw std::runtime_error("This build was configured without Tree-sitter support. Rebuild with -DWITH_TREE_SITTER=ON.");

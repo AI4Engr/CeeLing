@@ -1,0 +1,149 @@
+//@ expect: accept
+//@ run: object|root string|n whole|n whole|big whole|o.x number|list[] number|boxes[].x number|boxes array
+//@ reason: What a page gets back when its arguments are wrong. The generated decoder names the field (with a path for
+//@ reason: nested structs and `[]` for array elements) and says what it wanted; a missing field is reported as the wrong type
+//@ reason: it is (nothing is not a string). A number must be a whole number inside the field's range: 1.5 and 1e20 are refused
+//@ reason: before the conversion that would be undefined behaviour in C++. A key the struct does not have is simply ignored.
+
+// ---- a stand-in for cjson-cling: just the names the generated decoders use ----
+class Item {
+public:
+    Item next;
+    Item child;
+    string key;
+    string valuestring;
+    double valuedouble;
+    int type;
+    Item() { type = 0; valuedouble = 0.0; key = ""; valuestring = ""; }
+};
+bool isObject(Item i) { return i != nullptr && i.type == 6; }
+bool isArray(Item i) { return i != nullptr && i.type == 5; }
+bool isString(Item i) { return i != nullptr && i.type == 4; }
+bool isNumber(Item i) { return i != nullptr && i.type == 3; }
+bool isBool(Item i) { return i != nullptr && (i.type == 1 || i.type == 2); }
+bool isTrue(Item i) { return i != nullptr && i.type == 2; }
+int getArraySize(Item a) {
+    int n = 0;
+    Item c = a.child;
+    while (c != nullptr) { n = n + 1; c = c.next; }
+    return n;
+}
+Item getArrayItem(Item a, int index) {
+    Item c = a.child;
+    int k = index;
+    while (c != nullptr && k > 0) { c = c.next; k = k - 1; }
+    return c;
+}
+Item getObjectItem(Item o, string name) {
+    Item c = o.child;
+    while (c != nullptr) { if (c.key == name) { return c; } c = c.next; }
+    return nullptr;
+}
+// ---- building a document by hand ----
+Item node(int type, string key) { Item i = new Item(); i.type = type; i.key = key; return i; }
+Item num(string key, double v) { Item i = new Item(); i.type = 3; i.key = key; i.valuedouble = v; return i; }
+Item str(string key, string v) { Item i = new Item(); i.type = 4; i.key = key; i.valuestring = v; return i; }
+Item flag(string key, bool v) { Item i = new Item(); i.key = key; i.type = 1; if (v) { i.type = 2; } return i; }
+void put(Item parent, Item child) {
+    if (parent.child == nullptr) { parent.child = child; return; }
+    Item last = parent.child;
+    while (last.next != nullptr) { last = last.next; }
+    last.next = child;
+}
+
+struct Inner {
+public:
+    int x;
+    Inner(int a) { x = a; }
+};
+
+struct Wide {
+public:
+    string root;
+    int n;
+    int64 big;
+    Inner o;
+    std::vector<int> list;
+    std::vector<Inner> boxes;
+    Wide(string r, int m, int64 b, Inner i, std::vector<int> l, std::vector<Inner> bx) {
+        root = r; n = m; big = b; o = i; list = l; boxes = bx;
+    }
+};
+
+string tryDecode(Item doc) {
+    try {
+        Wide w = decodeWide(doc);
+        return "ok";
+    } catch (string message) {
+        return message;
+    }
+    return "unreachable";
+}
+
+string after(string text, string prefix) {
+    // "invalid_argument: `root` must be a string" -> "root string" (only what the test compares)
+    string field = "";
+    int i = prefix.length() + 2;
+    while (i < text.length() && text[i] != '`') {
+        field.push_back(text[i]);
+        i = i + 1;
+    }
+    string wanted = "";
+    if (text.find("must be a string") != std::string::npos) { wanted = "string"; }
+    if (text.find("must be a number") != std::string::npos) { wanted = "number"; }
+    if (text.find("whole number") != std::string::npos) { wanted = "whole"; }
+    if (text.find("an object") != std::string::npos) { wanted = "object"; }
+    if (text.find("an array") != std::string::npos) { wanted = "array"; }
+    if (text.find("expected an object") != std::string::npos) { return "object"; }
+    return field + " " + wanted;
+}
+
+Item good() {
+    Item doc = node(6, "");
+    put(doc, str("root", "r"));
+    put(doc, num("n", 3.0));
+    put(doc, num("big", 4.0));
+    Item o = node(6, "o");
+    put(o, num("x", 1.0));
+    put(doc, o);
+    Item list = node(5, "list");
+    put(list, num("", 1.0));
+    put(doc, list);
+    Item boxes = node(5, "boxes");
+    put(doc, boxes);
+    return doc;
+}
+
+int main() {
+    string out = "";
+    out = out + after(tryDecode(node(5, "")), "invalid_argument:") + "|";
+    Item d1 = good();
+    d1.child.valuestring = "r";
+    d1.child.type = 3;
+    out = out + after(tryDecode(d1), "invalid_argument:") + "|";
+    Item d2 = good();
+    d2.child.next.valuedouble = 1.5;
+    out = out + after(tryDecode(d2), "invalid_argument:") + "|";
+    Item d3 = good();
+    d3.child.next.valuedouble = 1e20;
+    out = out + after(tryDecode(d3), "invalid_argument:") + "|";
+    Item d4 = good();
+    d4.child.next.next.valuedouble = 1e300;
+    out = out + after(tryDecode(d4), "invalid_argument:") + "|";
+    Item d5 = good();
+    d5.child.next.next.next.child.type = 4;
+    out = out + after(tryDecode(d5), "invalid_argument:") + "|";
+    Item d6 = good();
+    d6.child.next.next.next.next.child.type = 4;
+    out = out + after(tryDecode(d6), "invalid_argument:") + "|";
+    Item d7 = good();
+    Item bad = node(6, "");
+    put(bad, str("x", "no"));
+    put(d7.child.next.next.next.next.next, bad);
+    out = out + after(tryDecode(d7), "invalid_argument:") + "|";
+    Item d8 = good();
+    d8.child.next.next.next.next.next = nullptr;
+    out = out + after(tryDecode(d8), "invalid_argument:");
+    std::cout << out << std::endl;
+    return 0;
+}

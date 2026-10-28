@@ -1,0 +1,64 @@
+//@ expect: reject
+//@ reason: a generated decoder reads int, int64, double, float, bool, string, byte, structs and vectors of those. A `char` field has
+//@ reason: no obvious JSON form (a one-letter string? a number?), so it is refused by name rather than guessed.
+
+// ---- a stand-in for cjson-cling: just the names the generated decoders use ----
+class Item {
+public:
+    Item next;
+    Item child;
+    string key;
+    string valuestring;
+    double valuedouble;
+    int type;
+    Item() { type = 0; valuedouble = 0.0; key = ""; valuestring = ""; }
+};
+bool isObject(Item i) { return i != nullptr && i.type == 6; }
+bool isArray(Item i) { return i != nullptr && i.type == 5; }
+bool isString(Item i) { return i != nullptr && i.type == 4; }
+bool isNumber(Item i) { return i != nullptr && i.type == 3; }
+bool isBool(Item i) { return i != nullptr && (i.type == 1 || i.type == 2); }
+bool isTrue(Item i) { return i != nullptr && i.type == 2; }
+int getArraySize(Item a) {
+    int n = 0;
+    Item c = a.child;
+    while (c != nullptr) { n = n + 1; c = c.next; }
+    return n;
+}
+Item getArrayItem(Item a, int index) {
+    Item c = a.child;
+    int k = index;
+    while (c != nullptr && k > 0) { c = c.next; k = k - 1; }
+    return c;
+}
+Item getObjectItem(Item o, string name) {
+    Item c = o.child;
+    while (c != nullptr) { if (c.key == name) { return c; } c = c.next; }
+    return nullptr;
+}
+// ---- building a document by hand ----
+Item node(int type, string key) { Item i = new Item(); i.type = type; i.key = key; return i; }
+Item num(string key, double v) { Item i = new Item(); i.type = 3; i.key = key; i.valuedouble = v; return i; }
+Item str(string key, string v) { Item i = new Item(); i.type = 4; i.key = key; i.valuestring = v; return i; }
+Item flag(string key, bool v) { Item i = new Item(); i.key = key; i.type = 1; if (v) { i.type = 2; } return i; }
+void put(Item parent, Item child) {
+    if (parent.child == nullptr) { parent.child = child; return; }
+    Item last = parent.child;
+    while (last.next != nullptr) { last = last.next; }
+    last.next = child;
+}
+
+struct Thing {
+public:
+    string a;
+    char c;
+    Thing(string x, char y) { a = x; c = y; }
+};
+
+int main() {
+    Item doc = node(6, "");
+    put(doc, str("a", "x"));
+    Thing t = decodeThing(doc);
+    std::cout << t.a << std::endl;
+    return 0;
+}
