@@ -144,6 +144,8 @@ bool isCharType(const std::string& type) {
 bool isKnownQualifiedFreeFunction(const std::string& qualifiedName) {
     static const std::set<std::string> kKnown = {
         "std::stoi", "std::stod",
+        // number -> text: takes a primitive, returns a fresh std::string (nothing to borrow). Struct decoders use it for `list[3]` in messages.
+        "std::to_string",
         // imgui-cling Phase 0 feasibility spike (see imgui-cling/CLAUDE.md's
         // "On Third-Party Library Calls" section): a hand-written, UNCHECKED
         // C++ glue shim (imgui-cling/shim/gfx_shim.{h,cpp}) wraps GLFW+OpenGL

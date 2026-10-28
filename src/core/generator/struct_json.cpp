@@ -357,7 +357,7 @@ private:
             out << indent(level) << "int " << i << " = 0;\n";
             out << indent(level) << "while (" << i << " < " << n << ") {\n";
             out << indent(level + 1) << "Item " << e << " = getArrayItem(" << item << ", " << i << ");\n";
-            std::string inner = decodeValue(out, level + 1, element, e, label + " + \"[]\"");
+            std::string inner = decodeValue(out, level + 1, element, e, label + " + \"[\" + std::to_string(" + i + ") + \"]\"");
             out << indent(level + 1) << var << ".push_back(" << inner << ");\n";
             out << indent(level + 1) << i << " = " << i << " + 1;\n";
             out << indent(level) << "}\n";

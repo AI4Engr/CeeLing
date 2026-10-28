@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ run: n=42 neg=-7 big=123456789012 pi=3.140000
+//@ reason: `std::to_string` joins `std::stoi`/`std::stod` on the library allow-list. It takes a primitive and returns a FRESH string, so
+//@ reason: there is nothing for it to borrow and nothing for the safety analysis to track. CeeLing had no number-to-text function at all
+//@ reason: (every program wrote its own digit loop), which is why generated decoders could not put an index in a message.
+
+int main() {
+    int n = 42;
+    int neg = 0 - 7;
+    int64 big = 123456789012;
+    double pi = 3.14;
+    string line = "n=" + std::to_string(n) + " neg=" + std::to_string(neg) + " big=" + std::to_string(big) + " pi=" + std::to_string(pi);
+    std::cout << line << std::endl;
+    return 0;
+}

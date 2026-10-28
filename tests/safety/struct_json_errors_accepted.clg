@@ -1,7 +1,7 @@
 //@ expect: accept
-//@ run: object|root string|n whole|n whole|big whole|o.x number|list[] number|boxes[].x number|boxes array
+//@ run: object|root string|n whole|n whole|big whole|o.x number|list[1] number|boxes[0].x number|boxes array
 //@ reason: What a page gets back when its arguments are wrong. The generated decoder names the field (with a path for
-//@ reason: nested structs and `[]` for array elements) and says what it wanted; a missing field is reported as the wrong type
+//@ reason: nested structs and `[index]` for array elements) and says what it wanted; a missing field is reported as the wrong type
 //@ reason: it is (nothing is not a string). A number must be a whole number inside the field's range: 1.5 and 1e20 are refused
 //@ reason: before the conversion that would be undefined behaviour in C++. A key the struct does not have is simply ignored.
 
@@ -108,6 +108,7 @@ Item good() {
     put(doc, o);
     Item list = node(5, "list");
     put(list, num("", 1.0));
+    put(list, num("", 2.0));
     put(doc, list);
     Item boxes = node(5, "boxes");
     put(doc, boxes);
@@ -134,7 +135,7 @@ int main() {
     d5.child.next.next.next.child.type = 4;
     out = out + after(tryDecode(d5), "invalid_argument:") + "|";
     Item d6 = good();
-    d6.child.next.next.next.next.child.type = 4;
+    d6.child.next.next.next.next.child.next.type = 4;
     out = out + after(tryDecode(d6), "invalid_argument:") + "|";
     Item d7 = good();
     Item bad = node(6, "");
