@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ reason: By default the process waits at exit for every spawned job, so a job that never ends keeps the process alive forever.
+//@ reason: `cling::setExitGraceMs(300)` bounds the wait: after main returns, running and queued jobs get 300 ms, then the process
+//@ reason: ends where it stands (a message on stderr names how many jobs were abandoned). Must be RUN: without the grace period
+//@ reason: this program never exits. The job prints nothing but keeps doing observable work, so the loop cannot be optimised away.
+//@ run: main done
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    cling::setExitGraceMs(300);
+    int never = 0;
+    spawn(closure Job [never] () {
+        while (true) {
+            std::cout << "";
+        }
+    });
+    std::cout << "main done" << std::endl;
+    return 0;
+}

@@ -214,7 +214,8 @@ bool isKnownRuntimeHelper(const std::string& qualifiedName) {
     static const std::set<std::string> kKnown = {"cling::readFileToString", "cling::fileExists",
                                                   "cling::readFileToBytes", "cling::spawn",
                                                   "cling::setJobFailure", "cling::clearJobFailure",
-                                                  "cling::setWorkerLimit", "cling::workerLimit", "cling::joinAllWorkers"};
+                                                  "cling::setWorkerLimit", "cling::workerLimit", "cling::joinAllWorkers",
+                                                  "cling::setExitGraceMs"};
     return kKnown.count(qualifiedName) > 0;
 }
 
@@ -257,13 +258,16 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used) 
     if (needNamespace) out += "} // namespace cling\n";
     if (used.count("cling::spawn") > 0 || used.count("cling::setJobFailure") > 0 ||
         used.count("cling::clearJobFailure") > 0 || used.count("cling::setWorkerLimit") > 0 ||
-        used.count("cling::workerLimit") > 0 || used.count("cling::joinAllWorkers") > 0) {
+        used.count("cling::workerLimit") > 0 || used.count("cling::joinAllWorkers") > 0 ||
+        used.count("cling::setExitGraceMs") > 0) {
         // The spawn runtime: a lazily grown, capped worker pool (see the comment inside the emitted text).
         out +=
             "#ifndef CLING_SPAWN_DEFINED\n"
             "#define CLING_SPAWN_DEFINED\n"
+            "#include <chrono>\n"
             "#include <condition_variable>\n"
             "#include <cstdio>\n"
+            "#include <cstdlib>\n"
             "#include <deque>\n"
             "#include <exception>\n"
             "#include <functional>\n"
@@ -283,10 +287,23 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used) 
             "class WorkerPool {\n"
             "public:\n"
             "    ~WorkerPool() {\n"
-            "        { std::lock_guard<std::mutex> lock(m_); done_ = true; }\n"
+            "        int grace;\n"
+            "        { std::lock_guard<std::mutex> lock(m_); done_ = true; grace = graceMs_; }\n"
             "        cv_.notify_all();\n"
+            "        if (grace > 0) {   // setExitGraceMs: do not wait for a job that never ends\n"
+            "            std::unique_lock<std::mutex> lock(m_);\n"
+            "            if (!idleCv_.wait_for(lock, std::chrono::milliseconds(grace), [this] { return queue_.empty() && busy_ == 0; })) {\n"
+            "                const size_t unfinished = busy_ + queue_.size();\n"
+            "                lock.unlock();\n"
+            "                std::fprintf(stderr, \"cling: %zu job(s) still unfinished %d ms after the program ended; exiting without them\\n\", unfinished, grace);\n"
+            "                std::fflush(stdout); std::fflush(stderr);\n"
+            "                std::_Exit(0);   // the jobs are abandoned where they stand: no destructors run, nothing is unwound\n"
+            "            }\n"
+            "        }\n"
             "        for (auto& t : threads_) t.join();\n"
             "    }\n"
+            "    // 0 (the default) waits for every job however long it takes; n > 0 gives them n milliseconds, then ends the process.\n"
+            "    void setGrace(int ms) { std::lock_guard<std::mutex> lock(m_); graceMs_ = ms < 0 ? 0 : ms; }\n"
             "    void submit(std::function<void()> job) {\n"
             "        std::lock_guard<std::mutex> lock(m_);\n"
             "        queue_.push_back(std::move(job));\n"
@@ -337,12 +354,14 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used) 
             "    std::deque<std::function<void()>> queue_;\n"
             "    std::vector<std::thread> threads_;\n"
             "    size_t idle_ = 0, busy_ = 0, limit_ = 0;\n"
+            "    int graceMs_ = 0;\n"
             "    bool done_ = false;\n"
             "};\n"
             "inline WorkerPool& workers() { static WorkerPool p; return p; }\n"
             "inline void joinWorkers() { workers().waitIdle(); }\n"
             "inline int setWorkerLimit(int n) { workers().setLimit(n < 0 ? 0 : static_cast<size_t>(n)); return 1; }\n"
             "inline int workerLimit() { return static_cast<int>(workers().limit()); }\n"
+            "inline int setExitGraceMs(int ms) { workers().setGrace(ms); return 1; }\n"
             "inline int joinAllWorkers() { workers().waitIdle(); return 1; }\n"
             "// Runs `body`; any exception becomes a message handed to `onError`. A job never reaches std::terminate.\n"
             "template <typename Body, typename OnError>\n"

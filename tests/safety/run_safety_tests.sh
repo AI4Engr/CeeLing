@@ -134,7 +134,7 @@ run_one_fixture() {
                     echo "FAIL" > "$status_file"
                     return 0
                 fi
-                got_err="$("$exe" 2>&1 >/dev/null)"
+                got_err="$(timeout 120 "$exe" 2>&1 >/dev/null)"
                 got_code=$?
                 if [ "$got_code" -eq 0 ]; then
                     printf '%-48s %-8s %s\n' "$name" "$expect" \
@@ -157,7 +157,7 @@ run_one_fixture() {
                     echo "FAIL" > "$status_file"
                     return 0
                 fi
-                got_run="$("$exe" 2>/dev/null)"
+                got_run="$(timeout 120 "$exe" 2>/dev/null)"
                 if [ "$got_run" != "$want_run" ]; then
                     printf '%-48s %-8s %s\n' "$name" "$expect" \
                         "FAIL (ran, expected '$want_run', got '$got_run')" > "$report_file"

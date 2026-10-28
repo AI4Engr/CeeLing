@@ -1,0 +1,28 @@
+//@ expect: accept
+//@ reason: The grace period must not cut off jobs that are about to finish: three quick jobs are all run to completion (in order,
+//@ reason: with a pool of one) even though a grace period is set; only a job still unfinished when the period ends is abandoned.
+//@ run: 123
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    cling::setWorkerLimit(1);
+    cling::setExitGraceMs(5000);
+    int one = 1;
+    int two = 2;
+    int three = 3;
+    spawn(closure Job [one] () {
+        std::cout << one;
+    });
+    spawn(closure Job [two] () {
+        std::cout << two;
+    });
+    spawn(closure Job [three] () {
+        std::cout << three;
+    });
+    return 0;
+}
