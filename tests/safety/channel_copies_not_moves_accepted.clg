@@ -1,0 +1,65 @@
+//@ expect: accept
+//@ run: 2 0 1 hello 0 11 1 a
+//@ reason: A Channel copies what is sent and what is taken, and copying the handle gives another handle to the SAME queue. `send(v)` leaves
+//@ reason: `v` usable (it is a vector: a move would empty it), `Channel<string> alias = s` shares the queue, a channel passes to a function and
+//@ reason: returns from one, and a channel can be a field of a class (`hub.inbox`). The checker and the emitter must agree that nothing is moved:
+//@ reason: the first number printed is v's size AFTER the send (2), the second the channel's size after its one value was taken (0).
+
+struct Req {
+public:
+    string path;
+    int n;
+    Req(string p, int k) { path = p; n = k; }
+};
+
+class Hub {
+public:
+    Channel<Req> inbox;
+    Hub() { }
+    bool post(Req r) {
+        return inbox.send(r);
+    }
+};
+
+Channel<string> make() {
+    Channel<string> c;
+    return c;
+}
+
+int pump(Channel<int> c) {
+    int total = 0;
+    while (c.wait(1000)) {
+        total = total + c.take();
+    }
+    return total;
+}
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    Channel<std::vector<int>> vc;
+    vc.send(v);
+    v.push_back(2);
+    std::vector<int> got = vc.take();
+    std::cout << v.size() << " " << vc.size() << " " << got.size() << " ";
+
+    Channel<string> s = make();
+    s.send("hello");
+    Channel<string> alias = s;
+    std::cout << alias.take() << " " << s.size() << " ";
+
+    Channel<int> c;
+    Channel<int> d = c;
+    d.send(5);
+    d.send(6);
+    d.close();
+    std::cout << pump(c) << " ";
+
+    Hub hub = new Hub();
+    Req r = new Req("a", 1);
+    hub.inbox.send(r);
+    std::cout << r.n << " ";
+    Req back = hub.inbox.take();
+    std::cout << back.path << std::endl;
+    return 0;
+}

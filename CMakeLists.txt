@@ -55,6 +55,7 @@ if(WITH_TREE_SITTER)
     # Add AST builder to core sources when Tree-sitter is enabled
     list(APPEND CORE_SOURCES src/core/cst_to_ast/ast_builder.cpp)
     list(APPEND CORE_SOURCES src/core/generator/struct_json.cpp)
+    list(APPEND CORE_SOURCES src/core/generator/channel_check.cpp)
 
     # Tree-sitter sources (when available)
     set(TREE_SITTER_SOURCES

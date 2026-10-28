@@ -43,6 +43,7 @@ std::vector<DanglingError> DanglingChecker::check(const Program& program, const 
     errors_.clear();
     classNames_.clear();
     classFields_.clear();
+    classFieldTypes_.clear();
     collectClassNames(program);
     summaries_.clear();
     functionParams_.clear();
@@ -87,6 +88,11 @@ void DanglingChecker::collectClassNames(const Program& program) {
         for (const auto& member : cls->members) {
             if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
                 fields.insert(field->identifier);
+            }
+            if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                classFieldTypes_[cls->name][field->identifier] = field->type;
+            } else if (auto cfield = dynamic_cast<const ContainerDeclaration*>(member.get())) {
+                classFieldTypes_[cls->name][cfield->identifier] = cfield->type;
             }
         }
 
@@ -663,6 +669,25 @@ void DanglingChecker::checkSpawnCall(const FunctionCall* call) {
     }
 }
 
+std::string DanglingChecker::declaredTypeOf(const Expression* expr) const {
+    if (auto id = dynamic_cast<const Identifier*>(expr)) {
+        if (auto it = localType_.find(id->name); it != localType_.end()) return it->second;
+        if (!currentClass_.empty()) {
+            if (auto cls = classFieldTypes_.find(currentClass_); cls != classFieldTypes_.end()) {
+                if (auto f = cls->second.find(id->name); f != cls->second.end()) return f->second;
+            }
+        }
+        return {};
+    }
+    if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+        const std::string objectType = declaredTypeOf(member->object.get());
+        if (auto cls = classFieldTypes_.find(objectType); cls != classFieldTypes_.end()) {
+            if (auto f = cls->second.find(member->member); f != cls->second.end()) return f->second;
+        }
+    }
+    return {};
+}
+
 void DanglingChecker::applyCallArgMoves(const Expression* expr) {
     auto call = dynamic_cast<const FunctionCall*>(expr);
     if (call == nullptr) return;
@@ -695,6 +720,13 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
                     receiverType = it->second;
                 }
             }
+        }
+    }
+    // A Channel<T> copies what it is given (send) and hands out fresh copies (take): no argument is moved into it and nothing it
+    // returns aliases anything. (AstEmitter emits the arguments as plain copies for a Channel receiver to match.)
+    if (call->callee) {
+        if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+            if (isChannelType(declaredTypeOf(member->object.get()))) return;
         }
     }
     const bool receiverIsVector = !receiverType.empty() && isVectorType(receiverType);
@@ -953,7 +985,7 @@ void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
         if (isObjectType(type)) {
             objectLocals_.insert(name);
             localType_[name] = type;
-        } else if (isStringType(type)) {
+        } else if (isStringType(type) || isChannelType(type)) {
             // Same reasoning as the VariableDeclaration string case: not move-
             // tracked, but its type must be recorded for ThrowStatement's check.
             localType_[name] = type;
@@ -1275,7 +1307,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                 objectLocals_.insert(decl->identifier);
                 movedFrom_.erase(decl->identifier);
                 localType_[decl->identifier] = decl->type;
-            } else if (isStringType(decl->type)) {
+            } else if (isStringType(decl->type) || isChannelType(decl->type)) {
                 // `string` isn't an object type (no move/observer tracking), but its
                 // declared type still needs to be recorded so ThrowStatement can
                 // verify a thrown identifier is actually string-typed (see below) --

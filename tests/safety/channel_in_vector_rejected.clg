@@ -1,0 +1,7 @@
+//@ expect: reject
+//@ reason: A Channel is used as itself; hiding it in a std::vector would let the handle be copied around in ways the capture rules do not see.
+
+int main() {
+    std::vector<Channel<int>> all;
+    return 0;
+}

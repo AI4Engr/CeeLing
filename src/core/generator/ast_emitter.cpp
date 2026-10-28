@@ -2,6 +2,7 @@
 #include <functional>
 #include "class_hierarchy.h"
 #include "library_summary.h"
+#include "channel_check.h"
 
 namespace cling {
 
@@ -109,6 +110,9 @@ std::string AstEmitter::emit(const Program& program) {
     }
     if (usesCopyWithin_) {
         out << copyWithinHelperDefinition() << "\n";
+    }
+    if (programUsesChannel(program)) {
+        out << channelHelperDefinition() << "\n";
     }
     if (poolShared_) {
         out << poolAllocatorHelperDefinition() << "\n";
@@ -282,6 +286,9 @@ std::string AstEmitter::emitHeader(const Program& program, const std::string& gu
                             "#include <iostream>", "#include <vector>",
                             "#include <string>", "#include <map>"}) {
         if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
+    }
+    if (programUsesChannel(program)) {
+        out << channelHelperDefinition() << "\n";
     }
     for (const auto& stmt : program.statements) {
         if (stmt->isExternalDeclaration) continue;
@@ -996,7 +1003,7 @@ std::string AstEmitter::containerVarType(const Expression* expr) const {
         // the same way isCurrentField/fieldType already do for exprObjectClass.
         if (isCurrentField(id->name)) {
             const std::string ft = fieldType(currentClass_, id->name);
-            if (isVectorType(ft)) return ft;
+            if (isVectorType(ft) || isChannelType(ft)) return ft;
         }
         return "";
     }
@@ -1013,7 +1020,7 @@ std::string AstEmitter::containerVarType(const Expression* expr) const {
         const std::string objClass = exprObjectClass(member->object.get());
         if (objClass.empty()) return "";
         const std::string ft = fieldType(objClass, member->member);
-        if (isVectorType(ft)) return ft;
+        if (isVectorType(ft) || isChannelType(ft)) return ft;
         return "";
     }
     return "";
@@ -1108,6 +1115,7 @@ std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::st
         return "std::map<" + cppTypeFor(mapKeyType(ceelingType), "")
              + ", " + cppTypeFor(mapValueType(ceelingType), "") + ">";
     }
+    if (isChannelType(ceelingType)) return "cling::Channel<" + cppTypeFor(channelElementType(ceelingType), "") + ">";
     const std::string elem = vectorElementType(ceelingType);
     if (elem.empty()) return ceelingType;
     // A `struct`-declared (or Iterator-shaped) value-type element is stored
@@ -1785,7 +1793,7 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
         } else {
             sig += cppTypeFor(ptype, pname) + " " + pname;
             noteVar(pname, VarKind::Value);
-            if (isVectorType(ptype)) {
+            if (isVectorType(ptype) || isChannelType(ptype)) {
                 containerVarType_[pname] = ptype;
             }
         }
@@ -2231,6 +2239,9 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
             const bool rhsIsVector = isVectorType(decl->type);
             if (rhsIsVector) {
                 containerVarType_[decl->identifier] = decl->type;
+            }
+            if (isChannelType(decl->type)) {
+                containerVarType_[decl->identifier] = decl->type;      // (for method receivers; the handle is copied, never moved)
             }
             std::string rhs = rhsIsVector ? emitMovedArg(decl->expression.get())
                                           : emitExpression(decl->expression.get());
@@ -2855,6 +2866,12 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
         }
         std::string s = prefix + "(";
         for (size_t i = 0; i < call->arguments.size(); ++i) {
+            if (isChannelType(receiverContainerType)) {
+                // Channel::send copies its argument (see DanglingChecker::applyCallArgMoves): the sender keeps using what it sent.
+                if (i > 0) s += ", ";
+                s += emitExpression(call->arguments[i].get());
+                continue;
+            }
             if (i > 0) s += ", ";
             if (i == argOutParamIdx) {
                 // Mirrors the VariableDeclaration `ref` observer lowering

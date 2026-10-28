@@ -1,0 +1,51 @@
+//@ expect: accept
+//@ run: hello:world 6 FILE:/etc/x
+//@ flags: --pool-shared
+//@ reason: Why Channel exists: a worker asks the creating thread to do something only it may do and waits for the answer. The request is a
+//@ reason: struct that carries its own reply channel (a Channel handle is a plain, copyable value, so a struct holding one is still a plain
+//@ reason: value). The worker sends {path, reply} on `requests`, then waits on `reply`; the creating thread serves the request and answers.
+//@ reason: Several requests go through one job without registering anything in advance.
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+struct Request {
+public:
+    string path;
+    Channel<string> reply;
+    Request(string p, Channel<string> r) { path = p; reply = r; }
+};
+
+int main() {
+    Channel<Request> requests;
+    Channel<string> result;
+    spawn(closure Job [requests, result] () {
+        string collected = "";
+        int i = 0;
+        while (i < 2) {
+            Channel<string> reply;
+            requests.send(new Request("/etc/x", reply));
+            if (reply.wait(5000)) {
+                collected = reply.take();
+            }
+            i = i + 1;
+        }
+        result.send(collected);
+        result.close();
+    });
+    int served = 0;
+    while (served < 2 && requests.wait(5000)) {
+        Request r = requests.take();
+        r.reply.send("FILE:" + r.path);
+        served = served + 1;
+    }
+    string text = "";
+    if (result.wait(5000)) {
+        text = result.take();
+    }
+    std::cout << "hello:world " << served + 4 << " " << text << std::endl;
+    return 0;
+}

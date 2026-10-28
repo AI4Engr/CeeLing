@@ -279,6 +279,24 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used);
 // since the answer differs by platform.
 std::string copyWithinHelperDefinition();
 
+// ---- Channel<T> -----------------------------------------------------------------------------------------------
+// `Channel<T>`: a built-in handle to a queue through which threads hand each other PLAIN VALUES (the same element types a `spawn` may
+// capture: primitives, string, vectors of primitives, structs of those). Copying the handle -- by assignment, as an argument, into a
+// `spawn` capture -- gives another handle to the SAME queue; the queue itself is guarded by a mutex, and what goes through it is
+// copies. It is the one sanctioned piece of state that a spawned job shares with its creator (CLAUDE.md, spawn).
+
+// Is `type` a `Channel<...>` shape?
+bool isChannelType(const std::string& type);
+
+// "Channel<int>" -> "int". Returns "" if `type` isn't a Channel<...> shape.
+std::string channelElementType(const std::string& type);
+
+// The methods a Channel has, with their argument counts: send(v), wait(ms), take(), size(), close(), isClosed().
+bool isKnownChannelMethod(const std::string& methodName, size_t argCount);
+
+// C++ source for cling::Channel<T> (include-guarded; emitted into a generated .cpp / .h that mentions a Channel).
+std::string channelHelperDefinition();
+
 // Runtime null check for dereferencing a smart pointer that may legitimately be empty -- today
 // the result of locking a weak_ptr field (cling::nn). Aborts with a message naming the source
 // line instead of dereferencing null. Emitted only into files that declare a weak field.

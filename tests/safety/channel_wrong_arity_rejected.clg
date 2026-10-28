@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ reason: send takes exactly one value, wait exactly one number: the method table checks the argument count too.
+
+int main() {
+    Channel<int> c;
+    c.send(1, 2);
+    return 0;
+}

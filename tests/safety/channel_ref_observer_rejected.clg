@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ reason: A Channel is already a handle; observing it with ref is refused like any other non-owning reference to something copyable.
+
+int main() {
+    Channel<int> c;
+    ref Channel<int> d = c;
+    return 0;
+}

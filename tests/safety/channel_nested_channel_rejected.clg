@@ -1,0 +1,7 @@
+//@ expect: reject
+//@ reason: A channel of channels would let a thread hand out access to shared state it was not given; refused.
+
+int main() {
+    Channel<Channel<int>> c;
+    return 0;
+}

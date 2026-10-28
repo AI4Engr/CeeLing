@@ -1,0 +1,40 @@
+//@ expect: accept
+//@ run: empty 1024 closed-send-false drained-wait-false
+//@ reason: The edges of the API, each deliberate. take() on an empty channel throws "channel empty" (no value is invented); send never blocks and
+//@ reason: stops accepting at the default capacity of 1024 values, so a runaway producer cannot grow memory without bound; a closed channel
+//@ reason: refuses send but still hands out what it already holds, and wait(0) is a poll that never sleeps.
+
+int main() {
+    Channel<int> c;
+    string first = "";
+    try {
+        int x = c.take();
+        first = "value";
+    } catch (string message) {
+        first = "empty";
+    }
+    int accepted = 0;
+    int i = 0;
+    while (i < 1100) {
+        if (c.send(i)) {
+            accepted = accepted + 1;
+        }
+        i = i + 1;
+    }
+    c.close();
+    string afterClose = "closed-send-true";
+    if (!c.send(1)) {
+        afterClose = "closed-send-false";
+    }
+    int drained = 0;
+    while (c.wait(0)) {
+        int y = c.take();
+        drained = drained + 1;
+    }
+    string last = "drained-wait-true";
+    if (!c.wait(0)) {
+        last = "drained-wait-false";
+    }
+    std::cout << first << " " << accepted << " " << afterClose << " " << last << std::endl;
+    return 0;
+}

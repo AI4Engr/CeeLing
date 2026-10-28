@@ -406,8 +406,17 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "SYMBOL",
-          "name": "generic_type"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "generic_type"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "channel_type"
+            }
+          ]
         },
         {
           "type": "SYMBOL",
@@ -468,6 +477,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "channel_type"
+        },
+        {
+          "type": "SYMBOL",
           "name": "scoped_identifier"
         },
         {
@@ -475,6 +488,31 @@
           "name": "identifier"
         }
       ]
+    },
+    "channel_type": {
+      "type": "PREC",
+      "value": 10,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "Channel"
+          },
+          {
+            "type": "STRING",
+            "value": "<"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "type"
+          },
+          {
+            "type": "STRING",
+            "value": ">"
+          }
+        ]
+      }
     },
     "generic_type": {
       "type": "PREC",

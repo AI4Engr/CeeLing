@@ -277,6 +277,10 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
             }
             return isKnownVectorMethod(member->member);
         }
+        // A Channel<T> (library_summary.h): send/wait/take/size/close/isClosed with their exact argument counts; nothing else.
+        if (isChannelType(declaredType)) {
+            return isKnownChannelMethod(member->member, call.arguments.size());
+        }
         if (isStringType(declaredType)) {
             return isKnownStringMethod(member->member);
         }

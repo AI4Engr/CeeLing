@@ -192,7 +192,7 @@ module.exports = grammar({
     // Restricted to $.generic_type (not $.type generally) so this exception can
     // never apply to a plain class/primitive declaration.
     container_declaration: $ => seq(
-      $.generic_type,
+      choice($.generic_type, $.channel_type),
       $.identifier,
       ';'
     ),
@@ -235,6 +235,7 @@ module.exports = grammar({
                // (bit 31 would be the sign bit), forcing a 4-byte refill
                // granularity instead of zlib-rs's 8.
       $.generic_type,        // std::vector<T> (Phase 2.6 containers)
+      $.channel_type,        // Channel<T>: the thread-safe queue of plain values (see CLAUDE.md, spawn)
       $.scoped_identifier,  // qualified names like std::vector (Phase 2.6 containers)
       $.identifier  // Add support for custom types (class names)
     ),
@@ -255,6 +256,10 @@ module.exports = grammar({
     // expected and loses to "this is a comparison" everywhere else (there's no such
     // position/precedence conflict for genuinely ambiguous top-level expression
     // statements, since $.type is never itself a valid $.statement).
+    // `Channel<T>`: a built-in handle to a queue that threads use to hand each other plain values. `Channel` is a keyword where a type
+    // can start (no program may name an identifier `Channel`); the element type is validated downstream (channel_check.cpp).
+    channel_type: $ => prec(10, seq('Channel', '<', $.type, '>')),
+
     generic_type: $ => prec(10, seq(
       $.scoped_identifier,
       '<',

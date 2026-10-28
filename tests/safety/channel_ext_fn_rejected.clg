@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ reason: An ext_fn signature may only carry primitives and vectors of primitives; a Channel cannot cross that trusted boundary.
+
+ext_fn int sendAll(Channel<int> c);
+
+int main() {
+    return 0;
+}

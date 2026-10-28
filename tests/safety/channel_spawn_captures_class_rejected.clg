@@ -1,0 +1,24 @@
+//@ expect: reject
+//@ reason: Regression: allowing a Channel capture must not open any other object to spawn. A class instance is still refused (here it is not even a flat object created by new).
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+class Thing {
+public:
+    int n;
+    Thing(int k) { n = k; }
+};
+
+int main() {
+    Channel<int> c;
+    Thing t = new Thing(1);
+    Thing u = t;
+    spawn(closure Job [u, c] () {
+        c.send(1);
+    });
+    return 0;
+}

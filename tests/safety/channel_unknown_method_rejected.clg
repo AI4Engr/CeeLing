@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ reason: Only send / wait / take / size / close / isClosed exist; anything else is an unknown call and rejected by default.
+
+int main() {
+    Channel<int> c;
+    c.send(1);
+    int x = c.peek();
+    return 0;
+}

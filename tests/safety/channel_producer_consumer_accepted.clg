@@ -1,0 +1,33 @@
+//@ expect: accept
+//@ run: 4950 100 1
+//@ flags: --pool-shared
+//@ reason: The headline use: a spawned job sends 100 ints through a Channel<int> and the creating thread sums them. The handle is
+//@ reason: COPIED into the job (the creator keeps using its own copy afterwards -- no use-after-move), both handles name the same
+//@ reason: queue, and the queue is the only thing the two threads share; what crosses it are copies of ints. `wait` returns false once the
+//@ reason: channel is closed and drained.
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Channel<int> c;
+    spawn(closure Job [c] () {
+        int i = 0;
+        while (i < 100) {
+            c.send(i);
+            i = i + 1;
+        }
+        c.close();
+    });
+    int total = 0;
+    int received = 0;
+    while (c.wait(5000)) {
+        total = total + c.take();
+        received = received + 1;
+    }
+    std::cout << total << " " << received << " " << c.isClosed() << std::endl;
+    return 0;
+}

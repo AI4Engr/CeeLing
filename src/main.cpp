@@ -5,6 +5,7 @@
 #include "core/generator/pairing_checker.h"
 #include "core/generator/closure_desugar.h"
 #include "core/generator/struct_json.h"
+#include "core/generator/channel_check.h"
 #include "core/generator/ast_emitter.h"
 #include "core/generator/smart_pointer_analyzer.h"
 #include <iostream>
@@ -317,6 +318,7 @@ int main(int argc, char* argv[]) {
         // ASTBuilder's or SmartPointerAnalyzer's, and why it must run exactly here).
         // `decodeX(item)` for a struct X: generate the decoder (struct_json.h) so the checkers below see ordinary code
         desugarStructJson(*program);
+        checkChannels(*program);      // Channel<T>: the element must be a plain value, and nothing may hide a Channel in another type
         desugarClosures(*program);
 #else
         throw std::runtime_error("This build was configured without Tree-sitter support. Rebuild with -DWITH_TREE_SITTER=ON.");

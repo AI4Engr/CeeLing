@@ -192,6 +192,9 @@ bool isSendableValueType(const std::string& type,
                          std::set<std::string>& visiting) {
     if (isPrimitiveType(type)) return true;
     if (isVectorType(type)) return isSendableValueType(vectorElementType(type), classesByName, visiting);
+    // A Channel handle is copied into the new thread and stays valid in the creating one: the queue behind it is guarded by a mutex and
+    // carries copies of plain values only (channel_check.cpp checks its element type wherever a Channel is declared).
+    if (isChannelType(type)) return isSendableValueType(channelElementType(type), classesByName, visiting);
     auto it = classesByName.find(type);
     if (it == classesByName.end() || !it->second->isValueType) return false;
     if (!visiting.insert(type).second) return true;   // already being checked higher up: no new information

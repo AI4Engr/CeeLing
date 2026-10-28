@@ -284,6 +284,10 @@ private:
     // body as a field-store (link/share semantics), not a local reassignment --
     // mirrors EscapeHatchChecker::classFields_, built once before any body is checked.
     std::map<std::string, std::set<std::string>> classFields_;
+    // className -> field name -> declared type text (for resolving a receiver such as `hub.inbox` to `Channel<Req>`).
+    std::map<std::string, std::map<std::string, std::string>> classFieldTypes_;
+    // The declared type of a receiver expression: a local / parameter, a field of the current class, or `obj.field` of a known class; "" if unknown.
+    std::string declaredTypeOf(const Expression* expr) const;
     // Qualified summary key (summaryKey()) -> derived summary.
     std::map<std::string, FunctionSummary> summaries_;
     // Free-function name -> declared parameter list (needed to resolve a call's

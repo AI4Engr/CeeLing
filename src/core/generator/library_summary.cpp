@@ -422,6 +422,105 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used) 
     return out;
 }
 
+bool isChannelType(const std::string& type) {
+    return !channelElementType(type).empty();
+}
+
+std::string channelElementType(const std::string& type) {
+    static const std::string kPrefix = "Channel<";
+    if (type.rfind(kPrefix, 0) != 0 || type.empty() || type.back() != '>') return {};
+    std::string inner = type.substr(kPrefix.size(), type.size() - kPrefix.size() - 1);
+    const size_t first = inner.find_first_not_of(" \t");
+    const size_t last = inner.find_last_not_of(" \t");
+    if (first == std::string::npos) return {};
+    return inner.substr(first, last - first + 1);
+}
+
+bool isKnownChannelMethod(const std::string& methodName, size_t argCount) {
+    if (methodName == "send" || methodName == "wait") return argCount == 1;
+    return (methodName == "take" || methodName == "size" || methodName == "close" || methodName == "isClosed") && argCount == 0;
+}
+
+std::string channelHelperDefinition() {
+    return
+        "#ifndef CLING_CHANNEL_DEFINED\n"
+        "#define CLING_CHANNEL_DEFINED\n"
+        "#include <chrono>\n"
+        "#include <condition_variable>\n"
+        "#include <deque>\n"
+        "#include <memory>\n"
+        "#include <mutex>\n"
+        "#include <string>\n"
+        "namespace cling {\n"
+        "// A handle to a queue of plain values shared by threads. Copying the handle gives another handle to the same queue; the\n"
+        "// move operations are deliberately NOT declared, so std::move(handle) is a copy and a creator's handle never becomes empty.\n"
+        "// send never blocks: it fails when the channel is closed or holds `capacity` values (default 1024).\n"
+        "template <typename T>\n"
+        "class Channel {\n"
+        "    struct State {\n"
+        "        std::mutex m;\n"
+        "        std::condition_variable cv;\n"
+        "        std::deque<T> items;\n"
+        "        bool closed = false;\n"
+        "        size_t capacity = 1024;\n"
+        "    };\n"
+        "    std::shared_ptr<State> s_;\n"
+        "public:\n"
+        "    Channel() : s_(std::make_shared<State>()) {}\n"
+        "    Channel(const Channel&) = default;\n"
+        "    Channel& operator=(const Channel&) = default;\n"
+        "    bool send(T value) {\n"
+        "        {\n"
+        "            std::lock_guard<std::mutex> lock(s_->m);\n"
+        "            if (s_->closed || s_->items.size() >= s_->capacity) return false;\n"
+        "            s_->items.push_back(std::move(value));\n"
+        "        }\n"
+        "        s_->cv.notify_one();\n"
+        "        return true;\n"
+        "    }\n"
+        "    // true once a value can be taken. ms < 0 waits as long as it takes, 0 does not wait; false on timeout or when the channel\n"
+        "    // is closed and empty.\n"
+        "    bool wait(int ms) {\n"
+        "        std::unique_lock<std::mutex> lock(s_->m);\n"
+        "        auto ready = [this] { return !s_->items.empty() || s_->closed; };\n"
+        "        if (ms < 0) {\n"
+        "            s_->cv.wait(lock, ready);\n"
+        "        } else if (ms > 0) {\n"
+        "#ifdef __SANITIZE_THREAD__\n"
+        "            s_->cv.wait_until(lock, std::chrono::system_clock::now() + std::chrono::milliseconds(ms), ready);\n"
+        "#else\n"
+        "            s_->cv.wait_for(lock, std::chrono::milliseconds(ms), ready);\n"
+        "#endif\n"
+        "        }\n"
+        "        return !s_->items.empty();\n"
+        "    }\n"
+        "    T take() {\n"
+        "        std::lock_guard<std::mutex> lock(s_->m);\n"
+        "        if (s_->items.empty()) throw std::string(\"channel empty\");\n"
+        "        T value = std::move(s_->items.front());\n"
+        "        s_->items.pop_front();\n"
+        "        return value;\n"
+        "    }\n"
+        "    int size() {\n"
+        "        std::lock_guard<std::mutex> lock(s_->m);\n"
+        "        return static_cast<int>(s_->items.size());\n"
+        "    }\n"
+        "    void close() {\n"
+        "        {\n"
+        "            std::lock_guard<std::mutex> lock(s_->m);\n"
+        "            s_->closed = true;\n"
+        "        }\n"
+        "        s_->cv.notify_all();\n"
+        "    }\n"
+        "    bool isClosed() {\n"
+        "        std::lock_guard<std::mutex> lock(s_->m);\n"
+        "        return s_->closed;\n"
+        "    }\n"
+        "};\n"
+        "}  // namespace cling\n"
+        "#endif\n";
+}
+
 std::string copyWithinHelperDefinition() {
     // See the header's doc comment for why this is a helper rather than a
     // bare std::memmove call, and why the SSE2 fast path's final chunk no
