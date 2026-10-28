@@ -605,7 +605,9 @@ local moved out), custom `#include` passthrough, and native `std::cout << ...` s
 output.
 
 ### Phase 4 — Runtime backstops
-Compiler-inserted bounds checks (#11) and null checks (#9) that panic/throw.
+**Done** for the two main checks: bounds checks on `v[i]` / `s[i]` (#11, 2026-10-19, [Chapter 13](13-bounds-checking.md)) and null checks on every
+object-handle dereference (#9, 2026-10-24, [Chapter 14](14-null-safety.md)). Both abort with the source line (not a catchable throw), are on by
+default and opt-out per compile. Gaps (empty `pop_back`, iterators, `substr`, `this`, `ext_fn`) are listed in those chapters.
 
 ### Phase 5 — Leak prevention
 `shared_ptr` cycle detection (#12) → `weak_ptr`.

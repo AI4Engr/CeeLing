@@ -9,7 +9,7 @@ memory safety means closing every item below.
 
 - **Static + runtime backstop.** Dangling / type / escape-hatches are caught
   statically. Checks that are impractical to prove statically (bounds, null deref)
-  are enforced by **compiler-inserted runtime checks** that panic/throw — the same
+  are enforced by **compiler-inserted runtime checks** that panic (in the implementation: print the line and `abort()`, which user code cannot catch) — the same
   pragmatic path as cppfront and Rust. **Pure-static is NOT required**; it would
   over-reject to the point of unusability.
 - **Single-thread scope for v1.** Data-race / concurrency safety (Rust's Send/Sync
@@ -32,9 +32,9 @@ memory safety means closing every item below.
 | 7 | Lambda captures `[&]` local, then escapes | **DONE** — closures exist (`closure IFace [caps] (params) {...}`), but capture is **by value only**; `[&]` is not detected-and-rejected, it is **unrepresentable in the grammar** (the capture list is bare identifiers, no capture-mode syntax at all). See Chapter 18a. | static (by construction) |
 | 8 | Dangling temporary bound to `const&` subobject | temporary-lifetime rule | static |
 | **Other UB (not dangling)** | | | |
-| 9 | Null deref (`shared_ptr`/`weak_ptr.lock()` may be empty) | non-null typing where provable, else runtime check | static + runtime |
+| 9 | Null deref (`shared_ptr`/`weak_ptr.lock()` may be empty) | runtime check on every object-handle `->`, abort with the line — **DONE 2026-10-24** (Ch. 14); no static non-null typing | runtime |
 | 10 | **Use-after-move** (auto-`std::move` *creates* this risk) | moved-from state tracking | static |
-| 11 | Array / container out-of-bounds `v[i]` | compiler-inserted bounds check | runtime |
+| 11 | Array / container out-of-bounds `v[i]` | compiler-inserted bounds check, abort with line, index and size — **DONE 2026-10-19** (Ch. 13) | runtime |
 | 12 | `shared_ptr` reference cycle → leak | cycle detection → `weak_ptr` | static |
 | **Escape hatches that MUST be sealed** (one hole ⇒ contract void) | | | |
 | 13 | `reinterpret_cast` / C-style cast | forbid | static |
