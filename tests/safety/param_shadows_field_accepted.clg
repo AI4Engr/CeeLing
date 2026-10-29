@@ -1,0 +1,34 @@
+//@ expect: accept
+//@ run: 2 1 10 4
+//@ reason: A parameter hides a field of the same name, as in C++ and Java. The emitter used to turn EVERY bare name that matches a field of the class into
+//@ reason: `this->name`, even when a parameter of that name is in scope: `choose(vector names) { chosen = names; }` in a class that also has a field `names`
+//@ reason: assigned the FIELD (`this->chosen = this->names`) -- it compiled, ran and silently used the wrong vector (found by app-cling's command list, whose
+//@ reason: tests caught it only because the answer was wrong). Covers a vector parameter, an int parameter used in an expression, and the constructor.
+
+class Reg {
+public:
+    std::vector<string> names;
+    std::vector<string> chosen;
+    int x;
+    int y;
+    Reg(int x) {
+        y = x + x;
+    }
+    void choose(std::vector<string> names) {
+        chosen = names;
+    }
+    int twice(int x) {
+        return x + x;
+    }
+};
+
+int main() {
+    Reg r = new Reg(2);
+    r.names.push_back("field");
+    std::vector<string> given;
+    given.push_back("a");
+    given.push_back("b");
+    r.choose(given);
+    std::cout << r.chosen.size() << " " << r.names.size() << " " << r.twice(5) << " " << r.y << std::endl;
+    return 0;
+}

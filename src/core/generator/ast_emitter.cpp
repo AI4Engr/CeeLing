@@ -796,6 +796,9 @@ std::string AstEmitter::argNeedsExplicitCopyForReadOnlyContainerParam(const Func
 
 bool AstEmitter::isCurrentField(const std::string& name) const {
     if (currentClass_.empty()) return false;
+    // A parameter of the same name hides the field, as in C++ and Java: `restrictAll(vector names) { defaultNames = names; }` in a class that also has
+    // a field `names` used to emit `this->defaultNames = this->names;` (found by app-cling: a silent miscompile that took the wrong vector).
+    if (currentParamNames_.count(name) > 0) return false;
     auto it = classFields_.find(currentClass_);
     if (it == classFields_.end()) return false;
     return it->second.count(name) > 0;
