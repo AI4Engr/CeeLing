@@ -30,6 +30,10 @@ namespace cling {
 // generates its decoder (a call from another file needs a function declared there, or a one-line wrapper).
 //
 // Throws std::runtime_error with the compiler's usual "error[semantic/...]" text.
-void desugarStructJson(Program& program);
+//
+// `included` is true for a file merged into another one through `.clh`: the pass writes its decoders so they are declared for the includer,
+// but does not demand cjson-cling here, because a diamond include may have merged it into a sibling instead (the file that emits the definition is
+// compiled on its own and checked there).
+void desugarStructJson(Program& program, bool included = false);
 
 }  // namespace cling

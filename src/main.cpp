@@ -131,6 +131,9 @@ void mergeExternalDeclarations(Program& program, const std::string& baseDir,
         // Resolve the included file's OWN includes first, so a transitive dependency
         // (parser -> node, parser -> scanner) is visible by the time we merge parser's.
         mergeExternalDeclarations(*includedProgram, includedDir, seenClgFiles);
+        // The decoders this file's structs ask for (`decodeX(item)`, struct_json.h) are part of what the including file may call: write them here too, so the
+        // merged declarations carry them (they are declarations only there; the definitions are emitted once, by the file that declares the struct).
+        desugarStructJson(*includedProgram, true);
         for (auto& includedStmt : includedProgram->statements) {
             includedStmt->isExternalDeclaration = true;
             merged.push_back(std::move(includedStmt));

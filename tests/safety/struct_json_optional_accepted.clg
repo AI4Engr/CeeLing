@@ -1,0 +1,113 @@
+//@ expect: accept
+//@ run: untitled 800 0 0 | Doc 640 1 2 | untitled 800 0 0 | width
+//@ reason: A struct with a constructor that takes NO parameters has optional fields: the decoder starts from `new Opts()` and overwrites only the fields the object
+//@ reason: has (a JSON null counts as absent), so a missing field keeps the value the constructor gave it. This is what a command like `dialog.open {title?, filters?}` needs.
+//@ reason: A field that IS present must still have the right type (`width` as a string is an error naming it), and an empty object decodes to all defaults.
+
+// ---- a stand-in for cjson-cling: just the names the generated decoders use ----
+class Item {
+public:
+    Item next;
+    Item child;
+    string key;
+    string valuestring;
+    double valuedouble;
+    int type;
+    Item() { type = 0; valuedouble = 0.0; key = ""; valuestring = ""; }
+};
+bool isObject(Item i) { return i != nullptr && i.type == 6; }
+bool isArray(Item i) { return i != nullptr && i.type == 5; }
+bool isNull(Item i) { return i != nullptr && i.type == 0; }
+bool isString(Item i) { return i != nullptr && i.type == 4; }
+bool isNumber(Item i) { return i != nullptr && i.type == 3; }
+bool isBool(Item i) { return i != nullptr && (i.type == 1 || i.type == 2); }
+bool isTrue(Item i) { return i != nullptr && i.type == 2; }
+int getArraySize(Item a) {
+    int n = 0;
+    Item c = a.child;
+    while (c != nullptr) { n = n + 1; c = c.next; }
+    return n;
+}
+Item getArrayItem(Item a, int index) {
+    Item c = a.child;
+    int k = index;
+    while (c != nullptr && k > 0) { c = c.next; k = k - 1; }
+    return c;
+}
+Item getObjectItem(Item o, string name) {
+    Item c = o.child;
+    while (c != nullptr) { if (c.key == name) { return c; } c = c.next; }
+    return nullptr;
+}
+// ---- building a document by hand ----
+Item node(int type, string key) { Item i = new Item(); i.type = type; i.key = key; return i; }
+Item num(string key, double v) { Item i = new Item(); i.type = 3; i.key = key; i.valuedouble = v; return i; }
+Item str(string key, string v) { Item i = new Item(); i.type = 4; i.key = key; i.valuestring = v; return i; }
+Item flag(string key, bool v) { Item i = new Item(); i.key = key; i.type = 1; if (v) { i.type = 2; } return i; }
+void put(Item parent, Item child) {
+    if (parent.child == nullptr) { parent.child = child; return; }
+    Item last = parent.child;
+    while (last.next != nullptr) { last = last.next; }
+    last.next = child;
+}
+
+struct Opts {
+public:
+    string title;
+    int width;
+    bool debug;
+    std::vector<string> tags;
+    Opts() {
+        title = "untitled";
+        width = 800;
+        debug = false;
+    }
+};
+
+string show(Opts o) {
+    int d = 0;
+    if (o.debug) {
+        d = 1;
+    }
+    return o.title + " " + std::to_string(o.width) + " " + std::to_string(d) + " " + std::to_string(o.tags.size());
+}
+
+int main() {
+    Item empty = node(6, "");
+    Opts a = decodeOpts(empty);
+    std::string out = show(a);
+
+    Item some = node(6, "");
+    put(some, str("title", "Doc"));
+    put(some, num("width", 640.0));
+    put(some, flag("debug", true));
+    Item tags = node(5, "tags");
+    put(tags, str("", "x"));
+    put(tags, str("", "y"));
+    put(some, tags);
+    put(some, num("ignored", 1.0));
+    Opts b = decodeOpts(some);
+    out = out + " | " + show(b);
+
+    Item nulls = node(6, "");
+    put(nulls, node(0, "title"));
+    put(nulls, node(0, "width"));
+    Opts c = decodeOpts(nulls);
+    out = out + " | " + show(c);
+
+    Item wrong = node(6, "");
+    put(wrong, str("width", "wide"));
+    string message = "no error";
+    try {
+        Opts d = decodeOpts(wrong);
+    } catch (string m) {
+        message = m;
+    }
+    string field = "";
+    if (message.find("`width`") != std::string::npos) {
+        field = "width";
+    }
+    out = out + " | " + field;
+    std::cout << out << std::endl;
+    return 0;
+}

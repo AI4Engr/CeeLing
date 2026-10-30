@@ -37,23 +37,28 @@ struct Field {
 struct StructInfo {
     const ClassDeclaration* cls = nullptr;
     std::vector<Field> fields;
+    // The struct has a constructor with no parameters: every field is then OPTIONAL. The decoder starts from `new X()` and overwrites the fields that
+    // are present (and not null); a missing field keeps the value the constructor gave it. Without one, every field is required and the decoder builds
+    // the struct with the constructor that takes all of them.
+    bool optional = false;
 };
 
 std::string quote(const std::string& s) { return "\"" + s + "\""; }
 
 class Generator {
 public:
-    explicit Generator(Program& program) : program_(program) {}
+    Generator(Program& program, bool included) : program_(program), included_(included) {}
 
     void run() {
         indexProgram();
         std::set<std::string> triggered = findTriggers();
         if (triggered.empty()) return;
-        requireJsonApi();
-
         // Everything that must have a decodeXAt: the triggered structs and, transitively, the structs they hold.
         std::set<std::string> needed;
         for (const auto& name : triggered) collectNeeded(name, needed);
+        bool anyOptional = false;
+        for (const auto& name : needed) anyOptional = anyOptional || infoFor(name).optional;
+        if (!included_) requireJsonApi(anyOptional);
 
         std::vector<StatementPtr> out;
         for (auto& stmt : program_.statements) {
@@ -72,6 +77,7 @@ public:
 
 private:
     Program& program_;
+    bool included_;
     std::map<std::string, const ClassDeclaration*> classes_;       // every class/struct visible here, external ones included
     std::set<std::string> functions_;                               // every free function visible here
     std::map<std::string, StructInfo> infos_;
@@ -113,13 +119,14 @@ private:
         return triggered;
     }
 
-    void requireJsonApi() {
+    void requireJsonApi(bool needIsNull) {
         static const char* kNeeded[] = {"isObject", "isString", "isNumber", "isBool", "isTrue",
                                         "isArray", "getObjectItem", "getArraySize", "getArrayItem"};
         std::string missing;
         for (const char* n : kNeeded) {
             if (functions_.count(n) == 0) missing += std::string(missing.empty() ? "" : ", ") + n;
         }
+        if (needIsNull && functions_.count("isNull") == 0) missing += std::string(missing.empty() ? "" : ", ") + "isNull";
         if (classes_.count("Item") == 0) missing += std::string(missing.empty() ? "" : ", ") + "class Item";
         if (!missing.empty()) {
             fail("struct-json-needs-cjson", "generated struct decoders need cjson-cling, which is not visible here (missing: " + missing + ")",
@@ -151,7 +158,11 @@ private:
             fail("struct-json-empty", "struct `" + name + "` has no fields", "there is nothing to decode");
         }
         for (const auto& f : info.fields) checkFieldType(name, f);
-        checkConstructor(info);
+        for (const auto& member : cls->members) {
+            auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get());
+            if (ctor != nullptr && ctor->parameters.empty()) info.optional = true;
+        }
+        if (!info.optional) checkConstructor(info);
         return infos_[name] = info;
     }
 
@@ -234,6 +245,20 @@ private:
                "    if (path.length() > 0) {\n"
                "        base = path + \".\";\n"
                "    }\n";
+        if (info.optional) {
+            // every field optional: start from the constructor's values, overwrite what the object has (a JSON null counts as absent)
+            out << "    " << name << " r = new " << name << "();\n";
+            for (const auto& f : info.fields) {
+                std::string item = "f" + std::to_string(counter_++);
+                out << "    Item " << item << " = getObjectItem(j, " << quote(f.name) << ");\n";
+                out << "    if (" << item << " != nullptr && !isNull(" << item << ")) {\n";
+                std::string var = decodeValue(out, 2, f.type, item, "base + " + quote(f.name));
+                out << "        r." << f.name << " = " << var << ";\n";
+                out << "    }\n";
+            }
+            out << "    return r;\n}\n";
+            return out.str();
+        }
         std::vector<std::string> vars;
         for (const auto& f : info.fields) {
             std::string item = "f" + std::to_string(counter_++);
@@ -313,8 +338,8 @@ private:
 
 }  // namespace
 
-void desugarStructJson(Program& program) {
-    Generator(program).run();
+void desugarStructJson(Program& program, bool included) {
+    Generator(program, included).run();
 }
 
 }  // namespace cling
