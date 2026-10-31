@@ -1,0 +1,12 @@
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+    int get() { return v; }
+};
+class Bag {
+public:
+    std::vector<Item> items;
+    Bag() { }
+    void add(Item i) { items.push_back(i); }
+};

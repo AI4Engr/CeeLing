@@ -1,0 +1,41 @@
+//@ expect: accept
+//@ run: 3 1
+//@ reason: the swap-with-last removal (`items[index] = items[last];`) copies an element into another slot, which a unique_ptr element cannot do. The elements must be
+//@ reason: inferred shared from this file alone, with no other file to supply the evidence (a class moved to its own module is analysed by itself).
+class Item {
+public:
+    int n;
+    Item(int v) {
+        n = v;
+    }
+};
+
+class Book {
+public:
+    std::vector<int> ids;
+    std::vector<Item> items;
+    Book() { }
+    void add(int id, Item i) {
+        ids.push_back(id);
+        items.push_back(i);
+    }
+    void drop(int index) {
+        int last = items.size() - 1;
+        if (index != last) {
+            ids[index] = ids[last];
+            items[index] = items[last];
+        }
+        ids.pop_back();
+        items.pop_back();
+    }
+};
+
+int main() {
+    Book b = new Book();
+    b.add(1, new Item(1));
+    b.add(2, new Item(2));
+    b.add(3, new Item(3));
+    b.drop(0);
+    std::cout << b.ids[0] << " " << b.items[1].n - 1 << std::endl;
+    return 0;
+}

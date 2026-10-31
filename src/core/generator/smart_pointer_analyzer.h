@@ -52,6 +52,18 @@ class SmartPointerAnalyzer {
 public:
     // Two-pass analysis
     void analyzeProgram(const Program& program, const std::string& source = "");
+
+    // ---- pointer demands: what files that include each other need to agree on ----
+    // A class is analysed in the file that declares it, and the header that file produces fixes the pointer kind of every field, container element and
+    // method return. A file that INCLUDES the class sees how it is used (an alias made of a field, an element copied out of a vector, a returned local) and
+    // may need a kind the declaring file, which cannot see that use, did not choose: the generated code of the two would not fit together. In one file
+    // this cannot happen, because the analysis sees everything; across files it is handled in two steps (scripts/build.sh does them):
+    //   1. compile every file and WRITE its demands (exportDemands): the kinds it needs for the members of the classes it includes;
+    //   2. compile every file again, READING all the demands (setDemands): a member some file needs shared becomes shared in every file that has the class.
+    // A demand can only make a member SHARED (shared is always safe to use, unique is not). Lines of the file: "shared field Class.name",
+    // "shared elements name" (a container field, by name like every container here), "shared return Class::method". Without demands nothing changes.
+    void setDemands(const std::vector<std::string>& lines);
+    std::vector<std::string> exportDemands(const Program& program) const;
     PointerType getPointerType(const std::string& className, const std::string& variableName) const;
     // Scope-aware variant of getPointerType: the decision recorded for exactly this
     // (enclosing function/method, class, name) triple when there is one, else the merged
@@ -278,6 +290,13 @@ private:
     void forceVirtualSignaturesShared(const Program& program);
     // (scope, type, name, container) of every `container.push_back(identifier)` seen by the container scan
     std::vector<std::vector<std::string>> pushedArgs_;
+    std::set<std::string> demandedFields_;     // "Class.name"
+    std::set<std::string> demandedElements_;   // container field name
+    std::set<std::string> demandedReturns_;    // "Class::method"
+    // The declared type of every container FIELD (`items` -> `std::vector<Cmd>`), by field name like every other container here: tells the scan that a
+    // container holds objects even in a file that never pushes into it.
+    std::map<std::string, std::string> containerFieldTypes_;
+
     void promoteAliasedLocals(const Program& program);
     void promoteAliasedLocalsInBody(const std::vector<StatementPtr>& body,
                                     const std::vector<std::pair<std::string, std::string>>& params,
@@ -324,6 +343,8 @@ private:
     // structural rule (this/field/alias-call only) never covers plain locals.
     // See the .cpp for the concrete yaml-cling Parser shape this closes.
     void promoteReturnsOfSharedLocals(const Program& program);
+    void promoteReturnsOfSharedLocalsOnce(const Program& program, bool& changed);
+    bool localComesFromSharedCall(const Expression* init, const std::string& ownClass, const std::string& scope) const;
 
     // Free-function counterpart of inferAliasReturningMethods's case (c) --
     // MUST run AFTER promoteReturnsOfSharedLocals (needs a called class

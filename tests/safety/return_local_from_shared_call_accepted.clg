@@ -1,0 +1,49 @@
+//@ expect: accept
+//@ run: 2
+//@ reason: `Item w = get(i); ... return w;` -- the local comes from a call whose result is shared, so it is a shared_ptr, and the method that returns it must return a
+//@ reason: shared_ptr too (it used to stay unique_ptr, a compile error in the generated code). Methods that depend on each other, in either order in the file.
+class Item {
+public:
+    int n;
+    Item(int v) {
+        n = v;
+    }
+};
+
+class Book {
+public:
+    std::vector<Item> items;
+    Book() { }
+    void add(Item i) {
+        items.push_back(i);
+    }
+    // declared BEFORE get(): which of the two is shared is decided from the other
+    Item needed(int i) {
+        Item w = get(i);
+        if (w == nullptr) {
+            throw "gone";
+        }
+        return w;
+    }
+    Item get(int i) {
+        if (i < 0) {
+            return nullptr;
+        }
+        Item w = items[i];
+        return w;
+    }
+};
+
+Item firstOf(Book b) {
+    Item x = b.needed(0);
+    return x;
+}
+
+int main() {
+    Book b = new Book();
+    b.add(new Item(2));
+    Item x = b.needed(0);
+    Item y = firstOf(b);
+    std::cout << x.n << std::endl;
+    return y.n - 2;
+}

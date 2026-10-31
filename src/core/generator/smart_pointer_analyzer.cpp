@@ -1,4 +1,5 @@
 #include "smart_pointer_analyzer.h"
+#include "ast_walk.h"
 
 #include "class_hierarchy.h"
 #include "library_summary.h"
@@ -129,6 +130,63 @@ std::string chooseMethodLikeScope(const std::string& currentClass, const std::st
 
 } // namespace
 
+void SmartPointerAnalyzer::setDemands(const std::vector<std::string>& lines) {
+    for (const std::string& line : lines) {
+        std::istringstream in(line);
+        std::string kind, what, name;
+        if (!(in >> kind >> what >> name) || kind != "shared") continue;
+        if (what == "field") demandedFields_.insert(name);
+        else if (what == "elements") demandedElements_.insert(name);
+        else if (what == "return") demandedReturns_.insert(name);
+    }
+}
+
+std::vector<std::string> SmartPointerAnalyzer::exportDemands(const Program& program) const {
+    std::set<std::string> out;                      // (a set: sorted, no repeats, so the file is the same every time)
+    // What this file's OWN code reaches in other files' classes: `x.member` (a field, or a container field) and `x.method(...)`. A kind is demanded only for
+    // something that is reached. The analysis also promotes things by NAME alone (every field `gate` of class FileGate becomes shared because one `gate` is handed
+    // on), which says nothing about a field this file never touches; demanding it would change a class that is fine as it was.
+    std::set<std::string> reached;
+    for (const auto& stmt : program.statements) {
+        if (stmt->isExternalDeclaration) continue;
+        astwalk::walkStatement(const_cast<Statement*>(stmt.get()), [&](ASTNode& node) {
+            if (auto member = dynamic_cast<MemberAccess*>(&node)) reached.insert(member->member);
+        });
+    }
+    for (const auto& stmt : program.statements) {
+        auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
+        if (cls == nullptr || !cls->isExternalDeclaration) continue;       // only the classes of OTHER files: this file's own are its own business
+        for (const auto& member : cls->members) {
+            if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                if (reached.count(field->identifier) == 0) continue;
+                if (classNames.find(field->type) != classNames.end()) {
+                    const std::string key = buildKey(cls->name, field->type, field->identifier);
+                    auto it = pointerDecisions.find(key);
+                    if (it != pointerDecisions.end() && it->second == PointerType::SHARED) {
+                        // (the reason is a comment after the three words: it says WHY this file needs the member shared)
+                        auto why = pointerReasons.find(key);
+                        out.insert("shared field " + cls->name + "." + field->identifier + "  # " + (why != pointerReasons.end() ? why->second : std::string("no reason recorded")));
+                    }
+                } else if (isVectorType(field->type) && classNames.count(vectorElementType(field->type)) > 0 && containerElementIsShared(field->identifier)) {
+                    out.insert("shared elements " + field->identifier);
+                }
+            } else if (auto container = dynamic_cast<const ContainerDeclaration*>(member.get())) {
+                if (reached.count(container->identifier) == 0) continue;
+                if (isVectorType(container->type) && classNames.count(vectorElementType(container->type)) > 0 && containerElementIsShared(container->identifier)) {
+                    out.insert("shared elements " + container->identifier);
+                }
+            } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                if (reached.count(method->name) == 0) continue;
+                if (method->specializationArg.empty() && classNames.count(method->returnType) > 0 &&
+                    getMethodReturnPointerType(cls->name, method->name) == PointerType::SHARED) {
+                    out.insert("shared return " + cls->name + "::" + method->name);
+                }
+            }
+        }
+    }
+    return std::vector<std::string>(out.begin(), out.end());
+}
+
 void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::string& source) {
     variableReferences.clear();
     classRelationships.clear();
@@ -145,9 +203,13 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     diagnostics.clear();
     reportLines.clear();
 
+    // what the files that include a class of this file need from it (setDemands): the same plumbing as a written //@ptr hint, and a return kind
+    for (const std::string& field : demandedFields_) explicitHints[field] = PointerType::SHARED;
+
     containerElementShared_.clear();
     classMembersByClass_.clear();
     methodReturnKinds_.clear();
+    for (const std::string& method : demandedReturns_) methodReturnKinds_[method] = PointerType::SHARED;
     classesNeedingSharedFromThis_.clear();
     valueTypeClasses_.clear();
     readOnlyFreeFunctionParams_.clear();
@@ -369,6 +431,13 @@ bool SmartPointerAnalyzer::classNeedsSharedFromThis(const std::string& className
 void SmartPointerAnalyzer::scanContainerElementKinds(const Program& program) {
     pushedArgs_.clear();
     scanContainerElementKindsImpl(program);
+    for (const std::string& name : demandedElements_) {
+        // only a container of OBJECTS that this program declares (containers are told apart by name alone, and another file may have a vector of strings by the same name)
+        auto type = containerFieldTypes_.find(name);
+        if (type != containerFieldTypes_.end() && isVectorType(type->second) && classNames.count(vectorElementType(type->second)) > 0) {
+            containerElementShared_[name] = true;
+        }
+    }
     // A value pushed into a container whose elements are shared must itself be shared -- decided only
     // once every push and every element copy has been seen. (A parameter that is pushed then makes its
     // callers pass a shared object, via the call-site promotion that runs after this.)
@@ -408,6 +477,18 @@ void collectDeclaredNames(const std::vector<StatementPtr>& body, std::set<std::s
 }  // namespace
 
 void SmartPointerAnalyzer::scanContainerElementKindsImpl(const Program& program) {
+    containerFieldTypes_.clear();
+    for (const auto& stmt : program.statements) {
+        if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                if (auto field = dynamic_cast<const ContainerDeclaration*>(member.get())) {
+                    containerFieldTypes_[field->identifier] = field->type;
+                } else if (auto plain = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                    if (isVectorType(plain->type)) containerFieldTypes_[plain->identifier] = plain->type;     // (a field `std::vector<Cmd> items;`)
+                }
+            }
+        }
+    }
     auto scanBody = [this](const std::vector<StatementPtr>& body,
                            const std::vector<std::pair<std::string, std::string>>& params, const std::string& scope) {
         scanLocals_.clear();
@@ -500,6 +581,26 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
         }
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(&stmt)) {
         if (assign->expression) visitExpr(assign->expression.get());
+        // An element copied from an element, `v[i] = v[j];` (the swap-with-last removal), or into a variable, `x = v[i];`: two owners of one object, which only
+        // shared elements can be. The container is known to hold objects from its DECLARED type (`std::vector<Cmd>`), not from a push_back: a class in a file
+        // of its own may never push into its own vector (the callers do), and must still come out right when it is analysed alone.
+        if (auto from = dynamic_cast<const SubscriptExpression*>(assign->expression.get())) {
+            auto nameOf = [](const Expression* object) -> std::string {
+                if (auto id = dynamic_cast<const Identifier*>(object)) return id->name;
+                if (auto field = dynamic_cast<const MemberAccess*>(object)) return field->member;
+                return "";
+            };
+            auto holdsObjects = [this](const std::string& container) {
+                auto type = containerFieldTypes_.find(container);
+                return type != containerFieldTypes_.end() && isVectorType(type->second) && classNames.count(vectorElementType(type->second)) > 0;
+            };
+            const std::string source = nameOf(from->object.get());
+            if (!source.empty() && holdsObjects(source)) containerElementShared_[source] = true;
+            if (auto to = dynamic_cast<const SubscriptExpression*>(assign->target.get())) {
+                const std::string destination = nameOf(to->object.get());
+                if (!destination.empty() && holdsObjects(destination)) containerElementShared_[destination] = true;
+            }
+        }
     } else if (auto ifs = dynamic_cast<const IfStatement*>(&stmt)) {
         for (const auto& inner : ifs->body) scanContainerElementKindsInStatement(*inner, scopeName);
         for (const auto& inner : ifs->elseBody) scanContainerElementKindsInStatement(*inner, scopeName);
@@ -1188,7 +1289,59 @@ void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& progr
     }
 }
 
+namespace {
+// The initializer expression of the local variable `name` declared somewhere in `body` (nested blocks included), or nullptr if it is not declared
+// with an initializer. The first declaration wins.
+const Expression* findLocalInitializer(const std::vector<StatementPtr>& body, const std::string& name) {
+    for (const auto& st : body) {
+        if (auto d = dynamic_cast<const VariableDeclaration*>(st.get())) {
+            if (d->identifier == name) return d->expression.get();
+        } else if (auto i = dynamic_cast<const IfStatement*>(st.get())) {
+            if (auto found = findLocalInitializer(i->body, name)) return found;
+            if (auto found = findLocalInitializer(i->elseBody, name)) return found;
+        } else if (auto w = dynamic_cast<const WhileStatement*>(st.get())) {
+            if (auto found = findLocalInitializer(w->body, name)) return found;
+        } else if (auto f = dynamic_cast<const ForStatement*>(st.get())) {
+            if (auto found = findLocalInitializer(f->body, name)) return found;
+        } else if (auto t = dynamic_cast<const TryStatement*>(st.get())) {
+            if (auto found = findLocalInitializer(t->body, name)) return found;
+            if (auto found = findLocalInitializer(t->catchBody, name)) return found;
+        }
+    }
+    return nullptr;
+}
+}  // namespace
+
+// Is `init` a call whose result is shared, by the classification so far? The same question AstEmitter::isSharedReturningCall answers when it declares
+// the local: `recv.method(...)` (the receiver's class from its declared type), or a plain call (a free function, or a method of `ownClass`).
+bool SmartPointerAnalyzer::localComesFromSharedCall(const Expression* init, const std::string& ownClass, const std::string& scope) const {
+    auto call = dynamic_cast<const FunctionCall*>(init);
+    if (call == nullptr || !call->templateArg.empty()) return false;
+    if (call->callee) {
+        auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+        if (member == nullptr) return false;
+        auto recv = dynamic_cast<const Identifier*>(member->object.get());
+        if (recv == nullptr) return false;
+        auto type = symbolTypesByScope.find(makeSymbolKey(scope, recv->name));
+        if (type == symbolTypesByScope.end()) type = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, recv->name));
+        if (type == symbolTypesByScope.end()) return false;
+        return getMethodReturnPointerType(type->second, member->member) == PointerType::SHARED;
+    }
+    if (getMethodReturnPointerType("", call->function_name) == PointerType::SHARED) return true;
+    return !ownClass.empty() && getMethodReturnPointerType(ownClass, call->function_name) == PointerType::SHARED;
+}
+
 void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) {
+    // `Item w = get(i); ... return w;` -- a local initialised from a call whose result is shared IS shared (AstEmitter::isSharedReturningCall declares it
+    // so), but the table of local decisions the pass below reads does not know that, so such a method stayed unique_ptr-returning while its local was a
+    // shared_ptr: a compile error in the generated code. Which methods return shared depends on this pass itself, so it runs to a fixed point.
+    for (bool changed = true; changed;) {
+        changed = false;
+        promoteReturnsOfSharedLocalsOnce(program, changed);
+    }
+}
+
+void SmartPointerAnalyzer::promoteReturnsOfSharedLocalsOnce(const Program& program, bool& changed) {
     // A method's return classification (inferAliasReturningMethods, above) is
     // structural: it only recognizes `return this;` / `return <field>;` /
     // `return <alias-returning call>;`. It does NOT recognize `return <local
@@ -1261,12 +1414,14 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
                 // any other non-Identifier return shape.
                 auto id = dynamic_cast<const Identifier*>(expr);
                 if (id == nullptr) continue;
-                if (getPointerTypeForVariableInScope(methodScope, id->name) == PointerType::SHARED) {
+                if (getPointerTypeForVariableInScope(methodScope, id->name) == PointerType::SHARED ||
+                    localComesFromSharedCall(findLocalInitializer(method->body, id->name), cls->name, methodScope)) {
                     anyLocalIsShared = true;
                     break;
                 }
             }
             if (anyLocalIsShared) {
+                changed = true;
                 methodReturnKinds_[key] = PointerType::SHARED;
                 if (!cls->namespaceName.empty()) {
                     methodReturnKinds_[makeMemberKey(cls->namespaceName + "::" + cls->name, method->name)] =
@@ -1303,12 +1458,14 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
         for (const Expression* expr : returns) {
             auto id = dynamic_cast<const Identifier*>(expr);
             if (id == nullptr) continue;
-            if (getPointerTypeForVariableInScope(fn->name, id->name) == PointerType::SHARED) {
+            if (getPointerTypeForVariableInScope(fn->name, id->name) == PointerType::SHARED ||
+                localComesFromSharedCall(findLocalInitializer(fn->body, id->name), "", fn->name)) {
                 anyLocalIsShared = true;
                 break;
             }
         }
         if (anyLocalIsShared) {
+            changed = true;
             // Keyed under the BARE name ("" class + fn->name), matching
             // exactly how AstEmitter::buildFunctionSignature queries it on the
             // DEFINITION side -- emitTopLevel always passes fn->name verbatim,

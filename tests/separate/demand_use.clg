@@ -1,0 +1,6 @@
+#include "demand_lib.clh"
+int total(Bag b) {
+    Item first = b.items[0];
+    Item again = b.items[0];
+    return first.get() + again.get();
+}

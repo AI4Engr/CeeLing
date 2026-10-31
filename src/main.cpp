@@ -176,6 +176,8 @@ void showUsage(const char* programName) {
     std::cout << "  --cpp <output>  - Compile to C++ and save to <output> file" << std::endl;
     std::cout << "  --no-bounds-checks - Do not insert runtime bounds checks on v[i] / s[i]" << std::endl;
     std::cout << "  --no-null-checks   - Do not insert runtime null checks on object-handle dereferences" << std::endl;
+    std::cout << "  --ptr-demands-out <file> - Write the pointer kinds this file needs from the classes it includes (separate compilation; see smart_pointer_analyzer.h)" << std::endl;
+    std::cout << "  --ptr-demands <file>     - Read such demands written by other files (repeatable)" << std::endl;
     std::cout << "  --pool-shared      - Allocate shared objects from a per-thread free list (faster node-heavy code)" << std::endl;
     std::cout << "  --legacy-cpp    - Use the legacy regex/text-substitution generator" << std::endl;
     std::cout << "                    instead of the default AST-driven generator" << std::endl;
@@ -226,6 +228,8 @@ int main(int argc, char* argv[]) {
     bool boundsChecks = true;
     bool nullChecks = true;
     bool poolShared = false;
+    std::string demandsOutFile;                       // --ptr-demands-out: write what this file needs from the classes it includes
+    std::vector<std::string> demandsInFiles;          // --ptr-demands: read what other files need (see SmartPointerAnalyzer::setDemands)
 
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
@@ -238,6 +242,13 @@ int main(int argc, char* argv[]) {
             nullChecks = false;
         } else if (arg == "--pool-shared") {
             poolShared = true;
+        } else if (arg == "--ptr-demands-out" || arg == "--ptr-demands") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: " << arg << " requires a filename" << std::endl;
+                return 1;
+            }
+            if (arg == "--ptr-demands-out") demandsOutFile = argv[++i];
+            else demandsInFiles.push_back(argv[++i]);
         } else if (arg == "--legacy-cpp") {
             useLegacyGenerator = true;
         } else if (arg == "--cpp") {
@@ -352,7 +363,19 @@ int main(int argc, char* argv[]) {
         // free, so running it unconditionally (even under --legacy-cpp, which
         // doesn't otherwise need it) is simpler than threading a conditional.
         SmartPointerAnalyzer analyzer;
+        {
+            std::vector<std::string> demandLines;
+            for (const auto& file : demandsInFiles) {
+                std::ifstream in(file);
+                for (std::string line; std::getline(in, line);) demandLines.push_back(line);
+            }
+            analyzer.setDemands(demandLines);
+        }
         analyzer.analyzeProgram(*program, source);
+        if (!demandsOutFile.empty()) {
+            std::ofstream out(demandsOutFile, std::ios::binary);
+            for (const auto& line : analyzer.exportDemands(*program)) out << line << "\n";
+        }
 
         // Memory-safety analysis: reject dangling / use-after-move before generating C++.
         DanglingChecker danglingChecker;
