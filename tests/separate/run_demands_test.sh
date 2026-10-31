@@ -6,7 +6,7 @@
 #   2. the user file writes what it needs (shared elements items); with that read by both files the pair compiles with g++ and the field is shared
 #   3. a demand can only make a member shared: demands that name nothing in the library change nothing
 set -uo pipefail
-CLING="$1"
+CLING="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"     # (absolute: the scripts change directory)
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
 cp "$HERE"/demand_lib.clg "$HERE"/demand_use.clg "$W/"

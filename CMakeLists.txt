@@ -212,6 +212,9 @@ if(NOT EMSCRIPTEN)
         # Separate compilation: --ptr-demands / --ptr-demands-out (a file that uses a class needs a pointer kind the declaring file would not choose)
         add_test(NAME cling_ptr_demands
             COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/separate/run_demands_test.sh $<TARGET_FILE:cling>)
+        # Dangling / use-after-move across files: every safety fixture split in two gets the same verdict, plus hand-written cross-file cases
+        add_test(NAME cling_cross_file_safety
+            COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/separate/run_cross_file_test.sh $<TARGET_FILE:cling>)
     endif()
 
     # Custom target for running tests

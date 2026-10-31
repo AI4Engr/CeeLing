@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ reason: a method declared in another file reallocates the vector a ref observes into
+#include "xf_lib.clh"
+int main() {
+    Holder h = new Holder();
+    h.grow();
+    ref Node o = h.items[0];
+    h.grow();
+    std::cout << o.v << std::endl;
+    return 0;
+}

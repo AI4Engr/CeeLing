@@ -1,0 +1,16 @@
+// Shared by the xf_*.use.clg cases: a library file whose classes and functions the cases include.
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+class Holder {
+public:
+    Node child;
+    std::vector<Node> items;
+    Holder() { child = new Node(1); }
+    void replaceChild() { child = new Node(2); }
+    void grow() { items.push_back(new Node(3)); }
+};
+void eat(Node n) { }
+void growAll(std::vector<Node> v) { }

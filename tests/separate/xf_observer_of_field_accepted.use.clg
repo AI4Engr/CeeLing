@@ -1,0 +1,11 @@
+//@ expect: accept
+//@ reason: a ref to a LOCAL object stays valid while only a method of another file reads it
+#include "xf_lib.clh"
+int main() {
+    Node a = new Node(1);
+    ref Node o = a;
+    Holder h = new Holder();
+    h.grow();
+    std::cout << o.v << a.v << std::endl;
+    return 0;
+}

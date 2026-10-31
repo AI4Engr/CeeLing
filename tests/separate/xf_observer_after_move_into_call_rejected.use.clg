@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ reason: eat() is declared in another file and takes ownership of its argument (Node has no other owner here), so the ref o dangles after the call
+#include "xf_lib.clh"
+int main() {
+    Node a = new Node(1);
+    ref Node o = a;
+    eat(a);
+    std::cout << o.v << std::endl;
+    return 0;
+}

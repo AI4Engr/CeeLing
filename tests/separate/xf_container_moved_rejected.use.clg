@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ reason: a function declared in another file takes the vector by value, so the caller owner is gone
+#include "xf_lib.clh"
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    ref Node o = v[0];
+    growAll(v);
+    std::cout << o.v << std::endl;
+    return 0;
+}

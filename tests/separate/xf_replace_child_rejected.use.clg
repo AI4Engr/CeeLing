@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ reason: a method declared in another file replaces the field a ref observes
+#include "xf_lib.clh"
+int main() {
+    Holder h = new Holder();
+    ref Node o = h.child;
+    h.replaceChild();
+    std::cout << o.v << std::endl;
+    return 0;
+}

@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ reason: eat() is declared in another file and takes its argument by value: the caller owner is moved-from afterwards
+#include "xf_lib.clh"
+int main() {
+    Node a = new Node(1);
+    eat(a);
+    std::cout << a.v << std::endl;
+    return 0;
+}
