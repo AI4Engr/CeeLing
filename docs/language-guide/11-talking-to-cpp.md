@@ -582,7 +582,7 @@ g++ -std=c++17 -g -O0 account.cpp -o account
 gdb -x tools/cling.gdb account
 ```
 
-`tools/cling.gdb` is four lines: it makes `step` skip the library code the generated C++ calls (`std::`, `cling::`: smart-pointer operators, the bounds and null checks) and turns on pretty printing. A session on the example
+`tools/clgdebug.sh FILE.clg` (PowerShell: `tools\clgdebug.ps1 FILE.clg`) does the three steps and starts gdb stopped at the first statement of `main` (try it on `examples/account.clg`). `tools/cling.gdb` is five lines: it makes `step` skip the library code the generated C++ calls (`std::`, `cling::`: smart-pointer operators, the bounds and null checks) and turns on pretty printing. A session on the example
 above, run by the guide's checker (addresses removed):
 
 <!-- gdb: 11_debug_session.clg -->

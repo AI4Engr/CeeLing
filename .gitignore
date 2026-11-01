@@ -7,4 +7,5 @@ build-wasm/
 *.dll
 *.exe
 .DS_Store
-*.log
+*.log*.debug.cpp
+*.debug.exe

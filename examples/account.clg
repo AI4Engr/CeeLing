@@ -1,0 +1,16 @@
+// A small program to try the debugger on:  tools/clgdebug.sh examples/account.clg   (then: next, step, bt, print balance, quit)
+class Account {
+public:
+    int balance;
+    Account(int start) { balance = start; }
+    void deposit(int amount) {
+        balance = balance + amount;
+    }
+};
+
+int main() {
+    Account account = new Account(100);
+    account.deposit(50);
+    std::cout << account.balance << std::endl;
+    return 0;
+}
