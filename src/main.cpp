@@ -178,6 +178,7 @@ void showUsage(const char* programName) {
     std::cout << "  --no-null-checks   - Do not insert runtime null checks on object-handle dereferences" << std::endl;
     std::cout << "  --ptr-demands-out <file> - Write the pointer kinds this file needs from the classes it includes (separate compilation; see smart_pointer_analyzer.h)" << std::endl;
     std::cout << "  --ptr-demands <file>     - Read such demands written by other files (repeatable)" << std::endl;
+    std::cout << "  -g, --debug-lines  - Mark every generated statement with its .clg line (#line), so g++ -g and gdb show and step through the .clg source" << std::endl;
     std::cout << "  --pool-shared      - Allocate shared objects from a per-thread free list (faster node-heavy code)" << std::endl;
     std::cout << "  --legacy-cpp    - Use the legacy regex/text-substitution generator" << std::endl;
     std::cout << "                    instead of the default AST-driven generator" << std::endl;
@@ -228,6 +229,7 @@ int main(int argc, char* argv[]) {
     bool boundsChecks = true;
     bool nullChecks = true;
     bool poolShared = false;
+    bool debugLines = false;                          // -g: #line directives (see AstEmitter::setDebugLines)
     std::string demandsOutFile;                       // --ptr-demands-out: write what this file needs from the classes it includes
     std::vector<std::string> demandsInFiles;          // --ptr-demands: read what other files need (see SmartPointerAnalyzer::setDemands)
 
@@ -242,6 +244,8 @@ int main(int argc, char* argv[]) {
             nullChecks = false;
         } else if (arg == "--pool-shared") {
             poolShared = true;
+        } else if (arg == "-g" || arg == "--debug-lines") {
+            debugLines = true;
         } else if (arg == "--ptr-demands-out" || arg == "--ptr-demands") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: " << arg << " requires a filename" << std::endl;
@@ -478,6 +482,11 @@ int main(int argc, char* argv[]) {
             emitter.setBoundsChecks(boundsChecks);
             emitter.setNullChecks(nullChecks);
             emitter.setPoolShared(poolShared);
+            if (debugLines) {
+                std::string shown = inputFile;                       // the path as given: g++ -g records it, gdb looks for it from the directory g++ ran in
+                for (char& c : shown) if (c == '\\') c = '/';
+                emitter.setDebugLines(true, shown);
+            }
             cppCode = emitter.emit(*program);
         }
         cppCode = rewriteClhIncludes(cppCode);

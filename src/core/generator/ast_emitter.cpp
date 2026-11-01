@@ -117,11 +117,21 @@ std::string AstEmitter::emit(const Program& program) {
     if (poolShared_) {
         out << poolAllocatorHelperDefinition() << "\n";
     }
+    // Debug mode: the check helpers are inlined and marked artificial, so a debugger's "step" treats them as part of the statement that calls them.
+    auto forDebugger = [this](std::string helper) {
+        if (!debugLines_) return helper;
+        const std::string marker = "\ninline ";
+        for (size_t at = helper.find(marker); at != std::string::npos; at = helper.find(marker, at + 1)) {
+            helper.insert(at + 1, "__attribute__((always_inline, artificial)) ");
+            at += 40;
+        }
+        return helper;
+    };
     if (usesNullCheck_ || (nullChecks_ && !classNames_.empty())) {
-        out << nullCheckHelperDefinition() << "\n";
+        out << forDebugger(nullCheckHelperDefinition()) << "\n";
     }
     if (boundsChecks_ && usesBoundsCheck_) {
-        out << boundsCheckHelperDefinition() << "\n";
+        out << forDebugger(boundsCheckHelperDefinition()) << "\n";
     }
 
     // Forward-declare every class this file defines (global namespace, non-value-type), so two
@@ -2142,7 +2152,15 @@ std::string AstEmitter::selectAssignmentRhs(const AssignmentStatement* assign, c
     return rhs;
 }
 
+// In debug mode (-g) a `#line` directive, at column 0 on a line of its own, tells the C++ compiler that what follows came from that line of the .clg file.
 void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, int indent) {
+    if (debugLines_ && stmt != nullptr && stmt->loc.line > 0) {
+        out << "#line " << stmt->loc.line << " \"" << debugPath_ << "\"\n";
+    }
+    emitStatementImpl(stmt, out, indent);
+}
+
+void AstEmitter::emitStatementImpl(const Statement* stmt, std::ostringstream& out, int indent) {
     const std::string pad = indentStr(indent);
 
     if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
@@ -2422,7 +2440,8 @@ void AstEmitter::emitStatement(const Statement* stmt, std::ostringstream& out, i
         out << pad << "}";
         if (!ifs->elseBody.empty()) {
             // `else if` is a single nested IfStatement; emit it inline after `else `.
-            if (ifs->elseBody.size() == 1 &&
+            // (not in debug mode: the nested `if` then carries a `#line` of its own, which must stand at the start of a line)
+            if (!debugLines_ && ifs->elseBody.size() == 1 &&
                 dynamic_cast<const IfStatement*>(ifs->elseBody[0].get())) {
                 std::ostringstream nested;
                 emitStatement(ifs->elseBody[0].get(), nested, indent);

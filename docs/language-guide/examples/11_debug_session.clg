@@ -1,0 +1,29 @@
+//@ expect: accept
+//@ flags: -g
+//@ run: 150
+//@ generated: #line 12 "11_debug_session.clg"
+//@ gdb: break 11_debug_session.clg:12
+//@ gdb: run
+//@ gdb: step
+//@ gdb: bt
+//@ gdb: print amount
+//@ gdb: print balance
+//@ gdb: next
+//@ gdb: print balance
+//@ gdb: finish
+//@ gdb: print account->balance
+class Account {
+public:
+    int balance;
+    Account(int start) { balance = start; }
+    void deposit(int amount) {
+        balance = balance + amount;
+    }
+};
+
+int main() {
+    Account account = new Account(100);
+    account.deposit(50);
+    std::cout << account.balance << std::endl;
+    return 0;
+}

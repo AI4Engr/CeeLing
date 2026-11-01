@@ -44,7 +44,7 @@ EXAMPLES = os.path.dirname(os.path.abspath(__file__))
 GUIDE = os.path.dirname(EXAMPLES)
 REPO = os.path.dirname(os.path.dirname(GUIDE))
 
-MARK = re.compile(r'<!--\s*(example|error|output|stderr|generated|command|source|demands|cxxerror|header)\s*:\s*(\S+?)(?:\s+"([^"]*)")?(?:\s+(\d+))?\s*-->[ \t]*\n```[A-Za-z+]*[ \t]*\n(.*?)\n```', re.S)
+MARK = re.compile(r'<!--\s*(example|error|output|stderr|generated|command|gdb|source|demands|cxxerror|header)\s*:\s*(\S+?)(?:\s+"([^"]*)")?(?:\s+(\d+))?\s*-->[ \t]*\n```[A-Za-z+]*[ \t]*\n(.*?)\n```', re.S)
 
 
 def read(path):
@@ -85,6 +85,7 @@ class Result:
         self.header = ''       # //@ with: -- the .h generated from the main file
         self.demands = ''      # //@ demands: yes -- what --ptr-demands-out wrote
         self.cxxerror = ''     # //@ demands: yes -- the first g++ error of the files built without demands
+        self.gdb = ''          # cleaned output of the gdb session of a //@ gdb: example
         self.skipped = ''      # why the example could not be checked here (a sibling project is missing)
 
 
@@ -218,6 +219,34 @@ def check_c(rel, cxx):
     return r
 
 
+def run_gdb(r, text, tmp, cpp, cxx):
+    """//@ gdb: COMMAND (repeatable, in order): the example is built with g++ -g -O0 (compile it with //@ flags: -g) and run under gdb in batch mode with tools/cling.gdb sourced first; the
+    cleaned output (no addresses, no thread chatter) is what <!-- gdb: NAME.clg --> shows. Skipped when gdb is not installed."""
+    import shutil
+    gdb = shutil.which('gdb')
+    if gdb is None:
+        r.skipped = 'gdb is not installed'
+        return
+    # everything relative to the work directory: the gdb of an MSYS installation does not understand Windows paths, and the directory is recorded in the debug information
+    c, _, cerr = run([cxx, '-std=c++17', '-pthread', '-g', '-O0', os.path.basename(cpp), '-o', 'dbg.exe'], cwd=tmp)
+    if c != 0:
+        r.problems.append('the generated C++ does not compile with -g: %s' % cerr.strip()[:300])
+        return
+    script = os.path.join(tmp, 'session.gdb')
+    with open(script, 'w', encoding='utf-8', newline='\n') as f:
+        f.write('source %s/tools/cling.gdb\n' % REPO.replace(chr(92), '/'))
+        for cmd in tags(text, 'gdb'):
+            f.write(cmd + '\n')
+    c, o, e2 = run([gdb, '-batch', '-x', 'session.gdb', 'dbg.exe'], cwd=tmp, timeout=120)
+    keep = []
+    for line in (o + e2).split('\n'):
+        if any(k in line for k in ('Python', 'gdbinit', 'New Thread', 'exited', '[Inferior', 'warning:', 'will be skipped')):
+            continue
+        line = re.sub(r'(?:[A-Za-z]:|/[a-z])?[/\\\\][^\s:"]*?[/\\\\]tmp[A-Za-z0-9_]{6,}[/\\\\]', '', line)
+        keep.append(re.sub(r'0x[0-9a-fA-F]+', '0xADDR', line))
+    r.gdb = '\n'.join(keep).strip()
+
+
 def check_clg(rel, cling, cxx):
     r = Result(rel)
     text = read(os.path.join(EXAMPLES, rel))
@@ -255,6 +284,8 @@ def check_clg(rel, cling, cxx):
         for want in tags(text, 'generated'):
             if want not in r.generated:
                 r.problems.append('the generated C++ lacks %r' % want)
+        if tags(text, 'gdb'):
+            run_gdb(r, text, tmp, cpp, cxx)
         runs, fails = tags(text, 'run'), tags(text, 'run-fail')
         exe = os.path.join(tmp, 'out.exe')
         if runs or fails:
@@ -443,6 +474,8 @@ def expected_block(kind, rel, arg, results):
         return norm(r.error.replace('\\', '/')), None
     if kind == 'output':
         return norm(r.stdout if r.stdout.strip() else r.stderr), None
+    if kind == 'gdb':
+        return norm(r.gdb), None
     if kind == 'command':
         return norm(r.stdout), None
     if kind == 'stderr':

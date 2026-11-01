@@ -51,6 +51,9 @@ public:
     void setNullChecks(bool on) { nullChecks_ = on; }
     // Allocate shared objects from a per-thread free list instead of malloc (`--pool-shared`).
     void setPoolShared(bool on) { poolShared_ = on; }
+    // Debug mode (`-g`): every statement is preceded by `#line N "path"`, so a C++ compiler's debug information (and its error messages) point at the .clg
+    // line and a debugger (gdb) steps through the .clg source; and the generated check helpers are marked artificial so that "step" does not enter them.
+    void setDebugLines(bool on, const std::string& sourcePath) { debugLines_ = on; debugPath_ = sourcePath; }
 
     // Emit a full translation unit for the program.
     std::string emit(const Program& program);
@@ -216,6 +219,7 @@ private:
                       bool isOverride = false, const std::string& methodName = "",
                       bool isConstructor = false);
     void emitStatement(const Statement* stmt, std::ostringstream& out, int indent);
+    void emitStatementImpl(const Statement* stmt, std::ostringstream& out, int indent);
 
     // Shared RHS-selection logic for `target = expr;` (used by BOTH an ordinary
     // body assignment in emitStatement AND a hoisted member-initializer-list
@@ -360,6 +364,8 @@ private:
     bool boundsChecks_ = true;
     bool nullChecks_ = true;
     bool poolShared_ = false;
+    bool debugLines_ = false;
+    std::string debugPath_;
     // `std::make_shared<T>(args)`, or its pooled form when --pool-shared is on.
     std::string sharedConstruct(const std::string& cls, const std::string& args) const;
     // `obj` is about to be dereferenced with `->`: wrap its text in cling::nn(...) when null checks

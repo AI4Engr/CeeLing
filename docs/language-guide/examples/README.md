@@ -34,6 +34,7 @@ The check is a CTest test (`cling_guide_examples`), so a change to the compiler 
 | `.clg` | `//@ error: TEXT` | rejected; the compiler's message must contain TEXT |
 | `.clg` | `//@ generated: TEXT` | accepted; the generated C++ must contain TEXT |
 | `.clg` | `//@ flags: ...` | extra compiler flags |
+| `.clg` | `//@ gdb: COMMAND` | repeatable, in order: the example (compiled with `//@ flags: -g`) is built with `g++ -g -O0` and run under gdb in batch mode, `tools/cling.gdb` sourced first; skipped if gdb is not installed |
 | `.clg` | `//@ crash: TEXT` | accepted; the program must die abnormally (not exit 0 or 3); TEXT says how, for the reader |
 | `.clg` | `//@ exit: N` | accepted; the program must exit with N (default 0) |
 | `.clg` | `//@ project: cjson-cling` | the example uses a library from a sibling project (looked for next to this repository, or in `GUIDE_PROJECT_CJSON_CLING`); built with that project's `tests/build.sh`. Without the project the example is reported as SKIPPED, not failed |
@@ -58,6 +59,7 @@ is the line the reader counts in the chapter. A `generated` marker whose text st
 <!-- header: 12_lib.clg "class Counter {" -->      like generated, from the `.h` files (the main file's, then each `with` file's) of a multi-file example
 <!-- demands: 12_use.clg -->                    what --ptr-demands-out wrote (a `demands: yes` example)
 <!-- cxxerror: 12_use.clg -->                   the first g++ error of the files built without demands (a `demands: yes` example)
+<!-- gdb: 11_debug_session.clg -->            the cleaned output of that gdb session (addresses and thread chatter removed)
 <!-- stderr: 04_x.clg -->                       the program's stderr
 <!-- command: 16_table.py -->                   the output of a generator script
 <!-- source: cjson-cling/upstream/cJSON.c "static void foo" -->    a piece of a real file of a sibling project, from the first line containing the text to the line that closes it

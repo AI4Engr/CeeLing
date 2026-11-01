@@ -536,6 +536,84 @@ int main() {
 }
 ```
 
+## Debugging: step through the `.clg`, not the generated C++
+
+A debugger on the generated program shows C++: `std::unique_ptr` internals, `cling::nn(...)` calls, a `main` you did not write. The program you wrote is not the one you step through. The flag
+`-g` (`--debug-lines`) fixes that the way every source-to-C++ translator does: it puts a `#line` directive before each statement it emits, so the C++ compiler's debug information (and its
+error messages) name the **`.clg` file and line**, and `gdb` shows your source, stops at your lines and steps through them.
+
+<!-- example: 11_debug_session.clg -->
+```cpp
+class Account {
+public:
+    int balance;
+    Account(int start) { balance = start; }
+    void deposit(int amount) {
+        balance = balance + amount;
+    }
+};
+
+int main() {
+    Account account = new Account(100);
+    account.deposit(50);
+    std::cout << account.balance << std::endl;
+    return 0;
+}
+```
+<!-- generated: 11_debug_session.clg "int main()" -->
+```cpp
+int main() {
+#line 11 "11_debug_session.clg"
+    std::unique_ptr<Account> account = std::make_unique<Account>(100);
+#line 12 "11_debug_session.clg"
+    cling::nn(account, "line 12")->deposit(50);
+#line 13 "11_debug_session.clg"
+    std::cout << cling::nn(account, "line 13")->balance << std::endl;
+#line 14 "11_debug_session.clg"
+    return 0;
+}
+```
+
+Compile the C++ with `-g` and without optimisation, from the directory that holds the `.clg` (gdb finds the source from the path written in the directive, which is the path you gave `cling`):
+
+```
+cling -g account.clg --cpp account.cpp
+g++ -std=c++17 -g -O0 account.cpp -o account
+gdb -x tools/cling.gdb account
+```
+
+`tools/cling.gdb` is four lines: it makes `step` skip the library code the generated C++ calls (`std::`, `cling::`: smart-pointer operators, the bounds and null checks) and turns on pretty printing. A session on the example
+above, run by the guide's checker (addresses removed):
+
+<!-- gdb: 11_debug_session.clg -->
+```
+Breakpoint 1 at 0xADDR: file 11_debug_session.clg, line 12.
+
+Thread 1 hit Breakpoint 1, main () at 11_debug_session.clg:12
+12	    account.deposit(50);
+Account::deposit (this=0xADDR, amount=50) at 11_debug_session.clg:6
+6	        balance = balance + amount;
+#0  Account::deposit (this=0xADDR, amount=50) at 11_debug_session.clg:6
+#1  0xADDR in main () at 11_debug_session.clg:12
+$1 = 50
+$2 = 100
+7	    }
+$3 = 150
+0xADDR in main () at 11_debug_session.clg:12
+12	    account.deposit(50);
+$4 = 150
+```
+
+What to know:
+
+* **Names are the C++ names.** `break Account::deposit` works; `break account.clg:12` works; a field of the current object is visible as itself (`print balance`).
+* **Objects are smart pointers underneath.** `print account` shows `std::unique_ptr` internals; ask for a field with `print account->balance`. `print *account` does not work, because `operator*` was never instantiated in the program.
+* **The check helpers are stepped over.** In `-g` mode `cling::at` and `cling::nn` are marked `always_inline, artificial`, so `step` and `next` treat `v[i]` and `a.b` as part of their statement.
+* **A constructor's field assignments have no line of their own.** They are hoisted into the C++ member-initialiser list; break on the first statement of the body, or on the line that calls `new`.
+* **`else if`.** In `-g` mode it is emitted as `else { if ... }` so that the nested `if` can carry its own line. Behaviour is the same.
+* **Optimisation moves lines.** Use `-O0`. The run-time checks themselves are unaffected by `-g`: an out-of-bounds index still prints its `.clg` line and aborts, and under gdb it stops at the `abort()` where `bt` shows the same line.
+* **Several files.** Give every file `-g`; each directive names its own file. Code from an included module is debugged in that module's `.clg`.
+
 ## The trusted boundary, as a list
 
 Once C++ is involved, the promise of [chapter 1](01-why-ceeling.md) reads: *no dangling references and no use after move in the CeeLing code that was checked, excluding what trusted code does with what it is

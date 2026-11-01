@@ -215,6 +215,9 @@ if(NOT EMSCRIPTEN)
         # Dangling / use-after-move across files: every safety fixture split in two gets the same verdict, plus hand-written cross-file cases
         add_test(NAME cling_cross_file_safety
             COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/separate/run_cross_file_test.sh $<TARGET_FILE:cling>)
+        # Debugging: `cling -g` puts a #line before every statement; every accepted fixture still compiles, and gdb steps through the .clg source
+        add_test(NAME cling_debug_lines
+            COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/debug/run_debug_lines_test.sh $<TARGET_FILE:cling>)
         # The language guide: every example compiles/runs as its tags say, every code block and message quoted in a chapter is what the compiler really produces
         find_program(PYTHON_PROGRAM NAMES python3 python)
         if(PYTHON_PROGRAM)
