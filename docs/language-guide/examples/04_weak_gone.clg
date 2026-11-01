@@ -1,0 +1,36 @@
+//@ expect: accept
+//@ run-fail: cling: null dereference at line
+//@ generated: std::weak_ptr<Emitter> source;
+// The same program with the hint: the link no longer keeps the Emitter alive.
+// wire() returns the Listener only, so the Emitter is destroyed there.
+class Emitter {
+public:
+    int count;
+    Listener first;
+    Emitter() { count = 7; first = nullptr; }
+    void attach(Listener l) {
+        l.source = this;
+        first = l;
+    }
+};
+
+class Listener {
+public:
+    //@ptr weak Listener.source
+    Emitter source;
+    Listener() { source = nullptr; }
+    int sourceCount() { return source.count; }
+};
+
+Listener wire() {
+    Listener l = new Listener();
+    Emitter e = new Emitter();
+    e.attach(l);
+    return l;
+}
+
+int main() {
+    Listener l = wire();
+    std::cout << l.sourceCount() << std::endl;
+    return 0;
+}

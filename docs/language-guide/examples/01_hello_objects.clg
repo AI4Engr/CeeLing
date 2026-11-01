@@ -1,0 +1,16 @@
+//@ expect: accept
+//@ run: 150
+//@ generated: std::unique_ptr<Account> account = std::make_unique<Account>(100);
+class Account {
+public:
+    int balance;
+    Account(int start) { balance = start; }
+    void deposit(int amount) { balance = balance + amount; }
+};
+
+int main() {
+    Account account = new Account(100);    // no pointer type, no delete, no std::move
+    account.deposit(50);
+    std::cout << account.balance << std::endl;
+    return 0;
+}

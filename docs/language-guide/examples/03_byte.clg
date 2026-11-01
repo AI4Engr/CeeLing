@@ -1,0 +1,13 @@
+//@ expect: accept
+//@ run: 200 100 1
+int main() {
+    std::vector<byte> data;
+    data.push_back(200);            // a byte from a file or a socket
+    std::vector<int> counts;
+    counts.resize(256, 0);
+    int idx = data[0];              // byte is unsigned: idx is 200
+    counts[idx] = 1;
+    byte half = data[0] >> 1;
+    std::cout << idx << " " << int(half) << " " << counts[200] << std::endl;
+    return 0;
+}

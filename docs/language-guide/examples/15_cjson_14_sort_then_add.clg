@@ -1,0 +1,16 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: returned 1 object {"a":2,"b":1}
+// After SortObject the new head's prev is not the tail, so a later append is silently dropped.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item o = parse("{\"b\":1,\"a\":2}");
+    sortObject(o);
+    Item added = addNumberToObject(o, "c", 3.0);
+    std::cout << "returned " << (added != nullptr) << " object " << printUnformatted(o) << std::endl;
+    return 0;
+}

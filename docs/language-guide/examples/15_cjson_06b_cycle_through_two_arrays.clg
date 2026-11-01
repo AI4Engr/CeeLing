@@ -1,0 +1,16 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ crash: the process dies (exit 3221225725)
+// The same cycle built one step further away: a contains b, b contains a. The library cannot see it (nodes
+// do not know their parent), CeeLing does not check for it, and printing exhausts the stack.
+#include "cjson_item.clh"
+#include "cjson_print.clh"
+int main() {
+    Item a = createArray();
+    Item b = createArray();
+    addItemToArray(a, b);
+    addItemToArray(b, a);
+    string text = printUnformatted(a);
+    std::cout << text.length() << std::endl;
+    return 0;
+}

@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ error: generated struct decoders need cjson-cling
+struct Thing {
+public:
+    string a;
+    Thing(string x) { a = x; }
+};
+
+class Item {
+public:
+    Item() { }
+};
+
+int main() {
+    Item doc = new Item();             // an Item, but not one that has isObject, getObjectItem ...
+    Thing t = decodeThing(doc);
+    return 0;
+}

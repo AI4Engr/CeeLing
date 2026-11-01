@@ -1,0 +1,12 @@
+//@ expect: accept
+//@ with: 12_counter_lib.clg
+//@ run: 22
+//@ generated: #include "12_counter_lib.h"
+#include "12_counter_lib.clh"
+
+int main() {
+    Counter c = new Counter(10);
+    c.bump();
+    std::cout << twice(c.n) << std::endl;
+    return 0;
+}

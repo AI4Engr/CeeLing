@@ -1,0 +1,34 @@
+//@ expect: accept
+//@ run: balance 150
+//@ run: balance 130 after 2 operations
+//@ run: same object back: 1
+class Account {
+public:
+    int balance;
+    int operations;
+    Account(int start) {
+        balance = start;
+        operations = 0;
+    }
+    void deposit(int amount) {
+        balance = balance + amount;
+        count();
+    }
+    void withdraw(int amount) {
+        this.balance = this.balance - amount;      // this.x and plain x mean the same field
+        count();
+    }
+    void count() { operations = operations + 1; }
+    Account self() { return this; }
+};
+
+int main() {
+    Account acct = new Account(100);
+    acct.deposit(50);
+    std::cout << "balance " << acct.balance << std::endl;
+    acct.withdraw(20);
+    std::cout << "balance " << acct.balance << " after " << acct.operations << " operations" << std::endl;
+    Account again = acct.self();
+    std::cout << "same object back: " << (again == acct) << std::endl;
+    return 0;
+}

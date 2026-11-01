@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: duplicate of 10001 levels: refused
+// Duplicate stops at CJSON_CIRCULAR_LIMIT (10000) levels and returns NULL; the issue is that 10000 frames can
+// already exhaust a small stack. Here one level past the limit is refused (same as upstream), and 9990 levels
+// is accepted (08_duplicate_deep) on this machine's default stack.
+#include "cjson_item.clh"
+int main() {
+    Item top = createArray();
+    Item cur = top;
+    int i = 0;
+    while (i < 10001) {
+        Item next = createArray();
+        addItemToArray(cur, next);
+        cur = next;
+        i = i + 1;
+    }
+    Item copy = duplicate(top, true);
+    if (copy == nullptr) {
+        std::cout << "duplicate of 10001 levels: refused" << std::endl;
+    } else {
+        std::cout << "duplicate of 10001 levels: accepted" << std::endl;
+    }
+    return 0;
+}

@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: printed ["ab"]
+// parse_hex4 returns 0 for an invalid digit, which is also the value of a real "\u0000". The escape \u12G4 is accepted
+// (as the character U+0000) and the string is cut there.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item item = parse("[\"ab\\u12G4cd\"]");
+    std::cout << "printed " << printUnformatted(item) << std::endl;
+    return 0;
+}

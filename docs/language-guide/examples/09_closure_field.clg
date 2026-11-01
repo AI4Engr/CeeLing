@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ run: 1001 1002
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+class Holder {
+public:
+    Callback stored;
+    int callCount;
+    Holder(Callback c) {
+        stored = c;
+        callCount = 0;
+    }
+    void run(int x) {
+        if (callCount > 0) {
+            std::cout << " ";
+        }
+        callCount = callCount + 1;
+        stored.call(x);
+    }
+};
+
+int main() {
+    int base = 1000;
+    Holder h = new Holder(closure Callback [base] (int x) {
+        std::cout << (base + x);
+    });
+    h.run(1);
+    h.run(2);
+    std::cout << std::endl;
+    return 0;
+}

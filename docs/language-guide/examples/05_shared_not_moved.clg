@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ run: 1 1
+//@ generated: cling::nn(h, "line 17")->keep(a);
+//@ generated: std::shared_ptr<Node> a = std::make_shared<Node>(1);
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Holder {
+public:
+    Node stored;
+    Holder() { }
+    void keep(Node n) { stored = n; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Holder h = new Holder();
+    h.keep(a);                             // n is stored, so a and h.stored share one object
+    std::cout << a.v << " " << h.stored.v << std::endl;
+    return 0;
+}

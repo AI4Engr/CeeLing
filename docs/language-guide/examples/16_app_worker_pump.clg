@@ -1,0 +1,46 @@
+//@ expect: accept
+//@ run: worker got: contents of a.txt
+//@ run: gate reads: 1
+//@ generated: std::unique_ptr<Gate> gate = std::make_unique<Gate>();
+class Job { public: Job() { } virtual void run() { } };
+
+class Gate {                       // only the main thread may use it: it never enters a closure
+public:
+    int reads;
+    Gate() { reads = 0; }
+    string read(string path) {
+        reads = reads + 1;
+        return "contents of " + path;
+    }
+};
+
+struct Request {                   // plain values and a Channel: the one thing a worker may share
+public:
+    string path;
+    Channel<string> reply;
+    Request(string p, Channel<string> r) { path = p; reply = r; }
+};
+
+int main() {
+    Gate gate = new Gate();
+    Channel<Request> toMain;
+    Channel<string> done;
+    spawn(closure Job [toMain, done] () {
+        Channel<string> reply;
+        toMain.send(new Request("a.txt", reply));
+        string text = "";
+        if (reply.wait(5000)) {
+            text = reply.take();
+        }
+        done.send("worker got: " + text);
+    });
+    if (toMain.wait(5000)) {          // in app-cling this loop is a Pump that the main loop runs when a worker wakes it
+        Request r = toMain.take();
+        r.reply.send(gate.read(r.path));
+    }
+    if (done.wait(5000)) {
+        std::cout << done.take() << std::endl;
+    }
+    std::cout << "gate reads: " << gate.reads << std::endl;
+    return 0;
+}

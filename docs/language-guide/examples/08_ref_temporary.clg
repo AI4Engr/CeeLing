@@ -1,0 +1,17 @@
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+};
+
+Item make() {
+    return new Item(9);
+}
+
+int main() {
+    ref Item c = make();
+    std::cout << c.v << std::endl;
+    return 0;
+}
+//@ expect: reject
+//@ error: whose owner cannot be tracked

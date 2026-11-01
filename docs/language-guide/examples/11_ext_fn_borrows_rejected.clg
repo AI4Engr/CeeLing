@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: use of dangling observer `b`
+ext_fn std::vector<int> sliceOf(std::vector<int> data, int start) borrows 0;   // the result aliases parameter 0
+
+int main() {
+    std::vector<int> a;
+    a.push_back(1);
+    std::vector<int> b = sliceOf(a, 0);
+    a.push_back(2);                          // a is moved again: b's owner is gone
+    int x = b[0];
+    return 0;
+}

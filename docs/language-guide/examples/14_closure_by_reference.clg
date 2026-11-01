@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: Syntax error
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+int main() {
+    int base = 5;
+    Callback c = closure Callback [&base] (int x) {     // there is no way to write a by-reference capture
+        std::cout << (base + x);
+    };
+    return 0;
+}

@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ error: use of dangling observer `n`
+class Node {
+public:
+    int key;
+    Node(int k) { key = k; }
+};
+
+void sink(Node n) { }
+
+int main() {
+    Node root = new Node(1);
+    ref Node n = root;      // n only looks at the object; root still owns it
+    sink(root);             // root hands the object over: it is gone for root, and for n
+    std::cout << n.key << std::endl;
+    return 0;
+}

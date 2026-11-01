@@ -1,0 +1,10 @@
+int main() {
+    try {
+        throw "bad thing";
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    return 0;
+}
+//@ expect: accept
+//@ run: bad thing

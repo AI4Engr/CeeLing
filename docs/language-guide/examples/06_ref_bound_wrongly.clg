@@ -1,0 +1,22 @@
+//@ expect: reject
+//@ error: whose owner cannot be tracked
+class Item {
+public:
+    int v;
+    Item child;
+    Item(int x) { v = x; child = nullptr; }
+    Item getChild() { return child; }
+};
+
+Item make() {
+    return new Item(9);
+}
+
+int main() {
+    Item parent = new Item(1);
+    parent.child = new Item(42);
+    ref Item viaField = parent.child;
+    ref Item viaMethod = parent.getChild();
+    ref Item viaCall = make();
+    return 0;
+}

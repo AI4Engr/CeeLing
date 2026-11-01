@@ -1,0 +1,21 @@
+//@ expect: reject
+//@ error: use of dangling observer `o` (its owner `x` is gone)
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+Node pick(Node a, Node b) {
+    return a;
+}
+
+int main() {
+    Node x = new Node(1);
+    Node y = new Node(2);
+    Node r = pick(x, y);
+    ref Node o = r;
+    x = new Node(3);
+    std::cout << o.v << std::endl;
+    return 0;
+}

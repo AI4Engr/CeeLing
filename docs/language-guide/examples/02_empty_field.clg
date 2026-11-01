@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ run: first has no next: 1
+//@ run: 3 2 1
+//@ run: cut: 1
+class Item {
+public:
+    int v;
+    Item next;                          // a field of object type starts empty
+    Item(int x) { v = x; }
+};
+
+int main() {
+    Item first = new Item(1);
+    std::cout << "first has no next: " << (first.next == nullptr) << std::endl;
+
+    Item second = new Item(2);
+    Item third = new Item(3);
+    third.next = second;
+    second.next = first;
+    Item cursor = third;
+    while (cursor != nullptr) {
+        std::cout << cursor.v;
+        cursor = cursor.next;
+        if (cursor != nullptr) { std::cout << " "; }
+    }
+    std::cout << std::endl;
+
+    second.next = nullptr;              // empty it again
+    std::cout << "cut: " << (!second.next) << std::endl;
+    return 0;
+}

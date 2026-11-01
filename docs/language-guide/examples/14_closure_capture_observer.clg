@@ -1,0 +1,26 @@
+//@ expect: reject
+//@ error: observer
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb, int n) {
+    cb.call(n);
+}
+
+int main() {
+    Node owner = new Node(5);
+    ref Node observed = owner;
+    each(closure Callback [observed] (int x) {
+        std::cout << x << std::endl;
+    }, 1);
+    return 0;
+}

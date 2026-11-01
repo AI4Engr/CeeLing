@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: 5
+//@ run: 6
+//@ generated: std::shared_ptr<Node> a = std::make_shared<Node>(1);
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void bump(Node n) {
+    n.v = n.v + 1;
+}
+
+int main() {
+    Node a = new Node(1);      // a names an object on the heap; it is not a copy of one
+    Node b = a;                // b names the SAME object
+    b.v = 5;
+    std::cout << a.v << std::endl;
+    bump(a);
+    std::cout << b.v << std::endl;
+    return 0;
+}

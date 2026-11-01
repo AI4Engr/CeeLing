@@ -1,0 +1,9 @@
+//@ expect: accept
+//@ with: 12_mini_item.clg
+#include "12_mini_item.clh"
+
+struct Args {
+public:
+    string root;
+    Args(string r) { root = r; }
+};                                     // declares the struct, but nothing here calls decodeArgs

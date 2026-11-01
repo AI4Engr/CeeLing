@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: unknown function/method `erase`
+int main() {
+    std::map<string, int> stock;
+    stock["apple"] = 3;
+    stock.erase("apple");
+    return 0;
+}

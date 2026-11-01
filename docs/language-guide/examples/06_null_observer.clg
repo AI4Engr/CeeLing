@@ -1,0 +1,13 @@
+//@ expect: accept
+//@ run-fail: cling: null dereference at line
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    ref Node b = nullptr;
+    std::cout << b.v << std::endl;     // b observes nothing: the null check stops the program
+    return 0;
+}

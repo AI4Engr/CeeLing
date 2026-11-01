@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: call to unknown function/method `myCube`
+ext_fn double mySqrt(double x);
+
+int main() {
+    double y = myCube(4.0);          // one declaration trusts one name, not the neighbours
+    return 0;
+}

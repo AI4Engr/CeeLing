@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run-fail: cling: null dereference
+// apply_patch dereferences the target's key without a NULL check when a root-level add/replace is applied to
+// a NULL object.
+#include "cjson_item.clh"
+#include "cjson_parse.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item patches = parse("[{\"op\":\"add\",\"path\":\"\",\"value\":1}]");
+    Item nothing = nullptr;
+    int status = applyPatches(nothing, patches);
+    std::cout << "survived status " << status << std::endl;
+    return 0;
+}

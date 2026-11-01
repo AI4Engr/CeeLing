@@ -1,0 +1,9 @@
+ext_fn double mySqrt(double x);
+
+int main() {
+    double y = mySqrt(4.0);
+    std::cout << y << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ generated: double mySqrt(double x);

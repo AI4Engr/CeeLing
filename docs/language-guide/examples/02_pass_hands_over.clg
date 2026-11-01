@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: use of moved-from value `ticket`
+class Ticket {
+public:
+    int number;
+    Ticket(int n) { number = n; }
+};
+
+void archive(Ticket t) { }
+
+int main() {
+    Ticket ticket = new Ticket(7);
+    archive(ticket);                       // the object now belongs to archive's parameter
+    std::cout << ticket.number << std::endl;
+    return 0;
+}

@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: 101
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (int x) {
+        int t = total;                          // copy the outer capture into a local ...
+        each(closure Callback [t] (int y) {     // ... and capture the local
+            std::cout << (t + y) << std::endl;
+        });
+    });
+    return 0;
+}

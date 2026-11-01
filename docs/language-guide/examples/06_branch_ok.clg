@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 1
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    ref Node obs = a;
+    bool cond = false;
+    if (cond) {
+        obs = b;                // this branch re-points obs ...
+        b = new Node(3);        // ... and then kills b
+    } else {
+        std::cout << obs.v << std::endl;    // this branch never saw either: obs still follows a
+    }
+    return 0;
+}

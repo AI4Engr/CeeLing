@@ -1,0 +1,28 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: duplicate keys: NOT equal
+//@ run: infinities: NOT equal
+// cJSON_Compare looks every key of one object up in the other with get_object_item, which returns the FIRST match, so two
+// identical objects that contain a duplicate key compare unequal. Two infinities compare unequal too: compare_double
+// computes inf - inf, which is NaN.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+string verdict(bool equal) {
+    if (equal) {
+        return "equal";
+    }
+    return "NOT equal";
+}
+
+int main() {
+    Item a = parse("{\"a\":1,\"a\":2}");
+    Item b = parse("{\"a\":1,\"a\":2}");
+    std::cout << "duplicate keys: " << verdict(compare(a, b, true)) << std::endl;
+    Item x = parse("[1e999]");
+    Item y = parse("[1e999]");
+    std::cout << "infinities: " << verdict(compare(x, y, true)) << std::endl;
+    return 0;
+}

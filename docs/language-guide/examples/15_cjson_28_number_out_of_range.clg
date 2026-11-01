@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: printed [null,0,null]
+// parse_number does not look at the range error strtod reports: 1e999 becomes infinity (printed as null) and 1e-999
+// becomes 0.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item item = parse("[1e999,1e-999,-1e999]");
+    std::cout << "printed " << printUnformatted(item) << std::endl;
+    return 0;
+}

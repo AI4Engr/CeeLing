@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ run: 6
+//@ run: 1 55 1
+struct Point {
+public:
+    int x;
+    int y;
+    Point(int px, int py) { x = px; y = py; }
+    int sum() { return x + y; }
+};
+
+struct Point3 : public Point {
+public:
+    int z;
+    Point3(int px, int py, int pz) { x = px; y = py; z = pz; }
+};
+
+int main() {
+    Point3 q = new Point3(1, 2, 3);
+    std::cout << q.sum() + q.z << std::endl;
+    std::vector<Point> pts;
+    pts.push_back(new Point(1, 2));
+    Point first = pts[0];                // a copy of the element
+    first.x = 55;
+    std::cout << pts[0].x << " " << first.x << " " << pts.size() << std::endl;
+    return 0;
+}

@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ generated: std::shared_ptr<Emitter> boss;
+class Emitter {
+public:
+    std::vector<Listener> listeners;
+    Emitter() { }
+    void subscribe(Listener l) {
+        l.boss = this;                 // the listener points back at its emitter
+        listeners.push_back(l);
+    }
+};
+
+class Listener {
+public:
+    Emitter boss;                      // not named parent/owner/prev, so not seen as a back link
+    Listener() { }
+};
+
+int main() {
+    Emitter e = new Emitter();
+    e.subscribe(new Listener());
+    return 0;
+}

@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: green 1 2
+//@ generated: enum Color {
+enum Color { Red, Green, Blue };
+
+class Pixel {
+public:
+    Color color;
+    Pixel(Color c) { color = c; }
+    string name() {
+        if (color == Red) { return "red"; }
+        if (color == Green) { return "green"; }
+        return "blue";
+    }
+};
+
+int main() {
+    Pixel p = new Pixel(Green);
+    Color c = Blue;
+    int n = Green;                         // an enumerator converts to int, as in C++ (unscoped enum)
+    std::cout << p.name() << " " << n << " " << c << std::endl;
+    return 0;
+}

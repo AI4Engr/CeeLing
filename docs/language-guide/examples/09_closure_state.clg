@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 11 12 10
+class Step {
+public:
+    Step() { }
+    virtual int next() { return 0; }
+};
+
+Step counter(int start) {
+    return closure Step [start] () {
+        start = start + 1;          // changes the closure's own copy
+        return start;
+    };
+}
+
+int main() {
+    int n = 10;
+    Step s = counter(n);            // counter() has returned: its frame is gone
+    std::cout << s.next() << " " << s.next() << " " << n << std::endl;
+    return 0;
+}

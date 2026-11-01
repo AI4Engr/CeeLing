@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: status 0 doc {"a":1,"":9}
+// overwrite_item copies the replacement struct over a non-root node, wiping its sibling links.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("{\"a\":1,\"b\":2,\"c\":3}");
+    Item b = getObjectItem(doc, "b");
+    Item patches = parse("[{\"op\":\"replace\",\"path\":\"\",\"value\":9}]");
+    int status = applyPatches(b, patches);
+    std::cout << "status " << status << " doc " << printUnformatted(doc) << std::endl;
+    return 0;
+}

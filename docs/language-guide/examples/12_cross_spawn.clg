@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: `spawn` captures `a` of type `Node`, which is not a plain value
+#include "12_cross_lib.clh"
+
+int main() {
+    Node a = new Node(1);
+    spawn(closure Job [a] () { a.v = 2; });      // Node is defined in another file: its subclasses cannot be ruled out
+    return 0;
+}

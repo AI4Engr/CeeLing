@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: `catch` type `int` is not supported
+int main() {
+    try {
+        throw "x";
+    } catch (int e) {
+    }
+    return 0;
+}

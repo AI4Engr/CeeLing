@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: 1 2
+//@ generated: Wrapper::Wrapper(Point p) : point(p) {
+struct Point {
+public:
+    int x;
+    int y;
+    Point(int px, int py) { x = px; y = py; }      // no constructor without arguments
+};
+
+struct Wrapper {
+public:
+    Point point;
+    Wrapper(Point p) { point = p; }                // C++ must build point here, not assign it later
+};
+
+int main() {
+    Point p = new Point(1, 2);
+    Wrapper w = new Wrapper(p);
+    std::cout << w.point.x << " " << w.point.y << std::endl;
+    return 0;
+}

@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run-fail: cling: null dereference
+// DetachItemViaPointer writes through parent->child without checking it is non-NULL: an item whose
+// prev is set but whose claimed parent has no child.
+#include "cjson_item.clh"
+int main() {
+    Item parent = createArray();
+    Item other = createNumber(1.0);
+    Item item = createNumber(2.0);
+    item.prev = other;
+    Item r = detachItemViaPointer(parent, item);
+    std::cout << "survived " << (r != nullptr) << std::endl;
+    return 0;
+}

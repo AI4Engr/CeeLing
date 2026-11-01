@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ error: operator[]
+class Box {
+public:
+    int val;
+    Box(int v) { val = v; }
+    int operator[](string key) { return val; }
+};
+
+int main() {
+    Box b = new Box(5);
+    b["key"] = 10;                 // operator[] can be read, not assigned through
+    return 0;
+}

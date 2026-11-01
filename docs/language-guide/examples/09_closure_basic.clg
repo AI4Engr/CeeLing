@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ run: 103
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb, int n) {
+    cb.call(n);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (int index) {
+        std::cout << (total + index) << std::endl;
+    }, 3);
+    return 0;
+}

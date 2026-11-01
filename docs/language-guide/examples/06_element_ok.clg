@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ run: 1
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    ref Node n = v[0];
+    std::cout << n.v << std::endl;      // v is not touched between the binding and the use
+    return 0;
+}

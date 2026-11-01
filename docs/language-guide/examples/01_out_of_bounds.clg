@@ -1,0 +1,10 @@
+//@ expect: accept
+//@ run-fail: index out of bounds at line 6 (index 5, size 2)
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    int i = 5;
+    std::cout << v[i] << std::endl;
+    return 0;
+}

@@ -1,0 +1,43 @@
+//@ expect: accept
+//@ run: 42 2.5 42 7
+//@ run: 10
+//@ generated: template<>
+class Node {
+public:
+    string text;
+    Node(string t) { text = t; }
+    <T> T as() {                                  // the primary: the result type is the type parameter
+        throw "no conversion for this type";
+    }
+    int as<int>() { return std::stoi(text); }     // one specialization per type you support
+    double as<double>() { return std::stod(text); }
+    <T> T as(T fallback) { return fallback; }
+    int as<int>(int fallback) {
+        if (text.length() == 0) { return fallback; }
+        return std::stoi(text);
+    }
+};
+
+struct Point {
+public:
+    int x;
+    int y;
+    Point(int a, int b) { x = a; y = b; }
+};
+
+Point Node::as<Point>() {                         // added from outside the class
+    return new Point(std::stoi(text), 0);
+}
+
+int main() {
+    Node n = new Node("42");
+    Node half = new Node("2.5");
+    Node empty = new Node("");
+    int i = n.as<int>();
+    Point p = n.as<Point>();
+    std::cout << i << " " << half.as<double>() << " " << p.x << " " << empty.as<int>(7) << std::endl;
+    int a = 3;
+    int b = 5;
+    std::cout << (a < b) << (n.as<int>() < 5) << std::endl;      // < is still just less-than
+    return 0;
+}

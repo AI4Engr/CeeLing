@@ -1,0 +1,13 @@
+//@ expect: accept
+//@ with: 12_mini_item.clg
+#include "12_mini_item.clh"
+
+struct Args {
+public:
+    string root;
+    Args(string r) { root = r; }
+};
+
+Args parseArgs(Item j) {
+    return decodeArgs(j);              // the decoder is written here, in the file that declares Args
+}

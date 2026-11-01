@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: use of dangling observer `b` (its owner `a` is gone)
+#include <Eigen/Dense>
+#include <iostream>
+
+int main() {
+    Eigen::MatrixXd a = Eigen::MatrixXd::Identity(3, 3);
+    Eigen::MatrixXd b = a.block(0, 0, 2, 2);    // block() is on the list of calls that return a view of their receiver
+    a = Eigen::MatrixXd::Identity(5, 5);        // a's storage is replaced
+    std::cout << b << std::endl;
+    return 0;
+}

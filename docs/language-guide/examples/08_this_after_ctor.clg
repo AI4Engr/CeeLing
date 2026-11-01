@@ -1,0 +1,24 @@
+class Registry {
+public:
+    int count;
+    Registry() { count = 0; }
+    void add(Node n) { count = count + 1; }
+};
+
+class Node {
+public:
+    Node() { }
+    int announce() {
+        Registry reg = new Registry();
+        reg.add(this);
+        return reg.count;
+    }
+};
+
+int main() {
+    Node n = new Node();
+    std::cout << n.announce() << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ run: 1

@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: statement at file scope
+// cJSON keeps the last parse error in a file-scope variable (static error global_error). CeeLing has no such
+// thing: a variable declared outside every function and class is a compile error.
+int lastErrorPosition = 0;
+
+int parse(string text) {
+    lastErrorPosition = text.length();
+    return 0;
+}
+
+int main() {
+    parse("[1,");
+    std::cout << lastErrorPosition << std::endl;
+    return 0;
+}

@@ -1,0 +1,10 @@
+//@ expect: accept
+//@ flags: --no-bounds-checks --no-null-checks
+//@ generated: std::cout << v[i] << std::endl;
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    int i = 0;
+    std::cout << v[i] << std::endl;    // built with both checks off: a plain C++ subscript, as in zlib-cling
+    return 0;
+}

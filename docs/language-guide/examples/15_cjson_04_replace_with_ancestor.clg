@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: replace returned 0 printed {"k":{"x":1}}
+// ReplaceItemViaPointer frees the replaced item while the library still points at it, when the replacement
+// is the item's own parent. (In C this is a use-after-free; here nothing is freed by hand, and the library
+// additionally refuses to build the cycle.)
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+int main() {
+    Item root = parse("{\"k\":{\"x\":1}}");
+    Item k = getObjectItem(root, "k");
+    bool ok = replaceItemViaPointer(root, k, root);
+    std::cout << "replace returned " << ok << " printed " << printUnformatted(root) << std::endl;
+    return 0;
+}

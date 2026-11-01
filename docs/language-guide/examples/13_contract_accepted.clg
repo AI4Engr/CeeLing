@@ -1,0 +1,14 @@
+//@ expect: accept
+//@ run: 7
+class Item {
+public:
+    int id;
+    Item(int i) { id = i; }
+};
+
+int main() {
+    Item inner = new Item(7);
+    ref Item first = inner;            // the observer is used while its owner is alive
+    std::cout << first.id << std::endl;
+    return 0;
+}

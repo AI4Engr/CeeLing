@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: Syntax error
+class Money {
+public:
+    int cents;
+    Money(int c) { cents = c; }
+    Money operator+(Money other) { return new Money(cents + other.cents); }
+};
+
+int main() {
+    return 0;
+}

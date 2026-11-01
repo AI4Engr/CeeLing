@@ -1,0 +1,11 @@
+//@ expect: accept
+//@ run-fail: invalid_argument
+int main() {
+    try {
+        int n = std::stoi("abc");
+        std::cout << n << std::endl;
+    } catch (string e) {
+        std::cout << "caught" << std::endl;
+    }
+    return 0;
+}

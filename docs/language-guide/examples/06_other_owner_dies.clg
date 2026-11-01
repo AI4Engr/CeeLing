@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ run: 1
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) { }
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    ref Node n = a;         // n observes a, and only a
+    sink(b);                // b dies; that is not n's owner
+    std::cout << n.v << std::endl;
+    return 0;
+}

@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ error: Syntax error
+class Walker {
+public:
+    Walker() { }
+};
+
+class Swimmer {
+public:
+    Swimmer() { }
+};
+
+class Duck : public Walker, public Swimmer {
+public:
+    Duck() { }
+};
+
+int main() {
+    return 0;
+}

@@ -1,0 +1,16 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: minified {"a":"x\\","b": 1 }
+// Minify copies a string literal character by character and treats a backslash followed by a quote as an escaped quote,
+// without asking whether that backslash is itself escaped. The string "x\\" (an escaped backslash, then the real closing
+// quote) therefore swallows its closing quote, and the rest of the text is taken for string content.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    string minified = minify("{\"a\":\"x\\\\\",\"b\": 1 }");
+    std::cout << "minified " << minified << std::endl;
+    return 0;
+}

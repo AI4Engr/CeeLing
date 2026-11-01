@@ -5,7 +5,7 @@
 //@ (move_then_use.clg), just on a value type instead of a smart-pointer-backed one.
 //
 // This is the struct/value-type analog of the classic case (B) in
-// docs/language-guide/11-dangling-references.md. A value type being copyable (not
+// docs/language-guide/06-dangling-references.md. A value type being copyable (not
 // smart-pointer-backed) does NOT mean it is immune to use-after-move: it is still
 // move-constructed into a call argument, and for any value type owning real heap
 // storage (e.g. Eigen::MatrixXd) using it after that move reads emptied-out data.

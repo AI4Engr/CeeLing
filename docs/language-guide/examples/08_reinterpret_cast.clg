@@ -1,0 +1,7 @@
+int main() {
+    double d = 1.0;
+    int x = reinterpret_cast<int>(d);
+    return 0;
+}
+//@ expect: reject
+//@ error: call to unknown function/method `reinterpret_cast`

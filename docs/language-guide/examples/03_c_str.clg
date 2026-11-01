@@ -1,0 +1,7 @@
+//@ expect: reject
+//@ error: unknown function/method `c_str`
+int main() {
+    string s = "hello";
+    s.c_str();
+    return 0;
+}

@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: 6 3
+//@ generated: int sumAll(const std::vector<int>& data) {
+//@ generated: int s = sumAll(std::move(v));
+int sumAll(std::vector<int> data) {
+    int total = 0;
+    int i = 0;
+    while (i < data.size()) {
+        total = total + data[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    int s = sumAll(v);
+    std::cout << s << " " << v.size() << std::endl;
+    return 0;
+}

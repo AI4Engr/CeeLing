@@ -1,0 +1,7 @@
+//@ expect: reject
+//@ error: Syntax error
+int main() {
+    double d = 2.7;
+    int i = (int)d;
+    return 0;
+}

@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: hello, world 12
+//@ run: world 7 -1
+//@ run: Hello, world d 2 1 1
+int main() {
+    string name = "world";
+    string greeting = "hello, " + name;
+    std::cout << greeting << " " << greeting.length() << std::endl;
+    int where = greeting.find("wor");
+    int missing = greeting.find("xyz");
+    std::cout << greeting.substr(7, 5) << " " << where << " " << missing << std::endl;
+    greeting[0] = 'H';                        // indexing reads and writes a char
+    char last = greeting[greeting.length() - 1];
+    int os = 0;
+    for (char c : greeting) {                 // range-for over the characters
+        if (c == 'o') {
+            os = os + 1;
+        }
+    }
+    std::cout << greeting << " " << last << " " << os << " " << (name == "world") << " " << (name < "xylophone") << std::endl;
+    return 0;
+}

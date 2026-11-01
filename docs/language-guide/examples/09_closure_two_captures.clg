@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: result10
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb, int n) {
+    cb.call(n);
+}
+
+int main() {
+    int multiplier = 2;
+    string label = "result";
+    each(closure Callback [multiplier, label] (int x) {
+        std::cout << label << (multiplier * x) << std::endl;
+    }, 5);
+    return 0;
+}

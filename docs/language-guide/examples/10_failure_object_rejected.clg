@@ -1,0 +1,26 @@
+//@ expect: reject
+//@ error: `spawn` captures `c` of type `Counter`, which is not a plain value
+class Job { public: Job() { } virtual void run() { } };
+
+class Failure {
+public:
+    Failure() { }
+    virtual void fail(string message) { }
+};
+
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+int main() {
+    Counter c = new Counter();
+    int id = 1;
+    spawn(closure Job [id] () {
+        throw "boom";
+    }, closure Failure [c] (string message) {
+        c.n = 1;
+    });
+    return 0;
+}

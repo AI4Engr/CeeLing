@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: 1 2 3
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> nodes;
+    nodes.push_back(new Node(1));
+    nodes.push_back(new Node(2));
+    nodes.push_back(new Node(3));
+    std::cout << nodes[0].v;
+    int i = 1;
+    while (i < nodes.size()) {
+        std::cout << " " << nodes[i].v;
+        i = i + 1;
+    }
+    std::cout << std::endl;
+    return 0;
+}

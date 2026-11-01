@@ -1,0 +1,36 @@
+//@ expect: accept
+//@ run: 135
+//@ run: 3 is small
+//@ run: sum 1+2 then stop: 3
+int classify(int n) {
+    if (n < 3) {
+        return 0;
+    } else if (n < 10) {
+        return 1;
+    } else {
+        return 2;
+    }
+}
+
+int main() {
+    int i = 0;
+    while (i < 8) {
+        i = i + 1;
+        if (i % 2 == 0) { continue; }        // skip even numbers
+        if (i > 5) { break; }                // leave the loop
+        std::cout << i;
+    }
+    std::cout << std::endl;
+    if (classify(3) == 1) { std::cout << "3 is small" << std::endl; }
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    int sum = 0;
+    for (int x : v) {
+        if (x == 3) { break; }
+        sum = sum + x;
+    }
+    std::cout << "sum 1+2 then stop: " << sum << std::endl;
+    return 0;
+}

@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run-fail: cling: index out of bounds at line 13
+//@ run-fail: index 3, size 2
+// A command that trusts a number from the page. The page sent 3, the list has 2 entries.
+class Command {
+public:
+    Command() { }
+    virtual string call(int index) { return ""; }
+};
+
+int main() {
+    std::vector<string> names;
+    names.push_back("notes.txt");
+    names.push_back("todo.txt");
+    Command pick = closure Command [names] (int index) {
+        return names[index];
+    };
+    std::cout << pick.call(1) << std::endl;
+    std::cout << pick.call(3) << std::endl;
+    return 0;
+}

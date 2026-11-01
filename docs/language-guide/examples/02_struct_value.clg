@@ -1,0 +1,37 @@
+//@ expect: accept
+//@ run: struct: 1 9
+//@ run: class:  9 9
+//@ run: passed a struct, caller still has 1
+//@ generated: Point b = a;
+struct Point {
+public:
+    int x;
+    Point(int v) { x = v; }
+};
+
+class Cell {
+public:
+    int x;
+    Cell(int v) { x = v; }
+};
+
+void moveRight(Point p) {
+    p.x = p.x + 100;
+}
+
+int main() {
+    Point a = new Point(1);
+    Point b = a;                 // a copy
+    b.x = 9;
+    std::cout << "struct: " << a.x << " " << b.x << std::endl;
+
+    Cell c = new Cell(1);
+    Cell d = c;                  // the same object
+    d.x = 9;
+    std::cout << "class:  " << c.x << " " << d.x << std::endl;
+
+    Point p = new Point(1);
+    moveRight(p);
+    std::cout << "passed a struct, caller still has " << p.x << std::endl;
+    return 0;
+}

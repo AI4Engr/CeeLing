@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: '.get()' is forbidden on a CeeLing object
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node p = new Node(1);
+    int r = p.get();         // in C++ this is how a raw pointer escapes from a smart pointer
+    return 0;
+}

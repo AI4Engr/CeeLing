@@ -1,0 +1,12 @@
+//@ expect: accept
+//@ with: 12_mini_item.clg 12_decode_types.clg
+//@ run: /tmp
+#include "12_decode_types.clh"
+
+int main() {
+    Item doc = node(6, "");
+    put(doc, str("root", "/tmp"));
+    Args a = parseArgs(doc);           // call the wrapper that lives next to the struct
+    std::cout << a.root << std::endl;
+    return 0;
+}

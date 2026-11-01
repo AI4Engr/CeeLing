@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ error: `b` is not created only by `new Buffer(...)`
+class Job { public: Job() { } virtual void run() { } };
+
+class Buffer {
+public:
+    int n;
+    Buffer() { n = 0; }
+};
+
+Buffer make() {
+    Buffer b = new Buffer();
+    return b;
+}
+
+int main() {
+    Buffer b = make();                  // a function result: which object is this?
+    spawn(closure Job [b] () { b.n = 1; });
+    return 0;
+}

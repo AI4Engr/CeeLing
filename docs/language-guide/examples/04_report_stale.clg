@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ flags: --legacy-cpp
+//@ generated: - Texture.texture -> std::unique_ptr because default unique ownership
+class Texture {
+public:
+    int id;
+    Texture(int i) { id = i; }
+};
+
+class Sprite {
+public:
+    Texture texture;
+    Sprite(Texture t) { texture = t; }
+};
+
+int main() {
+    Texture rock = new Texture(7);
+    Sprite a = new Sprite(rock);
+    Sprite b = new Sprite(rock);
+    return 0;
+}

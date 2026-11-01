@@ -1,0 +1,8 @@
+int counter = 5;
+
+int main() {
+    std::cout << counter << std::endl;
+    return 0;
+}
+//@ expect: reject
+//@ error: statement at file scope

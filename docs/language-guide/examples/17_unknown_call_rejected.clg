@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: unknown function/method `std::partial_sum`
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    std::partial_sum(v.begin(), v.end(), v.begin());   // no entry in the library facts: not trusted
+    return 0;
+}

@@ -1,0 +1,10 @@
+string name() {
+    return "a string long enough to live on the heap";
+}
+
+int main() {
+    int p = name().c_str();
+    return 0;
+}
+//@ expect: reject
+//@ error: call to unknown function/method

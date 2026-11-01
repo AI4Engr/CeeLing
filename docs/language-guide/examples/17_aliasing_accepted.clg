@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ run: 3
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+    void bump() { n = n + 1; }
+};
+
+int main() {
+    Counter a = new Counter();
+    Counter b = a;                     // two live handles to one object
+    b.bump();
+    a.bump();
+    b.bump();
+    std::cout << a.n << std::endl;     // every handle sees every write
+    return 0;
+}

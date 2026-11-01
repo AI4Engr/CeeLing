@@ -1,0 +1,59 @@
+//@ expect: accept
+//@ with: 12_mini_item.clg
+//@ run: `root` must be a string
+//@ run: `n` must be a whole number in range
+//@ run: `list[1]` must be a number
+//@ run: `o.x` must be a whole number in range
+#include "12_mini_item.clh"
+
+struct Inner {
+public:
+    int x;
+    Inner(int a) { x = a; }
+};
+
+struct Wide {
+public:
+    string root;
+    int n;
+    std::vector<int> list;
+    Inner o;
+    Wide(string r, int m, std::vector<int> l, Inner i) { root = r; n = m; list = l; o = i; }
+};
+
+void tryIt(Item doc) {
+    try {
+        Wide w = decodeWide(doc);
+        std::cout << "ok" << std::endl;
+    } catch (string message) {
+        std::cout << message.substr(message.find("`")) << std::endl;
+    }
+}
+
+Item good() {
+    Item doc = node(6, "");
+    put(doc, str("root", "r"));
+    put(doc, num("n", 1.0));
+    Item list = node(5, "list");
+    put(list, num("", 1.0));
+    put(doc, list);
+    Item o = node(6, "o");
+    put(o, num("x", 1.0));
+    put(doc, o);
+    return doc;
+}
+
+int main() {
+    Item missing = node(6, "");                // nothing at all: `root` is missing, reported as the wrong type
+    tryIt(missing);
+    Item fraction = good();
+    getObjectItem(fraction, "n").valuedouble = 1.5;       // not a whole number
+    tryIt(fraction);
+    Item badElement = good();
+    put(getObjectItem(badElement, "list"), str("", "x"));  // the second element is a string
+    tryIt(badElement);
+    Item huge = good();
+    getObjectItem(getObjectItem(huge, "o"), "x").valuedouble = 1e20;   // out of range for an int
+    tryIt(huge);
+    return 0;
+}

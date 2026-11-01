@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: raw `delete` is forbidden
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    delete a;                  // the compiler decides when an object dies
+    return 0;
+}

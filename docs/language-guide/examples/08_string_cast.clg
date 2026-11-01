@@ -1,0 +1,7 @@
+int main() {
+    string s = "12";
+    int x = int(s);
+    return 0;
+}
+//@ expect: reject
+//@ error: forbidden-construct

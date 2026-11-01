@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ error: use of moved-from value `b`
+class Box {
+public:
+    int value;
+    Box(int v) { value = v; }
+};
+
+Box keep(Box n) {
+    return n;                              // hands n to the caller: not a read
+}
+
+int main() {
+    Box b = new Box(1);
+    Box kept = keep(b);
+    std::cout << b.value << std::endl;
+    return 0;
+}

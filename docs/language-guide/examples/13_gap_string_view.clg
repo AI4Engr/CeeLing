@@ -1,0 +1,8 @@
+//@ expect: accept
+std::string make() { return "abc"; }
+
+int main() {
+    std::string_view v = make();       // a view of a temporary string
+    std::cout << v << std::endl;       // accepted today: views are not tracked
+    return 0;
+}

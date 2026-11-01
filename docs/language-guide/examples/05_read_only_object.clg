@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ run: original=1 doubled=2 original-after=1
+//@ generated: describe(a)
+class Box {
+public:
+    int value;
+    Box(int v) { value = v; }
+};
+
+int describe(Box n) {
+    return n.value * 2;                    // only reads n
+}
+
+int main() {
+    Box a = new Box(1);
+    std::cout << "original=" << a.value << " doubled=" << describe(a) << " original-after=" << a.value << std::endl;
+    return 0;
+}

@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: result {"c":2,"d":null,"a":{"b":1}}
+// merge_patch keeps walking nodes it already deleted when target and patch alias each other.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item both = parse("{\"a\":{\"b\":1},\"c\":2,\"d\":null}");
+    Item result = mergePatch(both, both);
+    std::cout << "result " << printUnformatted(result) << std::endl;
+    return 0;
+}

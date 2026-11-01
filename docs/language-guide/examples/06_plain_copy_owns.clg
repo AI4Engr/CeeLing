@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ run: 1
+//@ run: 2
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = a;               // no ref: b is a second owner of the same object
+    a = new Node(2);          // a now owns a new object; the first one lives on, through b
+    std::cout << b.v << std::endl;
+    std::cout << a.v << std::endl;
+    return 0;
+}

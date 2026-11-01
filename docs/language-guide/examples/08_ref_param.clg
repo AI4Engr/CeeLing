@@ -1,0 +1,17 @@
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+};
+
+int read(ref Item i) {
+    return i.v;
+}
+
+int main() {
+    Item a = new Item(1);
+    std::cout << read(a) << std::endl;
+    return 0;
+}
+//@ expect: reject
+//@ error: `ref` observers cannot be function parameters

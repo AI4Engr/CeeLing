@@ -1,0 +1,29 @@
+//@ expect: accept
+//@ run: 42 47
+//@ run: 7
+//@ run: money(7)
+//@ run: equal money: 1
+class Money {
+public:
+    int cents;
+    Money(int c) { cents = c; }
+    int operator[](int extra) { return cents + extra; }       // reading m[i]
+    void operator=(int c) { cents = c; }                        // m = 7;
+    bool operator==(Money other) { return cents == other.cents; }
+};
+
+ostream operator<<(ostream out, Money m) {
+    out << "money(" << m.cents << ")";
+    return out;
+}
+
+int main() {
+    Money m = new Money(42);
+    std::cout << m[0] << " " << m[5] << std::endl;
+    m = 7;
+    std::cout << m.cents << std::endl;
+    std::cout << m << std::endl;
+    Money n = new Money(7);
+    std::cout << "equal money: " << (m == n) << std::endl;
+    return 0;
+}

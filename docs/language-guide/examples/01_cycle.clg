@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ generated: std::weak_ptr<Node> prev;
+//@ run: 2
+class Node {
+public:
+    int v;
+    Node next;       // forward link: owns the next node
+    Node prev;       // back link: the compiler sees the cycle and does not let it own
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    a.next = new Node(2);
+    a.next.prev = a;
+    std::cout << a.next.v << std::endl;
+    return 0;
+}

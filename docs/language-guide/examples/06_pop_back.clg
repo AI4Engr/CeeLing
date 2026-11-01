@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: use of dangling observer `n` (its owner `v` is gone)
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    ref Node n = v[0];
+    v.pop_back();                       // destroys the element n looks at
+    std::cout << n.v << std::endl;
+    return 0;
+}

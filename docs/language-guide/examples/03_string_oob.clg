@@ -1,0 +1,8 @@
+//@ expect: accept
+//@ run-fail: index out of bounds at line 4 (index 9, size 5)
+int main() {
+    string s = "hello";
+    int i = 9;
+    std::cout << s[i] << std::endl;
+    return 0;
+}

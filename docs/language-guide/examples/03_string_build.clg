@@ -1,0 +1,12 @@
+//@ expect: accept
+//@ run: abcdexx 7
+int main() {
+    string s = "ab";
+    s.reserve(16);
+    s.push_back('c');                // appends in place
+    s.push_back(char(100));
+    s.append("e");
+    s.append(2, 'x');
+    std::cout << s << " " << s.length() << std::endl;
+    return 0;
+}

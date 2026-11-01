@@ -1,0 +1,9 @@
+//@ expect: accept
+//@ run: 4 1
+//@ generated: int bare = (4 >> (1 == 2));
+int main() {
+    int bare = 4 >> 1 == 2;          // C++ reads (4 >> 1) == 2 and prints 1; here == binds tighter: 4 >> (1 == 2)
+    int grouped = (4 >> 1) == 2;
+    std::cout << bare << " " << grouped << std::endl;
+    return 0;
+}

@@ -1,0 +1,9 @@
+//@ expect: accept
+// The library half of a two-file program: this file is compiled on its own.
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void eat(Node n) { }

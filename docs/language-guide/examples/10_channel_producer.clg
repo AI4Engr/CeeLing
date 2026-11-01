@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: 4950 100 1
+class Job { public: Job() { } virtual void run() { } };
+
+int main() {
+    Channel<int> c;
+    spawn(closure Job [c] () {
+        int i = 0;
+        while (i < 100) {
+            c.send(i);
+            i = i + 1;
+        }
+        c.close();
+    });
+    int total = 0;
+    int received = 0;
+    while (c.wait(5000)) {
+        total = total + c.take();
+        received = received + 1;
+    }
+    std::cout << total << " " << received << " " << c.isClosed() << std::endl;
+    return 0;
+}

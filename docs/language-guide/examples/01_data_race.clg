@@ -1,0 +1,22 @@
+//@ expect: reject
+//@ error: use of moved-from value `c`
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Counter c = new Counter();
+    spawn(closure Job [c] () {
+        c.n = c.n + 1;        // in the new thread ...
+    });
+    c.n = c.n + 1;            // ... and here, at the same time
+    return 0;
+}

@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: 1
+//@ generated: std::weak_ptr<Node> parent;
+class Node {
+public:
+    int v;
+    std::vector<Node> children;
+    //@ptr weak Node.parent
+    Node parent;
+    Node(int x) { v = x; parent = nullptr; }
+    void add(Node c) {
+        c.parent = this;
+        children.push_back(c);
+    }
+};
+
+int main() {
+    Node root = new Node(1);
+    root.add(new Node(2));
+    std::cout << root.children.size() << std::endl;
+    return 0;
+}

@@ -1,0 +1,12 @@
+int main() {
+    double d = 3.7;
+    int i = int(d);
+    char c = char(65);
+    byte b = byte(300);
+    int64 big = int64(65536) * int64(65536);
+    int neg = int(-1.9);
+    std::cout << i << " " << c << " " << int(b) << " " << big << " " << neg << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ run: 3 A 44 4294967296 -1

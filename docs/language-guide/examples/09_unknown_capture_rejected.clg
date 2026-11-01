@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ error: closure captures `doesNotExist`, which is not in scope here
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    each(closure Callback [doesNotExist] (int x) {
+        std::cout << x << std::endl;
+    });
+    return 0;
+}

@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: 1
+class Holder {
+public:
+    std::vector<int> data;
+    Holder(std::vector<int> d) { data = d; }
+    int first() { return data[0]; }
+};
+
+std::vector<int> make() {
+    std::vector<int> v;
+    v.push_back(1);
+    return v;
+}
+
+int main() {
+    Holder h = new Holder(make());
+    std::cout << h.first() << std::endl;
+    return 0;
+}

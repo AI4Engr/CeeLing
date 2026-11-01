@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ error: closure parameter 1 has type `string`, interface `Callback::call` declares `int`
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (string wrongType) {
+        std::cout << wrongType << std::endl;
+    });
+    return 0;
+}

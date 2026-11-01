@@ -1,0 +1,7 @@
+//@ expect: reject
+//@ error: converts one primitive to another
+int main() {
+    string s = "12";
+    int x = int(s);
+    return 0;
+}

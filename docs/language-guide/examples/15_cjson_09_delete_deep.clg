@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: built
+// cJSON_Delete recurses once per nesting level, so a deeply nested tree overflows the stack when freed.
+// 300000 levels built through the API, then released.
+#include "cjson_item.clh"
+int main() {
+    Item top = createArray();
+    Item cur = top;
+    int i = 0;
+    while (i < 300000) {
+        Item next = createArray();
+        addItemToArray(cur, next);
+        cur = next;
+        i = i + 1;
+    }
+    std::cout << "built" << std::endl;
+    return 0;
+}

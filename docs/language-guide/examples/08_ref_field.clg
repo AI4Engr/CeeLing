@@ -1,0 +1,17 @@
+class Item {
+public:
+    int v;
+    Item child;
+    Item(int x) { v = x; child = nullptr; }
+};
+
+int main() {
+    Item parent = new Item(1);
+    parent.child = new Item(42);
+    ref Item c = parent.child;
+    parent.child = nullptr;
+    std::cout << c.v << std::endl;
+    return 0;
+}
+//@ expect: reject
+//@ error: whose owner cannot be tracked

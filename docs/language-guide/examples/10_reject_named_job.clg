@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: a named object cannot be spawned
+class Job { public: Job() { } virtual void run() { } };
+
+int main() {
+    Job j = new Job();
+    spawn(j);
+    return 0;
+}

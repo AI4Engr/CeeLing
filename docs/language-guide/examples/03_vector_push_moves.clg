@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: use of moved-from value `a`
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> nodes;
+    Node a = new Node(1);
+    nodes.push_back(a);
+    std::cout << a.v << std::endl;
+    return 0;
+}

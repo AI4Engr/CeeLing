@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: File-scope variables are not supported
+int hits = 0;                  // in C++ every thread can reach this
+
+int main() {
+    hits = hits + 1;
+    return 0;
+}

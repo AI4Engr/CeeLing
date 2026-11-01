@@ -1,0 +1,15 @@
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    Node r = mysteryFunction(a, b);
+    std::cout << r.v << std::endl;
+    return 0;
+}
+//@ expect: reject
+//@ error: call to unknown function/method `mysteryFunction`

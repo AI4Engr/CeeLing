@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ with: 11_lib_account_consumer.cpp
+//@ run: 150 50 2 16
+//@ generated: class Account {
+namespace bank {
+    class Account {
+    public:
+        string owner;
+        int balance;
+        std::vector<int> history;
+        Account(string who, int start) {
+            owner = who;
+            balance = start;
+        }
+        void deposit(int amount) {
+            balance = balance + amount;
+            history.push_back(amount);
+        }
+        int lastDeposit() {
+            return history[history.size() - 1];
+        }
+    };
+
+    int fee(int amount) {
+        return amount / 100;
+    }
+}

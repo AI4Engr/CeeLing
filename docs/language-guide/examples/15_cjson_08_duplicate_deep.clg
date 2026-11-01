@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: duplicated 1
+// Duplicate's recursion cap (CJSON_CIRCULAR_LIMIT = 10000) against the real stack: build a chain
+// 9990 arrays deep through the API (the parser would refuse > 1000) and duplicate it.
+#include "cjson_item.clh"
+int main() {
+    Item top = createArray();
+    Item cur = top;
+    int i = 0;
+    while (i < 9990) {
+        Item next = createArray();
+        addItemToArray(cur, next);
+        cur = next;
+        i = i + 1;
+    }
+    Item copy = duplicate(top, true);
+    std::cout << "duplicated " << (copy != nullptr) << std::endl;
+    return 0;
+}

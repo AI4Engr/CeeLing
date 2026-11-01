@@ -1,0 +1,11 @@
+//@ expect: accept
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    for (int x : v) {
+        v.push_back(x);             // the loop is iterating over v while v grows
+    }
+    std::cout << v.size() << std::endl;
+    return 0;
+}

@@ -1,0 +1,33 @@
+//@ expect: accept
+//@ run: sum 6 n 3
+//@ generated: (std::move(b)));
+class Buffer {
+public:
+    std::vector<int> data;
+    int n;
+    Buffer() { n = 0; }
+    void add(int x) {
+        data.push_back(x);
+        n = n + 1;
+    }
+    int sum() {
+        int total = 0;
+        for (int x : data) {
+            total = total + x;
+        }
+        return total;
+    }
+};
+
+class Job { public: Job() { } virtual void run() { } };
+
+int main() {
+    Buffer b = new Buffer();
+    b.add(1);
+    b.add(2);
+    b.add(3);
+    spawn(closure Job [b] () {
+        std::cout << "sum " << b.sum() << " n " << b.n << std::endl;
+    });
+    return 0;
+}

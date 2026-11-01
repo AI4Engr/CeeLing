@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ with: 11_stash_shim.cpp
+// Compiled and linked, not run: the program reads a destroyed vector.
+ext_fn int remember(ref std::vector<int> data);     // says "a read-only borrow for the call"; the C++ keeps the address
+ext_fn int firstRemembered();
+
+void fill() {
+    std::vector<int> v;
+    v.push_back(7);
+    int ok = remember(v);
+}
+
+int main() {
+    fill();
+    int x = firstRemembered();      // the checker believes the declaration, so it says nothing
+    return 0;
+}

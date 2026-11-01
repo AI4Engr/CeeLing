@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: use of moved-from value `a`
+ext_fn int total(std::vector<int> data);     // no `ref`: the vector is handed over, like any call argument
+
+int main() {
+    std::vector<int> a;
+    a.push_back(1);
+    int t = total(a);
+    a.push_back(2);                          // a was moved into total()
+    return 0;
+}

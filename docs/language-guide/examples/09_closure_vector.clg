@@ -1,0 +1,28 @@
+//@ expect: accept
+//@ run: 1 11 21
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+int main() {
+    std::vector<Callback> cbs;
+    int i = 0;
+    while (i < 3) {
+        cbs.push_back(closure Callback [i] (int x) {
+            std::cout << (i * 10 + x);
+        });
+        i = i + 1;
+    }
+    int k = 0;
+    for (Callback c : cbs) {
+        if (k > 0) {
+            std::cout << " ";
+        }
+        c.call(1);
+        k = k + 1;
+    }
+    std::cout << std::endl;
+    return 0;
+}

@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ run: 2
+//@ generated: std::shared_ptr<Item> Book::get(int i) {
+class Item {
+public:
+    int n;
+    Item(int v) { n = v; }
+};
+
+class Book {
+public:
+    std::vector<Item> items;
+    Book() { }
+    void add(Item i) { items.push_back(i); }
+    Item get(int i) {
+        Item w = items[i];
+        return w;                  // w is shared with the vector, so the result must be a shared handle too
+    }
+};
+
+int main() {
+    Book b = new Book();
+    b.add(new Item(2));
+    Item x = b.get(0);
+    std::cout << x.n << std::endl;
+    return 0;
+}

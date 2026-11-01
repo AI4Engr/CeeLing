@@ -1,0 +1,16 @@
+//@ expect: accept
+//@ run: 1 1
+//@ generated: Point b = a;
+struct Point {
+public:
+    int v;
+    Point(int x) { v = x; }
+};
+
+int main() {
+    Point a = new Point(1);
+    Point b = a;            // a struct is a value: this copies, and a stays usable
+    Point c = a;
+    std::cout << b.v << " " << c.v << std::endl;
+    return 0;
+}

@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: converts one primitive to another
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node n = new Node(1);
+    int x = int(n);
+    return 0;
+}

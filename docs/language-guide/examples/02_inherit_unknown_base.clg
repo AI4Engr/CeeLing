@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: error[semantic/unknown-base-class]
+class Dog : public Missing {
+public:
+    int age;
+    Dog(int a) { age = a; }
+};
+
+int main() {
+    return 0;
+}

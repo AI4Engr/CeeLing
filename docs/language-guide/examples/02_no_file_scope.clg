@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: File-scope variables are not supported
+int counter = 0;
+
+int main() {
+    counter = counter + 1;
+    std::cout << counter << std::endl;
+    return 0;
+}

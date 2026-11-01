@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: archived 7
+//@ run: next ticket 8
+class Ticket {
+public:
+    int number;
+    Ticket(int n) { number = n; }
+};
+
+void archive(Ticket t) {
+    std::cout << "archived " << t.number << std::endl;
+}
+
+int main() {
+    Ticket ticket = new Ticket(7);
+    archive(ticket);                       // handed over: ticket is empty for the compiler
+    ticket = new Ticket(8);                // a new object makes the name usable again
+    std::cout << "next ticket " << ticket.number << std::endl;
+    return 0;
+}

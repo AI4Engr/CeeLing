@@ -1,0 +1,58 @@
+//@ expect: accept
+//@ run: 1 2 3
+//@ run: back: 3 2 1
+//@ run: first has no prev: 1
+//@ generated: std::shared_ptr<Item> next;
+//@ generated: std::weak_ptr<Item> prev;
+//@ generated: std::shared_ptr<Item> head;
+class Item {
+public:
+    int value;
+    Item next;                     // owns the rest of the list
+    Item prev;                     // looks back: the name and the shape (next points forward, prev back) tell the compiler it must not own
+    Item(int v) { value = v; }
+};
+
+class List {                       // the shape of cjson-cling's Item: next and child own, prev is weak
+public:
+    Item head;
+    Item tail;
+    List() { }
+    void append(int v) {
+        Item node = new Item(v);
+        if (head == nullptr) {
+            head = node;
+            tail = node;
+            return;
+        }
+        tail.next = node;
+        node.prev = tail;
+        tail = node;
+    }
+};
+
+int main() {
+    List list = new List();
+    list.append(1);
+    list.append(2);
+    list.append(3);
+    string forward = "";
+    Item cur = list.head;
+    while (cur != nullptr) {
+        forward = forward + std::to_string(cur.value) + " ";
+        cur = cur.next;
+    }
+    std::cout << forward << std::endl;
+    string backward = "";
+    cur = list.tail;
+    while (cur != nullptr) {
+        backward = backward + std::to_string(cur.value) + " ";
+        cur = cur.prev;
+    }
+    std::cout << "back: " << backward << std::endl;
+    Item first = list.head;
+    if (first.prev == nullptr) {
+        std::cout << "first has no prev: " << first.value << std::endl;
+    }
+    return 0;
+}

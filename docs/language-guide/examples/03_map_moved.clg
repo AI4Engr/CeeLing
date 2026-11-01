@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: use of moved-from value `m`
+void sink(std::map<int, string> m) {
+}
+
+int main() {
+    std::map<int, string> m;
+    m[1] = "one";
+    sink(m);
+    m[2] = "two";
+    return 0;
+}

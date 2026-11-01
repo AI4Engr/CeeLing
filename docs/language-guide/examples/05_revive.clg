@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: 1;2;3;
+//@ generated: sink(std::move(cur));
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node unused) { }
+
+int main() {
+    Node cur = new Node(1);
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        std::cout << cur.v << ";";
+        sink(cur);                 // cur is moved here ...
+        cur = new Node(i + 1);     // ... and has a new value before the next iteration uses it
+    }
+    std::cout << std::endl;
+    return 0;
+}

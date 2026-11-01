@@ -1,0 +1,36 @@
+//@ expect: accept
+//@ run: 3 4 7
+//@ run: 2 5
+//@ generated: Point::Point(int px, int py) : x(px), y(py), sum((this->x + this->y)) {
+//@ generated: Box::Box(int s) : size(s), calls(0) {
+class Point {
+public:
+    int x;
+    int y;
+    int sum;
+    Point(int px, int py) {
+        x = px;
+        y = py;
+        sum = x + y;
+    }
+};
+
+class Box {
+public:
+    int size;
+    int calls;
+    Box(int s) {
+        size = s;
+        calls = 0;
+        announce();            // a call ends the run of plain assignments
+    }
+    void announce() { calls = calls + 1; }
+};
+
+int main() {
+    Point p = new Point(3, 4);
+    std::cout << p.x << " " << p.y << " " << p.sum << std::endl;
+    Box b = new Box(2);
+    std::cout << b.size << " " << (b.size + 3) << std::endl;
+    return 0;
+}

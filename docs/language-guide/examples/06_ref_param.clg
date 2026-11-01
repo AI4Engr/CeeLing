@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ error: cannot be function parameters
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void show(ref Node n) {
+    std::cout << n.v << std::endl;
+}
+
+int main() {
+    Node a = new Node(1);
+    show(a);
+    return 0;
+}

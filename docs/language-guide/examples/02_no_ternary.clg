@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: Syntax error
+int main() {
+    int a = 3;
+    int b = a > 2 ? 1 : 0;
+    std::cout << b << std::endl;
+    return 0;
+}

@@ -1,0 +1,10 @@
+//@ expect: accept
+//@ run: say "hi" 8 3 AB "
+int main() {
+    string quoted = "say \"hi\"";
+    string tabbed = "a\tb";
+    string hex = "\x41\x42";
+    char q = '\"';
+    std::cout << quoted << " " << quoted.length() << " " << tabbed.length() << " " << hex << " " << q << std::endl;
+    return 0;
+}

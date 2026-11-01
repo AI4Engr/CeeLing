@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ run: 1000000 nodes built
+//@ generated: pending
+// What the port's Item relies on, in miniature: a class that owns another object of its own type gets a destructor
+// that empties the chain in a loop. Without it the default destructor releases one node per stack frame.
+class Node {
+public:
+    Node next;
+    int value;
+    Node(int v) { value = v; }
+};
+
+int main() {
+    Node head = new Node(0);
+    Node cur = head;
+    int i = 1;
+    while (i < 1000000) {
+        Node n = new Node(i);
+        cur.next = n;
+        cur = n;
+        i = i + 1;
+    }
+    std::cout << i << " nodes built" << std::endl;
+    return 0;
+}

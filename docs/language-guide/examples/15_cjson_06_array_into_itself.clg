@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: replace returned 0 printed [1,2,3]
+// ReplaceItemInArray lets an array be put inside itself and reports success; Delete then recurses forever.
+// The library now refuses (one line of hardening); there is nothing in CeeLing's own checks that would have.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+int main() {
+    Item a = parse("[1,2,3]");
+    bool ok = replaceItemInArray(a, 0, a);
+    std::cout << "replace returned " << ok << " printed " << printUnformatted(a) << std::endl;
+    return 0;
+}

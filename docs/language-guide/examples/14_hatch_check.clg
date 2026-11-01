@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: '.get()' is forbidden
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node p = new Node(1);
+    int r = p.get();                // refused by the escape-hatch check, before any lifetime analysis runs
+    return 0;
+}

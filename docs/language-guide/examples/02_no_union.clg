@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ error: raw `union` is forbidden
+union Number {
+    int whole;
+    float part;
+};
+
+int main() {
+    return 0;
+}

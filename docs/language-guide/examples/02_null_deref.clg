@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ run-fail: cling: null dereference at line 6
+class Item {
+public:
+    int v;
+    Item next;
+    Item(int x) { v = x; }
+    int nextValue() { return next.v; }
+};
+
+int main() {
+    Item a = new Item(1);
+    Item b = new Item(2);
+    a.next = b;
+    std::cout << a.nextValue() << std::endl;
+    std::cout << b.nextValue() << std::endl;       // b has no next: the program stops here
+    return 0;
+}

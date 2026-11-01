@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: Syntax error
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = &a;               // there is no address-of operator
+    return 0;
+}

@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 1
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) { }
+
+int main() {
+    Node a = new Node(1);
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        std::cout << a.v << std::endl;
+        sink(a);
+        break;                             // the loop never comes back to the use
+    }
+    return 0;
+}

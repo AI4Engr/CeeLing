@@ -1,0 +1,6 @@
+//@ expect: reject
+//@ error: `throw` operand is not a string
+int main() {
+    throw 42;
+    return 0;
+}

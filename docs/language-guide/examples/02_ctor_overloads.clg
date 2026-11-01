@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ run: none/0 one/1 two/3
+class Label {
+public:
+    string text;
+    int n;
+    Label() { text = "none"; n = 0; }
+    Label(int x) { text = "one"; n = x; }
+    Label(int x, int y) { text = "two"; n = x + y; }
+    string show() { return text + "/" + std::to_string(n); }
+};
+
+int main() {
+    Label a = new Label();
+    Label b = new Label(1);
+    Label c = new Label(1, 2);
+    std::cout << a.show() << " " << b.show() << " " << c.show() << std::endl;
+    return 0;
+}

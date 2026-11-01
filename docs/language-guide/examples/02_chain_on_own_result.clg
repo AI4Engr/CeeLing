@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ run: 7
+class Inner {
+public:
+    int v;
+    Inner(int val) { v = val; }
+};
+
+class Holder {
+public:
+    Inner inner;
+    Holder(int val) { inner = new Inner(val); }
+    Inner getInner() { return inner; }
+};
+
+Holder makeHolder() {
+    return new Holder(7);
+}
+
+int main() {
+    int v = makeHolder().getInner().v;       // a call on a call's result works for your own functions and methods
+    std::cout << v << std::endl;
+    return 0;
+}

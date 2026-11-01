@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: printed [0.3,123456789.12345679,1]
+// print_number prints 15 significant digits and keeps them if reading them back gives a value within DBL_EPSILON
+// (relative) of the original. That test accepts output that is not the number: 0.30000000000000004 prints as 0.3.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item item = parse("[0.30000000000000004,123456789.123456789,1.0000000000000002]");
+    std::cout << "printed " << printUnformatted(item) << std::endl;
+    return 0;
+}

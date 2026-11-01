@@ -1,0 +1,8 @@
+int main() {
+    string s = "12";
+    int x = std::stoi(s);
+    std::cout << x + 1 << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ run: 13

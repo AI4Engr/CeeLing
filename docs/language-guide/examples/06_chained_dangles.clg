@@ -1,0 +1,33 @@
+//@ expect: reject
+//@ error: use of dangling observer `r` (its owner `x` is gone)
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Picker {
+public:
+    Picker() { }
+    Node pick(Node a, Node b) {
+        return a;
+    }
+};
+
+class PickerFactory {
+public:
+    PickerFactory() { }
+    Picker makePicker() {
+        return new Picker();
+    }
+};
+
+int main() {
+    PickerFactory factory = new PickerFactory();
+    Node x = new Node(1);
+    Node y = new Node(2);
+    Node r = factory.makePicker().pick(x, y);    // the summary is found through the chain
+    x = new Node(3);
+    std::cout << r.v << std::endl;
+    return 0;
+}

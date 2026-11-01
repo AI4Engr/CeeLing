@@ -1,0 +1,28 @@
+//@ expect: accept
+//@ flags: --pool-shared
+//@ run: 4950 100
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Channel<int> numbers;
+    spawn(closure Job [numbers] () {         // the Channel handle is copied in; both handles name one queue
+        int i = 0;
+        while (i < 100) {
+            numbers.send(i);                 // a copy of an int crosses, nothing else is shared
+            i = i + 1;
+        }
+        numbers.close();
+    });
+    int total = 0;
+    int received = 0;
+    while (numbers.wait(5000)) {
+        total = total + numbers.take();
+        received = received + 1;
+    }
+    std::cout << total << " " << received << std::endl;
+    return 0;
+}

@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: use of dangling observer `view`
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+int main() {
+    Counter c = new Counter();
+    ref Counter view = c;
+    c = new Counter();           // the object view looks at is destroyed here
+    std::cout << view.n << std::endl;
+    return 0;
+}

@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: the root
+// get_item_from_pointer follows a pointer only while it starts with "/": any other non-empty text, such as "a", walks
+// zero steps and returns the root.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("{\"a\":1}");
+    Item found = getPointer(doc, "a");
+    if (found == doc) {
+        std::cout << "the root" << std::endl;
+    } else if (found == nullptr) {
+        std::cout << "nothing" << std::endl;
+    } else {
+        std::cout << "found " << printUnformatted(found) << std::endl;
+    }
+    return 0;
+}

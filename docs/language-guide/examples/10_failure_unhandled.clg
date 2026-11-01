@@ -1,0 +1,12 @@
+//@ expect: accept
+//@ run: main done
+class Job { public: Job() { } virtual void run() { } };
+
+int main() {
+    int n = 1;
+    spawn(closure Job [n] () {
+        throw "job failed";
+    });
+    std::cout << "main done" << std::endl;
+    return 0;
+}

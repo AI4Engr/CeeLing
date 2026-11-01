@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: 1001 1002
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+Callback adder(int base) {
+    return closure Callback [base] (int x) {     // base is copied into the closure
+        std::cout << (base + x);
+    };
+}
+
+int main() {
+    Callback add1000 = adder(1000);              // adder has returned; its local base is long gone
+    add1000.call(1);
+    std::cout << " ";
+    add1000.call(2);
+    std::cout << std::endl;
+    return 0;
+}

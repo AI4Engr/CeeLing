@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: use of dangling observer `o`
+#include "12_cross_lib.clh"
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    ref Node o = v[0];
+    growAll(v);                      // the vector is handed to the other file's function: o's owner is gone
+    std::cout << o.v << std::endl;
+    return 0;
+}

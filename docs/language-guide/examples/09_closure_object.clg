@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ run: 12
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+class Action {
+public:
+    Action() { }
+    virtual void run() { }
+};
+
+int main() {
+    Counter c = new Counter();
+    Action a = closure Action [c] () {
+        c.n = c.n + 1;                 // the closure holds the same Counter as main
+    };
+    a.run();
+    c.n = c.n + 10;
+    a.run();
+    std::cout << c.n << std::endl;
+    return 0;
+}

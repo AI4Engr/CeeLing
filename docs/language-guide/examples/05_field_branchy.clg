@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ run: 3
+//@ generated: this->data = bytes;
+// The rule gives up on any if/while/for/try in the body, even after the store: the store copies.
+class Holder {
+public:
+    std::vector<int> data;
+    Holder() { }
+    void take(std::vector<int> bytes, bool keep) {
+        data = bytes;
+        if (keep) {
+            data.push_back(3);
+        }
+    }
+};
+
+int main() {
+    Holder h = new Holder();
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    h.take(v, true);
+    std::cout << h.data.size() << std::endl;
+    return 0;
+}

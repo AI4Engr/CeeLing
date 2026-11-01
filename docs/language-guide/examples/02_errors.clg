@@ -1,0 +1,32 @@
+//@ expect: accept
+//@ run: 42
+//@ run: caught: empty input
+//@ run: caught: too big: 500
+//@ run: inner+outer
+//@ generated: throw std::string("empty input");
+int parse(string s, int limit) {
+    if (s.length() == 0) { throw "empty input"; }
+    int n = std::stoi(s);
+    if (n > limit) { throw "too big: " + s; }
+    return n;
+}
+
+void attempt(string s) {
+    try {
+        std::cout << parse(s, 100) << std::endl;
+    } catch (string e) {
+        std::cout << "caught: " << e << std::endl;
+    }
+}
+
+int main() {
+    attempt("42");
+    attempt("");
+    attempt("500");
+    try {
+        try { throw "inner"; } catch (string e) { throw e + "+outer"; }
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    return 0;
+}

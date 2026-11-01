@@ -1,0 +1,6 @@
+//@ expect: reject
+//@ error: exactly two hex digits
+int main() {
+    string s = "\x4";
+    return 0;
+}

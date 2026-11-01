@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: caller A: parse failed, error at 3
+//@ run: caller B: parse succeeded
+//@ run: caller A asks again: error at 3
+// The port has no saved error: the position is a field of the ParseResult each call returns, so caller B's
+// parse cannot touch what caller A holds.
+#include "cjson_item.clh"
+#include "cjson_parse.clh"
+int main() {
+    ParseResult a = parseWithOptsResult("[1,", false);
+    std::cout << "caller A: parse failed, error at " << a.errorPos << std::endl;
+    ParseResult b = parseWithOptsResult("[2]", false);
+    if (b.item != nullptr) {
+        std::cout << "caller B: parse succeeded" << std::endl;
+    }
+    std::cout << "caller A asks again: error at " << a.errorPos << std::endl;
+    return 0;
+}

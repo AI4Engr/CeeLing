@@ -1,0 +1,46 @@
+//@ expect: accept
+//@ run: Rex animal woof
+//@ run: Bit animal yip
+//@ run: ... woof yip
+//@ generated: virtual ~Animal() = default;
+class Animal {
+public:
+    string name;
+    Animal(string n) { name = n; }
+    string kind() { return "animal"; }                 // not virtual: the declared type decides
+    virtual string sound() { return "..."; }           // virtual: the real object decides
+};
+
+class Dog : public Animal {
+public:
+    Dog(string n) { name = n; }                         // inherited fields are assigned directly
+    string kind() { return "dog"; }
+    string sound() override { return "woof"; }
+};
+
+class Puppy : public Dog {
+public:
+    Puppy(string n) { name = n; }
+    string sound() override { return "yip"; }
+};
+
+void describe(Animal a) {                               // accepts any Animal, derived ones included
+    std::cout << a.name << " " << a.kind() << " " << a.sound() << std::endl;
+}
+
+int main() {
+    Animal pet = new Dog("Rex");                        // declared Animal, built as Dog
+    describe(pet);
+    Puppy p = new Puppy("Bit");
+    describe(p);
+    std::vector<Animal> zoo;
+    zoo.push_back(new Animal("Generic"));
+    zoo.push_back(new Dog("Rex"));
+    zoo.push_back(new Puppy("Bit"));
+    string line = "";
+    for (Animal z : zoo) {
+        line = line + z.sound() + " ";
+    }
+    std::cout << line.substr(0, line.length() - 1) << std::endl;
+    return 0;
+}

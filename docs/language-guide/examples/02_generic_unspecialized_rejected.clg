@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: call to unknown function/method `as`
+class Node {
+public:
+    string text;
+    Node(string t) { text = t; }
+    <T> T as() { throw "no conversion"; }
+    int as<int>() { return std::stoi(text); }
+};
+
+int main() {
+    Node n = new Node("42");
+    string s = n.as<string>();           // no as<string> was written
+    return 0;
+}

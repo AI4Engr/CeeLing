@@ -1,0 +1,11 @@
+//@ expect: accept
+//@ run-fail: invalid_argument
+int main() {
+    try {
+        int n = std::stoi("abc");          // the library throws its own exception type
+        std::cout << n << std::endl;
+    } catch (string e) {
+        std::cout << "caught " << e << std::endl;
+    }
+    return 0;
+}

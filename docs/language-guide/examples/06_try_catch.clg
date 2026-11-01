@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ error: use of dangling observer `n` (its owner `a` is gone)
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    ref Node n = a;
+    try {
+        a = new Node(2);            // may or may not have run when the exception arrives
+        throw "failed";
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    std::cout << n.v << std::endl;
+    return 0;
+}

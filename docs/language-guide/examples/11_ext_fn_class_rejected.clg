@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: ext_fn parameter `n` type `Node` is not supported
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+ext_fn int inspect(Node n);       // a class parameter would need a borrow summary nobody can write yet
+
+int main() {
+    return 0;
+}

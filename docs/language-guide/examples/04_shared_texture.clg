@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: rock rock
+//@ generated: std::shared_ptr<Texture> texture;
+class Texture {
+public:
+    string name;
+    Texture(string n) { name = n; }
+};
+
+class Sprite {
+public:
+    Texture texture;
+    int x;
+    Sprite(Texture t, int px) { texture = t; x = px; }
+};
+
+int main() {
+    Texture rock = new Texture("rock");
+    Sprite a = new Sprite(rock, 1);
+    Sprite b = new Sprite(rock, 2);
+    std::cout << a.texture.name << " " << b.texture.name << std::endl;
+    return 0;
+}

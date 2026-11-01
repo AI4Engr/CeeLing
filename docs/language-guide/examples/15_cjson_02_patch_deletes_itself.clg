@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: status 0 doc {"q":1}
+// ApplyPatches reads the next patch after the patch may have deleted it, when the target tree contains the
+// patch tree. The patch removes the very array that holds it.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("{\"p\":[{\"op\":\"remove\",\"path\":\"/p\"},{\"op\":\"add\",\"path\":\"/q\",\"value\":1}]}");
+    Item patches = getObjectItem(doc, "p");
+    int status = applyPatches(doc, patches);
+    std::cout << "status " << status << " doc " << printUnformatted(doc) << std::endl;
+    return 0;
+}

@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: no throw here
+//@ run: 1
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    ref Node n = a;
+    try {
+        std::cout << "no throw here" << std::endl;
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    std::cout << n.v << std::endl;
+    return 0;
+}

@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ error: use of moved-from value `a`
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) { }
+
+int main() {
+    Node a = new Node(1);
+    bool full = true;
+    if (full) {
+        sink(a);                           // moved on this path only
+    }
+    std::cout << a.v << std::endl;         // dead on any path is dead
+    return 0;
+}

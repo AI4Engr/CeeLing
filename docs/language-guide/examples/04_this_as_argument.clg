@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ run: 4
+//@ generated: class Node : public std::enable_shared_from_this<Node> {
+//@ generated: useSelf(shared_from_this());
+class Node {
+public:
+    int v;
+    Node(int val) { v = val; }
+    void useSelf(Node other) { v = v + other.v; }
+    void chainSelf() { useSelf(this); }
+};
+
+int main() {
+    Node n = new Node(2);
+    n.chainSelf();
+    std::cout << n.v << std::endl;
+    return 0;
+}

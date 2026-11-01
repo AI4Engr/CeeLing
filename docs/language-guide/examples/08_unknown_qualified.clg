@@ -1,0 +1,7 @@
+int main() {
+    string s = "42";
+    int x = std::notARealFunction(s);
+    return 0;
+}
+//@ expect: reject
+//@ error: call to unknown function/method

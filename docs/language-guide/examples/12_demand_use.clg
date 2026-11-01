@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ with: 12_demand_lib.clg
+//@ demands: yes
+//@ run: 10
+#include "12_demand_lib.clh"
+
+int total(Bag b) {
+    Item first = b.items[0];       // two copies of an element: the element needs more than one owner
+    Item again = b.items[0];
+    return first.get() + again.get();
+}
+
+int main() {
+    Bag b = new Bag();
+    b.add(new Item(5));
+    std::cout << total(b) << std::endl;
+    return 0;
+}

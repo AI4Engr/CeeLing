@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: error[semantic/inheritance-cycle]
+class A : public B {
+public:
+    A() { }
+};
+
+class B : public A {
+public:
+    B() { }
+};
+
+int main() {
+    return 0;
+}

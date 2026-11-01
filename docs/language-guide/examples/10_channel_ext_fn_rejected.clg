@@ -1,0 +1,7 @@
+//@ expect: reject
+//@ error: ext_fn parameter `c` type `Channel<int>` is not supported
+ext_fn int sendAll(Channel<int> c);
+
+int main() {
+    return 0;
+}

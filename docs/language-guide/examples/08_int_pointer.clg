@@ -1,0 +1,7 @@
+int main() {
+    int n = 5;
+    int* p = &n;
+    return 0;
+}
+//@ expect: reject
+//@ error: Syntax error

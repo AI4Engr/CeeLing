@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: /tmp 3 2 pen,ink
+//@ run: invalid_argument: `count` must be a whole number in range
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+
+struct Pt {
+public:
+    int x;
+    int y;
+    Pt(int a, int b) { x = a; y = b; }
+};
+
+struct Args {
+public:
+    string root;
+    int count;
+    Pt origin;
+    std::vector<string> tags;
+    Args(string r, int c, Pt o, std::vector<string> t) { root = r; count = c; origin = o; tags = t; }
+};
+
+int main() {
+    Args a = decodeArgs(parse("{\"root\":\"/tmp\",\"count\":3,\"origin\":{\"x\":1,\"y\":2},\"tags\":[\"pen\",\"ink\"],\"more\":true}"));
+    std::cout << a.root << " " << a.count << " " << a.origin.y << " " << a.tags[0] << "," << a.tags[1] << std::endl;
+    try {
+        Args b = decodeArgs(parse("{\"root\":\"/tmp\",\"count\":2.5,\"origin\":{\"x\":1,\"y\":2},\"tags\":[]}"));
+    } catch (string message) {
+        std::cout << message << std::endl;
+    }
+    return 0;
+}

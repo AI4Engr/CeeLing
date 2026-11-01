@@ -1,0 +1,14 @@
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+};
+
+int main() {
+    Item owner = new Item(9);
+    ref Item c = owner;
+    std::cout << c.v << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ run: 9

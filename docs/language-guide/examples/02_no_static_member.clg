@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: Syntax error
+class Counter {
+public:
+    static int total;
+    Counter() { }
+};
+
+int main() {
+    return 0;
+}

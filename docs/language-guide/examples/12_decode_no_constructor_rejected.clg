@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: has no constructor taking its fields
+#include "12_mini_item.clh"
+
+struct Thing {
+public:
+    string a;
+    int b;
+};                                    // no constructor taking (a, b)
+
+int main() {
+    Item doc = node(6, "");
+    Thing t = decodeThing(doc);
+    return 0;
+}

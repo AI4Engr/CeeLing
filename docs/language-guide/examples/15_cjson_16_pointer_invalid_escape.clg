@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: status 0 doc {"a~2b":1}
+// An invalid "~" escape (here "~2") stops decode_pointer_inplace quietly: it neither fails the patch nor decodes the
+// rest of the key.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("{}");
+    Item patches = parse("[{\"op\":\"add\",\"path\":\"/a~2b\",\"value\":1}]");
+    int status = applyPatches(doc, patches);
+    std::cout << "status " << status << " doc " << printUnformatted(doc) << std::endl;
+    return 0;
+}

@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: call to unknown function/method `peek`
+int main() {
+    Channel<int> c;
+    c.send(1);
+    int x = c.peek();
+    return 0;
+}

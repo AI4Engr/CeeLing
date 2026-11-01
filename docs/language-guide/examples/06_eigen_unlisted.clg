@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: call to unknown function/method `topRows`
+#include <Eigen/Dense>
+#include <iostream>
+
+int main() {
+    Eigen::MatrixXd a = Eigen::MatrixXd::Identity(3, 3);
+    Eigen::MatrixXd b = a.topRows(2);           // a view method nobody has written a fact for
+    std::cout << b << std::endl;
+    return 0;
+}

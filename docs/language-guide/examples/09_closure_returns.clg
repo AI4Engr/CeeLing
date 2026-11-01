@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ run: 21 42
+class Transform {
+public:
+    Transform() { }
+    virtual int apply(int x) { return x; }
+};
+
+int main() {
+    int factor = 3;
+    Transform times = closure Transform [factor] (int x) {
+        return x * factor;
+    };
+    Transform twice = closure Transform [] (int x) {      // no captures at all
+        return x * 2;
+    };
+    std::cout << times.apply(7) << " " << twice.apply(21) << std::endl;
+    return 0;
+}

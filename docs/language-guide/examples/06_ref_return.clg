@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: Syntax error
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+ref Node pick(Node a) {
+    return a;
+}
+
+int main() {
+    return 0;
+}

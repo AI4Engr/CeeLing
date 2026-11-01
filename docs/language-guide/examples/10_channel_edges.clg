@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ run: take on empty: channel empty
+//@ run: accepted 1024
+//@ run: send after close: 0
+//@ run: drained 1024 more: 0
+int main() {
+    Channel<int> c;
+    try {
+        int x = c.take();
+    } catch (string message) {
+        std::cout << "take on empty: " << message << std::endl;
+    }
+    int accepted = 0;
+    int i = 0;
+    while (i < 1100) {
+        if (c.send(i)) {
+            accepted = accepted + 1;
+        }
+        i = i + 1;
+    }
+    std::cout << "accepted " << accepted << std::endl;
+    c.close();
+    std::cout << "send after close: " << c.send(1) << std::endl;
+    int drained = 0;
+    while (c.wait(0)) {
+        int y = c.take();
+        drained = drained + 1;
+    }
+    std::cout << "drained " << drained << " more: " << c.wait(0) << std::endl;
+    return 0;
+}

@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: 9 done
+//@ generated: std::unique_ptr<Item> y = std::move(x);
+//@ generated: drop(std::move(y));
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+};
+
+void drop(Item gone) { }                    // takes the object and lets it go
+
+int main() {
+    Item x = new Item(9);
+    Item y = x;                             // x is never used again: ownership moves to y
+    std::cout << y.v << " ";
+    drop(y);                                // y is never used again: ownership moves into drop
+    std::cout << "done" << std::endl;
+    return 0;
+}

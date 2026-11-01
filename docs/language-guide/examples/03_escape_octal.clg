@@ -1,0 +1,6 @@
+//@ expect: reject
+//@ error: octal escape
+int main() {
+    string s = "a\012b";
+    return 0;
+}

@@ -1,0 +1,26 @@
+//@ expect: reject
+//@ error: closure captures `this`
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+class Widget {
+public:
+    int id;
+    Widget(int i) { id = i; }
+    void doIt() {
+        each(closure Callback [this] (int x) {
+            std::cout << x << std::endl;
+        });
+    }
+};
+
+int main() {
+    return 0;
+}

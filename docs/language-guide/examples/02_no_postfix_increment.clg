@@ -1,0 +1,7 @@
+//@ expect: reject
+//@ error: Syntax error
+int main() {
+    int x = 1;
+    x++;
+    return 0;
+}

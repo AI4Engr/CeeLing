@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: equal 1
+// Compare recurses twice per object level: {"a":{"a":...}} nested n deep costs 2^n steps.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+Item nest(int depth) {
+    Item o = createObject();
+    if (depth > 0) {
+        addItemToObject(o, "a", nest(depth - 1));
+    }
+    return o;
+}
+int main() {
+    Item a = nest(24);
+    Item b = nest(24);
+    std::cout << "equal " << compare(a, b, true) << std::endl;
+    return 0;
+}

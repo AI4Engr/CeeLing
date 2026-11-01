@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ run: 1
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    bool grow = false;
+    if (grow) {
+        v.push_back(new Node(2));
+    }
+    ref Node n = v[0];                      // take the observer after the last change to v
+    std::cout << n.v << std::endl;
+    return 0;
+}

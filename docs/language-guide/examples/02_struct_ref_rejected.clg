@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: `ref` on value type `Point`
+struct Point {
+public:
+    int x;
+    Point(int v) { x = v; }
+};
+
+int main() {
+    Point a = new Point(1);
+    ref Point r = a;           // there is no single object to look at: a is the value itself
+    return 0;
+}

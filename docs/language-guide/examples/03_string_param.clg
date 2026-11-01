@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ run: hello! hello 6
+string shout(string s) {
+    s.append("!");
+    return s;
+}
+
+int countChars(string s) {
+    return s.length();
+}
+
+int main() {
+    string text = "hello";
+    string loud = shout(text);
+    std::cout << loud << " " << text << " " << countChars(loud) << std::endl;
+    return 0;
+}

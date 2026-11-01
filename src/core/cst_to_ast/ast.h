@@ -77,8 +77,8 @@ public:
 // `this` -- a reserved keyword (grammar.js's `this_expression`), not an
 // ordinary Identifier whose name happens to be "this". A distinct node type
 // so every backend pass can dynamic_cast against it directly instead of
-// string-comparing an Identifier's name -- see docs/language-guide/18-
-// implementation-notes.md's Step 37 for the full migration this replaced.
+// string-comparing an Identifier's name -- see docs/internals/
+// implementation-log.md's Step 37 for the full migration this replaced.
 class ThisExpression : public Expression {
 public:
     std::string toString() const override { return "this"; }

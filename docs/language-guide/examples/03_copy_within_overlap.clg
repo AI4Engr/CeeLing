@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ run: 1 2 1 2 0 0 0
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.resize(7, 0);
+    v.copyWithin(2, 0, 5);     // the source and the destination overlap
+    int i = 0;
+    while (i < v.size()) {
+        if (i > 0) {
+            std::cout << " ";
+        }
+        std::cout << v[i];
+        i = i + 1;
+    }
+    std::cout << std::endl;
+    return 0;
+}

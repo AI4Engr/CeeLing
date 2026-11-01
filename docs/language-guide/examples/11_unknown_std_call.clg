@@ -1,0 +1,6 @@
+//@ expect: reject
+//@ error: call to unknown function/method `std::sqrt`
+int main() {
+    double r = std::sqrt(4.0);        // C++ allows it; CeeLing has no fact about it
+    return 0;
+}

@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ run: 7
+//@ generated: std::shared_ptr<Emitter> source;
+// No field is called prev, parent, back or owner, and the object is not assigned in both directions
+// in one function: the compiler sees no back link and the cycle Emitter -> Listener -> Emitter stays.
+class Emitter {
+public:
+    int count;
+    Listener first;
+    Emitter() { count = 7; first = nullptr; }
+    void attach(Listener l) {
+        l.source = this;
+        first = l;
+    }
+};
+
+class Listener {
+public:
+    Emitter source;
+    Listener() { source = nullptr; }
+    int sourceCount() { return source.count; }
+};
+
+Listener wire() {
+    Listener l = new Listener();
+    Emitter e = new Emitter();
+    e.attach(l);
+    return l;
+}
+
+int main() {
+    Listener l = wire();
+    std::cout << l.sourceCount() << std::endl;
+    return 0;
+}

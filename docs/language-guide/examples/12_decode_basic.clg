@@ -1,0 +1,39 @@
+//@ expect: accept
+//@ with: 12_mini_item.clg
+//@ run: /tmp 3 2 5 7 y 2
+//@ generated: Args decodeArgs(std::shared_ptr<Item> j)
+#include "12_mini_item.clh"
+
+struct Pt {
+public:
+    int x;
+    int y;
+    Pt(int a, int b) { x = a; y = b; }
+};
+
+struct Args {
+public:
+    string root;
+    int count;
+    Pt origin;
+    std::vector<int> nums;
+    Args(string r, int c, Pt o, std::vector<int> n) { root = r; count = c; origin = o; nums = n; }
+};
+
+int main() {
+    Item doc = node(6, "");
+    put(doc, str("root", "/tmp"));
+    put(doc, str("ignored", "a key Args does not have"));
+    put(doc, num("count", 3.0));
+    Item origin = node(6, "origin");
+    put(origin, num("x", 1.0));
+    put(origin, num("y", 2.0));
+    put(doc, origin);
+    Item nums = node(5, "nums");
+    put(nums, num("", 5.0));
+    put(nums, num("", 7.0));
+    put(doc, nums);
+    Args a = decodeArgs(doc);                 // never defined in this file: the compiler writes it
+    std::cout << a.root << " " << a.count << " " << a.origin.y << " " << a.nums[0] << " " << a.nums[1] << " y " << a.nums.size() << std::endl;
+    return 0;
+}

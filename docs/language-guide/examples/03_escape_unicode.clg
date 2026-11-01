@@ -1,0 +1,6 @@
+//@ expect: reject
+//@ error: Invalid escape sequence
+int main() {
+    string s = "caf\u00e9";
+    return 0;
+}

@@ -1,0 +1,11 @@
+//@ expect: accept
+//@ with: 12_counter_main.clg
+//@ run: 22
+class Counter {
+public:
+    int n;
+    Counter(int start) { n = start; }
+    void bump() { n = n + 1; }
+};
+
+int twice(int x) { return x * 2; }

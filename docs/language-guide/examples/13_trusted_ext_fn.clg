@@ -1,0 +1,8 @@
+//@ expect: accept
+//@ generated: int cheapHash(int seed);
+ext_fn int cheapHash(int seed);        // the body is C++ the compiler never sees
+
+int main() {
+    std::cout << cheapHash(5) << std::endl;
+    return 0;
+}

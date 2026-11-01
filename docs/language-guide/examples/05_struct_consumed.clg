@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: use of moved-from value `a`
+struct Point {
+public:
+    int v;
+    Point(int x) { v = x; }
+};
+
+void sink(Point n) { }
+
+int main() {
+    Point a = new Point(1);
+    sink(a);
+    std::cout << a.v << std::endl;
+    return 0;
+}

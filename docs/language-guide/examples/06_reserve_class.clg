@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: element type is not primitive
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.reserve(10);
+    return 0;
+}

@@ -1,0 +1,30 @@
+//@ expect: accept
+//@ run: 9 12 8
+//@ run: 0
+//@ generated: namespace Shapes {
+namespace Shapes {
+    enum Kind { Circle, Square };
+    class Shape {
+    public:
+        int kind;
+        int size;
+        Shape(int k, int s) { kind = k; size = s; }
+        int area() {
+            if (kind == Square) { return size * size; }      // inside the namespace, no prefix
+            return 3 * size * size;
+        }
+    };
+    int perimeterOfSquare(int s) { return 4 * s; }
+}
+
+namespace Util {
+    int twice(int x) { return x + x; }
+}
+
+int main() {
+    Shapes::Shape s = new Shapes::Shape(Shapes::Square, 3);
+    std::cout << s.area() << " " << Shapes::perimeterOfSquare(3) << " " << Util::twice(4) << std::endl;
+    Shapes::Kind k = Shapes::Circle;
+    std::cout << k << std::endl;
+    return 0;
+}

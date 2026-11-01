@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: Syntax error
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Holder {
+public:
+    ref Node r;
+};
+
+int main() {
+    return 0;
+}

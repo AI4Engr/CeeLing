@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: is not in the capture list
+class Job { public: Job() { } virtual void run() { } };
+
+int main() {
+    int hidden = 5;
+    int n = 1;
+    spawn(closure Job [n] () {
+        std::cout << hidden << std::endl;
+    });
+    return 0;
+}

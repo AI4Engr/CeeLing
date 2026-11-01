@@ -1,0 +1,66 @@
+//@ expect: accept
+//@ run: x=1 x=2 x=3 x=4
+//@ run: v=3 v=2 v=1
+class Counter {
+public:
+    int value;
+    Counter(int v) { value = v; }
+    int operator*() { return value; }                // *it: the current element
+    void operator++() { value = value + 1; }         // ++it: step forward
+    bool operator!=(Counter other) { return value != other.value; }
+};
+
+class Range {
+public:
+    int lo;
+    int hi;
+    Range(int a, int b) { lo = a; hi = b; }
+    Counter begin() { return new Counter(lo); }
+    Counter end() { return new Counter(hi); }
+};
+
+class Item {
+public:
+    int value;
+    Item next;
+    Item(int v) { value = v; }
+};
+
+class Cursor {
+public:
+    Item current;
+    Cursor(Item start) { current = start; }
+    Item operator*() { return current; }
+    void operator++() { current = current.next; }
+    bool operator!=(Cursor other) { return current != other.current; }
+};
+
+class Bag {
+public:
+    Item head;
+    Bag() { }
+    void push(int v) {
+        Item n = new Item(v);
+        n.next = head;
+        head = n;
+    }
+};
+
+Cursor begin(Bag b) { return new Cursor(b.head); }       // free begin/end work too
+Cursor end(Bag b) { return new Cursor(nullptr); }
+
+int main() {
+    Range r = new Range(1, 5);
+    string line = "";
+    for (int x : r) { line = line + "x=" + std::to_string(x) + " "; }
+    std::cout << line.substr(0, line.length() - 1) << std::endl;
+
+    Bag bag = new Bag();
+    bag.push(1);
+    bag.push(2);
+    bag.push(3);
+    string seen = "";
+    for (Item it : bag) { seen = seen + "v=" + std::to_string(it.value) + " "; }
+    std::cout << seen.substr(0, seen.length() - 1) << std::endl;
+    return 0;
+}

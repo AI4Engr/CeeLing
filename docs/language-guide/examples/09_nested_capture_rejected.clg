@@ -1,0 +1,21 @@
+//@ expect: reject
+//@ error: closure captures `total`, which is not in scope here
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (int x) {
+        each(closure Callback [total] (int y) {
+            std::cout << y << std::endl;
+        });
+    });
+    return 0;
+}

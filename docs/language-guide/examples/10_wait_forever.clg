@@ -1,0 +1,13 @@
+//@ expect: accept
+//@ note: compiled, not run: it would never finish
+class Job { public: Job() { } virtual void run() { } };
+
+int main() {
+    Channel<int> c;
+    int n = 1;
+    spawn(closure Job [n] () {
+        std::cout << n << std::endl;     // this job never sends anything
+    });
+    bool got = c.wait(-1);                // wait as long as it takes: forever, here
+    return 0;
+}

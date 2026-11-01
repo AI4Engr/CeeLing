@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ error: use of dangling observer `n`
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(1));
+    ref Node n = v[0];
+    bool grow = false;                      // the push_back below never runs
+    if (grow) {
+        v.push_back(new Node(2));
+    }
+    std::cout << n.v << std::endl;          // the checker does not evaluate conditions: it must assume the worse path
+    return 0;
+}

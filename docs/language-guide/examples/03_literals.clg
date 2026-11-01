@@ -1,0 +1,12 @@
+//@ expect: accept
+//@ run: 3 1 0.25 1e+30 0.0025 1 x
+int main() {
+    int count = 7;
+    float ratio = 0.25;
+    double big = 1.0e30;
+    double tiny = 2.5E-3;
+    bool ok = count > 3 && ratio < 1;
+    char letter = 'x';
+    std::cout << (count / 2) << " " << (count % 2) << " " << ratio << " " << big << " " << tiny << " " << ok << " " << letter << std::endl;
+    return 0;
+}

@@ -1,0 +1,10 @@
+//@ expect: accept
+//@ with: 11_ext_fn_sqrt_shim.cpp
+//@ run: 1.41421
+ext_fn double mySqrt(double x);       // a signature, no body: the body is C++ linked in
+
+int main() {
+    double y = mySqrt(2.0);
+    std::cout << y << std::endl;
+    return 0;
+}

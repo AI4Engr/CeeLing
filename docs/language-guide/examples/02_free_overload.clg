@@ -1,0 +1,10 @@
+//@ expect: accept
+//@ run: 1 2 s!
+int pick(int a) { return 1; }
+int pick(int a, int b) { return 2; }
+string pick(string s) { return s + "!"; }
+
+int main() {
+    std::cout << pick(5) << " " << pick(1, 2) << " " << pick("s") << std::endl;
+    return 0;
+}

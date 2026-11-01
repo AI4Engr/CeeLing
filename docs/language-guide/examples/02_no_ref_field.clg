@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ error: Syntax error
+class Box {
+public:
+    int v;
+    Box(int x) { v = x; }
+};
+
+class Holder {
+public:
+    ref Box target;
+    Holder() { }
+};
+
+int main() {
+    return 0;
+}

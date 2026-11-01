@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ run: 1
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) { }
+
+int main() {
+    Node a = new Node(1);
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        if (i == 2) {
+            sink(a);        // a is moved, but only on the path that leaves the loop
+            break;
+        }
+        if (i == 1) {
+            std::cout << a.v << std::endl;
+        }
+    }
+    return 0;
+}

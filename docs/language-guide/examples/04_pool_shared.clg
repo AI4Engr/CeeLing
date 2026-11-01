@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ flags: --pool-shared
+//@ run: 6
+//@ generated: std::allocate_shared<Node>(cling::PoolAllocator<Node>(), 1)
+// Compiled with --pool-shared: the same program, but every shared object comes from a per-thread free list.
+class Node {
+public:
+    Node next;
+    Node prev;
+    int v;
+    Node(int x) { v = x; next = nullptr; prev = nullptr; }
+};
+
+int main() {
+    Node first = new Node(1);
+    Node second = new Node(2);
+    first.next = second;
+    second.prev = first;
+    Node third = new Node(3);
+    second.next = third;
+    third.prev = second;
+    std::cout << first.v + second.v + third.v << std::endl;
+    return 0;
+}

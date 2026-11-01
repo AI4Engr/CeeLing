@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ run: 6
+//@ generated: class __closure_
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+int main() {
+    int base = 5;
+    Callback c = closure Callback [base] (int x) {
+        std::cout << (base + x) << std::endl;
+    };
+    c.call(1);
+    return 0;
+}

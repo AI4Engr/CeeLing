@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: 1 2
+//@ generated: std::shared_ptr<Node> both
+//@ generated: std::unique_ptr<Node> lone
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Pair {
+public:
+    Node left;
+    Pair(Node a) { left = a; }
+};
+
+int main() {
+    Node lone = new Node(1);
+    Node both = new Node(2);
+    Pair p = new Pair(both);
+    std::cout << lone.v << " " << both.v << std::endl;
+    return 0;
+}

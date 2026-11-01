@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: `ref` observers cannot be function parameters
+void bump(ref int n) {
+    n = n + 1;
+}
+
+int main() {
+    int a = 1;
+    bump(a);
+    return 0;
+}

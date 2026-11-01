@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: use of moved-from value `data`
+void consume(std::vector<int> v) { }
+
+int main() {
+    std::vector<int> data;
+    data.push_back(1);
+    consume(data);                     // the vector is handed over
+    std::cout << data.size() << std::endl;
+    return 0;
+}

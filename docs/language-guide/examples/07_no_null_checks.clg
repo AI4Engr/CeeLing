@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ flags: --no-null-checks
+//@ generated: std::cout << hit->value() << std::endl;
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+    int value() { return v; }
+};
+
+Node find(Node n, int key) {
+    if (n.v == key) { return n; }
+    return nullptr;
+}
+
+int main() {
+    Node a = new Node(5);
+    Node hit = find(a, 9);
+    std::cout << hit.value() << std::endl;
+    return 0;
+}

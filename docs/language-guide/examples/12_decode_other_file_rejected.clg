@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ error: but struct `Args` is declared in another file
+#include "12_decode_bare_types.clh"
+
+int main() {
+    Item doc = node(6, "");
+    put(doc, str("root", "/tmp"));
+    Args a = decodeArgs(doc);
+    return 0;
+}

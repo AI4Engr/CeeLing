@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ run: job 7 hello 6
+//@ generated: cling::spawn(
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    int n = 7;
+    string word = "hello";
+    std::vector<int> data;
+    data.push_back(1);
+    data.push_back(2);
+    data.push_back(3);
+    spawn(closure Job [n, word, data] () {
+        int total = 0;
+        for (int x : data) {
+            total = total + x;
+        }
+        std::cout << "job " << n << " " << word << " " << total << std::endl;
+    });
+    n = 8;                     // the job has its own copy of n
+    data.push_back(100);       // and of the vector
+    return 0;
+}

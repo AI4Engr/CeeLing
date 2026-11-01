@@ -1,0 +1,13 @@
+class Config {
+public:
+    int level;
+    Config(int l) { level = l; }
+};
+
+int main() {
+    Config c = new Config(1);
+    Config m = const_cast<Config>(c);
+    return 0;
+}
+//@ expect: reject
+//@ error: call to unknown function/method `const_cast`

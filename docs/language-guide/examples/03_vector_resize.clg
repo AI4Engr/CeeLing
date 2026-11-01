@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 1 2 3 1 2 3
+int main() {
+    std::vector<int> v;
+    v.reserve(8);              // capacity only: size() and the elements are unchanged
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    v.resize(6, 0);            // grows to 6, new slots hold 0
+    v.copyWithin(3, 0, 3);     // copy v[0..3) over v[3..6)
+    int i = 0;
+    while (i < v.size()) {
+        if (i > 0) {
+            std::cout << " ";
+        }
+        std::cout << v[i];
+        i = i + 1;
+    }
+    std::cout << std::endl;
+    return 0;
+}

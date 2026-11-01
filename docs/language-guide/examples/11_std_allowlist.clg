@@ -1,0 +1,16 @@
+//@ expect: accept
+//@ run: 3 hello 2 42 2.5 n=8
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    v.reserve(10);
+    string s = "hello world";
+    string head = s.substr(0, 5);
+    int at = s.find("llo");
+    int n = std::stoi("42");
+    double d = std::stod("2.5");
+    std::cout << v.size() << " " << head << " " << at << " " << n << " " << d << " n=" << std::to_string(v.size() + 5) << std::endl;
+    return 0;
+}

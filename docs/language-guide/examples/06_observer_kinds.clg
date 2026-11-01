@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: 1 2 1 2
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    std::vector<Node> v;
+    v.push_back(new Node(2));
+    ref Node later = nullptr;         // an observer that observes nothing yet
+    ref Node ofLocal = a;             // a local object
+    ref Node ofElement = v[0];        // an element of a container local
+    ref Node ofObserver = ofLocal;    // another observer: it inherits the owner
+    later = ofElement;                // an observer may be re-pointed
+    std::cout << ofLocal.v << " " << ofElement.v << " " << ofObserver.v << " " << later.v << std::endl;
+    return 0;
+}

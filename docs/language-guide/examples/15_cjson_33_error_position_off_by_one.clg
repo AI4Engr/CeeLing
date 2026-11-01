@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: {a:1}: error at 2
+//@ run: [1,x]: error at 3
+// parse_string moves past the opening quote before it checks that there is one, so the position it reports for a
+// malformed key or value is one byte too far.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+void show(string text) {
+    ParseResult r = parseWithOptsResult(text, false);
+    if (r.item != nullptr) {
+        std::cout << text << ": parsed" << std::endl;
+    } else {
+        std::cout << text << ": error at " << r.errorPos << std::endl;
+    }
+}
+
+int main() {
+    show("{a:1}");
+    show("[1,x]");
+    return 0;
+}

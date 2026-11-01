@@ -1,0 +1,49 @@
+//@ expect: reject
+//@ error: has a base class
+//@ error: is inherited by another class
+//@ error: has a virtual method
+//@ error: hands out `this`
+//@ error: is not a plain value
+class Job { public: Job() { } virtual void run() { } };
+
+class Inner { public: int a; Inner() { a = 0; } };
+class Outer {
+public:
+    Inner inner;                       // a class-typed field
+    Outer() { inner = new Inner(); }
+};
+
+class Base { public: int a; Base() { a = 0; } };
+class Derived : public Base {          // a base class; and Base is inherited
+public:
+    int b;
+    Derived() { b = 0; }
+};
+
+class Shape {                          // a virtual method
+public:
+    int a;
+    Shape() { a = 0; }
+    virtual int area() { return a; }
+};
+
+class Node {
+public:
+    int n;
+    Node() { n = 0; }
+    Node self() { return this; }       // hands out this
+};
+
+int main() {
+    Outer o = new Outer();
+    spawn(closure Job [o] () { std::cout << o.inner.a << std::endl; });
+    Derived d = new Derived();
+    spawn(closure Job [d] () { std::cout << d.b << std::endl; });
+    Base x = new Base();
+    spawn(closure Job [x] () { std::cout << x.a << std::endl; });
+    Shape s = new Shape();
+    spawn(closure Job [s] () { std::cout << s.area() << std::endl; });
+    Node a = new Node();
+    spawn(closure Job [a] () { a.n = 1; });
+    return 0;
+}

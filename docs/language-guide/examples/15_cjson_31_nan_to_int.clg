@@ -1,0 +1,12 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: nan->0 1e30->2147483647
+// CreateNumber/SetNumberHelper cast a NaN double to int (undefined behaviour in C).
+#include "cjson_item.clh"
+int main() {
+    double zero = 0.0;
+    Item n = createNumber(zero / zero);
+    Item big = createNumber(1.0e30);
+    std::cout << "nan->" << n.valueint << " 1e30->" << big.valueint << std::endl;
+    return 0;
+}

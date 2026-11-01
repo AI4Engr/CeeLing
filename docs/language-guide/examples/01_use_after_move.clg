@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: use of moved-from value `a`
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) { }
+
+int main() {
+    Node a = new Node(1);
+    sink(a);                 // passing an object hands it over
+    std::cout << a.v << std::endl;
+    return 0;
+}

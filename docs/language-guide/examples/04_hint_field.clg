@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ run: 2 1
+//@ generated: std::weak_ptr<Item> prev;
+//@ generated: void link(std::shared_ptr<Item> before, std::shared_ptr<Item> item) {
+class Item {
+public:
+    Item next;
+    //@ptr weak Item.prev
+    Item prev;
+    int v;
+    Item(int x) { v = x; }
+};
+
+void link(Item before, Item item) {
+    before.next = item;
+    item.prev = before;
+}
+
+int main() {
+    Item a = new Item(1);
+    Item b = new Item(2);
+    link(a, b);
+    std::cout << a.next.v << " " << b.prev.v << std::endl;
+    return 0;
+}

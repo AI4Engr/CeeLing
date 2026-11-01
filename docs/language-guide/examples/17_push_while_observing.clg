@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: use of dangling observer `best`
+class Score {
+public:
+    int points;
+    Score(int p) { points = p; }
+};
+
+int main() {
+    std::vector<Score> scores;
+    scores.push_back(new Score(10));
+    ref Score best = scores[0];        // an observer of an element
+    scores.push_back(new Score(20));   // the library table says push_back invalidates it
+    std::cout << best.points << std::endl;
+    return 0;
+}

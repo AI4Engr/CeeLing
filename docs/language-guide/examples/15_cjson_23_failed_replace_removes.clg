@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: status 7 doc {}
+// apply_patch detaches and deletes the target of a "replace" before it looks for the "value": a replace without one
+// fails with status 7 after it has already destroyed the member.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("{\"a\":1}");
+    Item patches = parse("[{\"op\":\"replace\",\"path\":\"/a\"}]");
+    int status = applyPatches(doc, patches);
+    std::cout << "status " << status << " doc " << printUnformatted(doc) << std::endl;
+    return 0;
+}

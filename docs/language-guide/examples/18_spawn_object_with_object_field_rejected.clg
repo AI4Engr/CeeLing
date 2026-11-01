@@ -1,0 +1,27 @@
+//@ expect: reject
+//@ error: is not a plain value
+class Inner {
+public:
+    int v;
+    Inner(int x) { v = x; }
+};
+
+class Outer {
+public:
+    Inner part;                        // an object-typed field: not a flat object
+    Outer(int x) { part = new Inner(x); }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Outer o = new Outer(1);
+    spawn(closure Job [o] () {
+        std::cout << o.part.v << std::endl;
+    });
+    return 0;
+}

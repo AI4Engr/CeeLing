@@ -1,0 +1,11 @@
+//@ expect: accept
+//@ generated: std::move(data)
+ext_fn int firstOf(ref std::vector<int> v);        // read-only borrow: lowers to const std::vector<int>&
+
+int main() {
+    std::vector<int> data;
+    data.push_back(4);
+    int x = firstOf(data);             // a local passed to a borrowing parameter
+    std::cout << x << std::endl;
+    return 0;
+}

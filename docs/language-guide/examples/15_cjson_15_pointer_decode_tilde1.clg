@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: status 0 doc {"a~/":1}
+// decode_pointer_inplace writes the "/" for "~1" through the wrong index and never copies ordinary characters after
+// an escape, so the key that the pointer "/a~1b" names is not "a/b".
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("{}");
+    Item patches = parse("[{\"op\":\"add\",\"path\":\"/a~1b\",\"value\":1}]");
+    int status = applyPatches(doc, patches);
+    std::cout << "status " << status << " doc " << printUnformatted(doc) << std::endl;
+    return 0;
+}

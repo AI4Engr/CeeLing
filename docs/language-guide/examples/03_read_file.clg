@@ -1,0 +1,10 @@
+//@ expect: accept
+//@ run: exists=0 chars=0 bytes=0
+int main() {
+    string path = "no_such_file.txt";
+    bool there = cling::fileExists(path);
+    string text = cling::readFileToString(path);
+    std::vector<int> bytes = cling::readFileToBytes(path);
+    std::cout << "exists=" << there << " chars=" << text.length() << " bytes=" << bytes.size() << std::endl;
+    return 0;
+}

@@ -1,0 +1,9 @@
+//@ expect: accept
+//@ run: n=43 half=1.250000 text=42
+int main() {
+    int n = std::stoi("42");
+    double d = std::stod("2.5");
+    string line = "n=" + std::to_string(n + 1) + " half=" + std::to_string(d / 2) + " text=" + std::to_string(n);
+    std::cout << line << std::endl;
+    return 0;
+}

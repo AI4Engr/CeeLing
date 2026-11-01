@@ -1,0 +1,12 @@
+class Box {
+public:
+    int count;
+    Box() { }
+};
+
+int main() {
+    Box b = new Box();
+    return 0;
+}
+//@ expect: accept
+//@ generated: int count;

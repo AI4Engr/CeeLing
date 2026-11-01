@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ with: 12_mini_item.clg
+//@ run: untitled 800 | Doc 640
+#include "12_mini_item.clh"
+
+struct Opts {
+public:
+    string title;
+    int width;
+    Opts() {                          // a constructor with no parameters: every field is optional
+        title = "untitled";
+        width = 800;
+    }
+};
+
+int main() {
+    Item empty = node(6, "");
+    Opts a = decodeOpts(empty);       // nothing present: the constructor's values stay
+    Item some = node(6, "");
+    put(some, str("title", "Doc"));
+    put(some, num("width", 640.0));
+    Opts b = decodeOpts(some);
+    std::cout << a.title << " " << a.width << " | " << b.title << " " << b.width << std::endl;
+    return 0;
+}

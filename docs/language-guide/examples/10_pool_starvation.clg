@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: waiting job: timed out
+//@ run: producer ran
+class Job { public: Job() { } virtual void run() { } };
+
+int main() {
+    cling::setWorkerLimit(1);              // one job at a time
+    Channel<int> c;
+    spawn(closure Job [c] () {             // runs first and holds the only slot
+        if (c.wait(200)) {
+            std::cout << "waiting job: got " << c.take() << std::endl;
+        } else {
+            std::cout << "waiting job: timed out" << std::endl;
+        }
+    });
+    spawn(closure Job [c] () {             // queued behind it: cannot start until the first job ends
+        c.send(1);
+        std::cout << "producer ran" << std::endl;
+    });
+    return 0;
+}

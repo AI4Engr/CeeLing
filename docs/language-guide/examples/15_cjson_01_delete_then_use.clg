@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ error: use of moved-from value `item`
+// In miniature, how the port's deleteItem is written: it takes the item and drops it. Using the variable
+// afterwards is the use-after-free that cJSON_Delete allows, and here it is a compile-time error.
+class Item {
+public:
+    int valueint;
+    Item(int v) { valueint = v; }
+};
+
+void deleteItem(Item item) {
+}
+
+int main() {
+    Item item = new Item(7);
+    deleteItem(item);
+    std::cout << item.valueint << std::endl;
+    return 0;
+}

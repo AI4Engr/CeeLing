@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ error: use of dangling observer `n` (its owner `inner` is gone)
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    ref Node n = nullptr;
+    if (1) {
+        Node inner = new Node(1);
+        n = inner;
+    }                       // death event: inner goes out of scope
+    std::cout << n.v << std::endl;
+    return 0;
+}

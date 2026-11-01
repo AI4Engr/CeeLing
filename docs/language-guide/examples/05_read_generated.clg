@@ -1,0 +1,40 @@
+//@ expect: accept
+//@ run: 2 3 1
+//@ generated: ->add(std::move(pen));
+//@ generated: int count(const std::vector<int>& values) {
+//@ generated: takeAll(std::move(v));
+class Item {
+public:
+    int price;
+    Item(int p) { price = p; }
+};
+
+class Cart {
+public:
+    std::vector<Item> items;
+    Cart() { }
+    void add(Item it) { items.push_back(it); }
+    int total() { return items.size(); }
+};
+
+int count(std::vector<int> values) {
+    return values.size();
+}
+
+void takeAll(std::vector<int> values) {
+    values.push_back(1);
+}
+
+int main() {
+    Cart cart = new Cart();
+    Item pen = new Item(2);
+    cart.add(pen);                 // pen is not used again: moved into the cart
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    std::cout << cart.total() + 1 << " " << count(v) << " ";   // read only: passed by const reference
+    takeAll(v);                    // changes its argument: v is handed over
+    std::cout << cart.total() << std::endl;
+    return 0;
+}

@@ -2,7 +2,7 @@
 
 > **Merged into the Language Guide.** This content now lives, in the
 > "problem → solution → proof" format, in
-> [Language Guide Ch. 10 — Smart-Pointer Inference](language-guide/10-smart-pointer-inference.md).
+> [Language Guide Ch. 4 — Ownership](language-guide/04-ownership.md).
 > This file is retained as the detailed algorithm reference.
 
 ## Overview

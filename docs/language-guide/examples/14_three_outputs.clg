@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ run: 2
+//@ generated: sink(std::move(lone));
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Pair {
+public:
+    Node left;
+    Pair(Node a) { left = a; }
+};
+
+void sink(Node n) { }
+
+int main() {
+    Node lone = new Node(1);
+    Node both = new Node(2);
+    Pair p = new Pair(both);        // both is now held twice: by this variable and by p.left
+    sink(lone);                     // lone's last use
+    std::cout << both.v << std::endl;
+    return 0;
+}

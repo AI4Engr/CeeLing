@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: break
+int main() {
+    int i = 0;
+    if (i == 0) {
+        break;
+    }
+    return 0;
+}

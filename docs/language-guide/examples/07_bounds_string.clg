@@ -1,0 +1,8 @@
+int main() {
+    string s = "abc";
+    int i = 3;
+    std::cout << s[i] << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ run-fail: cling: index out of bounds at line 4 (index 3, size 3)

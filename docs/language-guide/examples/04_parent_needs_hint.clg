@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ run: 1
+//@ generated: std::shared_ptr<Node> parent;
+// A tree with a parent link. `parent` is the only field of type Node (children is a vector), the
+// name rule needs two, and nothing is assigned in both directions in one function: the link stays shared.
+class Node {
+public:
+    int v;
+    std::vector<Node> children;
+    Node parent;
+    Node(int x) { v = x; parent = nullptr; }
+    void add(Node c) {
+        c.parent = this;
+        children.push_back(c);
+    }
+};
+
+int main() {
+    Node root = new Node(1);
+    root.add(new Node(2));
+    std::cout << root.children.size() << std::endl;
+    return 0;
+}

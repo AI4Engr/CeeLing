@@ -215,6 +215,12 @@ if(NOT EMSCRIPTEN)
         # Dangling / use-after-move across files: every safety fixture split in two gets the same verdict, plus hand-written cross-file cases
         add_test(NAME cling_cross_file_safety
             COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/separate/run_cross_file_test.sh $<TARGET_FILE:cling>)
+        # The language guide: every example compiles/runs as its tags say, every code block and message quoted in a chapter is what the compiler really produces
+        find_program(PYTHON_PROGRAM NAMES python3 python)
+        if(PYTHON_PROGRAM)
+            add_test(NAME cling_guide_examples
+                COMMAND ${PYTHON_PROGRAM} -I ${CMAKE_SOURCE_DIR}/docs/language-guide/examples/check.py check --cling $<TARGET_FILE:cling>)
+        endif()
     endif()
 
     # Custom target for running tests

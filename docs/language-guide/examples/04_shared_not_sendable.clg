@@ -1,0 +1,28 @@
+//@ expect: reject
+//@ error: has more than one owner
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+class Holder {
+public:
+    Counter held;
+    Holder(Counter c) { held = c; }
+};
+
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Counter mine = new Counter();
+    Holder holder = new Holder(mine);      // two owners now: mine and holder.held
+    spawn(closure Job [mine] () {
+        mine.n = mine.n + 1;
+    });
+    return 0;
+}

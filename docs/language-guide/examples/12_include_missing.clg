@@ -1,0 +1,7 @@
+//@ expect: reject
+//@ error: Could not resolve #include "nothere.clh"
+#include "nothere.clh"
+
+int main() {
+    return 0;
+}

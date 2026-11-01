@@ -1,0 +1,27 @@
+//@ expect: accept
+//@ run: 15
+//@ generated: std::vector<std::shared_ptr<Cmd>> items;
+class Cmd {
+public:
+    int n;
+    Cmd(int x) { n = x; }
+    int call(int x) { return n + x; }
+};
+
+class Table {
+public:
+    std::vector<Cmd> items;
+    Table() { }
+    void add(Cmd c) { items.push_back(c); }
+    int run(int i, int x) {
+        Cmd c = items[i];          // the vector keeps its element, so there are now two owners
+        return c.call(x);
+    }
+};
+
+int main() {
+    Table t = new Table();
+    t.add(new Cmd(10));
+    std::cout << t.run(0, 5) << std::endl;
+    return 0;
+}

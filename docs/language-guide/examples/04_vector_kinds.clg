@@ -1,0 +1,32 @@
+//@ expect: accept
+//@ run: 3
+//@ generated: std::vector<std::unique_ptr<Cmd>> plain;
+//@ generated: std::vector<std::shared_ptr<Cmd>> copied;
+class Cmd {
+public:
+    int n;
+    Cmd(int x) { n = x; }
+};
+
+class Registry {
+public:
+    std::vector<Cmd> plain;        // only ever pushed into: one owner per element
+    std::vector<Cmd> copied;       // an element is copied out below: two owners
+    Registry() { }
+    void addPlain(Cmd p) { plain.push_back(p); }
+    void addCopied(Cmd c) { copied.push_back(c); }
+    int firstCopied() {
+        Cmd c = copied[0];
+        return c.n;
+    }
+    int count() { return plain.size(); }
+};
+
+int main() {
+    Registry r = new Registry();
+    r.addPlain(new Cmd(1));
+    r.addPlain(new Cmd(2));
+    r.addCopied(new Cmd(1));
+    std::cout << r.count() + r.firstCopied() << std::endl;
+    return 0;
+}

@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ crash: the process dies (exit 3221225725)
+// Delete is iterative, but PRINTING a very deep tree still recurses once per level -- the same stack
+// exhaustion as C, only reached through a different function. 300000 levels built through the API.
+#include "cjson_item.clh"
+#include "cjson_print.clh"
+int main() {
+    Item top = createArray();
+    Item cur = top;
+    int i = 0;
+    while (i < 300000) {
+        Item next = createArray();
+        addItemToArray(cur, next);
+        cur = next;
+        i = i + 1;
+    }
+    string text = printUnformatted(top);
+    std::cout << text.length() << std::endl;
+    return 0;
+}

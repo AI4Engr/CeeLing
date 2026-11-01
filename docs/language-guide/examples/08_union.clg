@@ -1,0 +1,7 @@
+union Bits { int i; float f; };
+
+int main() {
+    return 0;
+}
+//@ expect: reject
+//@ error: raw `union` is forbidden

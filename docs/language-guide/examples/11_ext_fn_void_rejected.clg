@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: ext_fn return type `void` is not supported
+ext_fn void noteIt(int x);        // return something: an int status is the usual shape
+
+int main() {
+    noteIt(1);
+    return 0;
+}

@@ -1,0 +1,7 @@
+//@ expect: reject
+//@ error: Syntax error
+int main() {
+    std::vector<int> v = {16, 17, 18};     // container literals are on the roadmap, not in the language
+    std::cout << v.size() << std::endl;
+    return 0;
+}

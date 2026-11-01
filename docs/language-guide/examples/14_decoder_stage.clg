@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ error: generated struct decoders need cjson-cling
+struct Point {
+public:
+    int x;
+    int y;
+    Point(int a, int b) { x = a; y = b; }
+};
+
+int main() {
+    int item = 3;
+    Point p = decodePoint(item);    // the compiler writes decodePoint before any check runs, and needs cJSON's names for it
+    return 0;
+}

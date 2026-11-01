@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: Syntax error
+class Resource {
+public:
+    int id;
+    Resource(int i) { id = i; }
+    ~Resource() { }            // there is no destructor syntax
+};
+
+int main() {
+    return 0;
+}

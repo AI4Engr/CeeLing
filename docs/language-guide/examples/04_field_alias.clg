@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: 3 3
+//@ generated: std::shared_ptr<Part> part;
+//@ generated: std::shared_ptr<Part> p = cling::nn(w, "line 15")->part;
+class Part {
+public:
+    int size;
+    Part(int s) { size = s; }
+};
+
+class Widget {
+public:
+    Part part;
+    Widget(Part p) { part = p; }
+};
+
+int main() {
+    Widget w = new Widget(new Part(3));
+    Part p = w.part;                    // the field keeps its object, so p is a second owner
+    std::cout << p.size << " " << w.part.size << std::endl;
+    return 0;
+}

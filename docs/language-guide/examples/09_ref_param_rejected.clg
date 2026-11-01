@@ -1,0 +1,25 @@
+//@ expect: reject
+//@ error: observers cannot be function parameters
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (ref Node n) {
+        std::cout << total << std::endl;
+    });
+    return 0;
+}

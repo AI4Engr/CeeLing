@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run-fail: cling: null dereference at line 9
+//@ generated: cling::nn(this->child, "line 9")
+// Issue 5 in miniature, without the library: a parent that has no child, and a write through the child.
+class Item {
+public:
+    Item child;                        // the first child, or empty
+    Item next;
+    int v;
+    Item(int x) { v = x; }
+    void unlinkFirstChild() {
+        child.next = nullptr;          // C: parent->child->next = NULL, with no test that child exists
+    }
+};
+
+int main() {
+    Item parent = new Item(1);         // a parent with no children
+    parent.unlinkFirstChild();
+    std::cout << "not reached" << std::endl;
+    return 0;
+}

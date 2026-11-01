@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: call to unknown function/method `decodeThing`
+#include "12_mini_item.clh"
+
+class Thing {                                // a class, not a struct
+public:
+    string a;
+    Thing(string x) { a = x; }
+};
+
+int main() {
+    Item doc = node(6, "");
+    Thing t = decodeThing(doc);
+    return 0;
+}

@@ -1,0 +1,8 @@
+//@ expect: accept
+//@ run-fail: out_of_range
+int main() {
+    string s = "abc";
+    string t = s.substr(10);           // not a subscript, so no CeeLing check: libstdc++ throws std::out_of_range
+    std::cout << t << std::endl;
+    return 0;
+}

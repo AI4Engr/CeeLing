@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: same object: 1
+//@ run: equal fields, different objects: 0
+//@ run: not the same: 1
+//@ run: still usable: 1 1
+class Point {
+public:
+    int x;
+    Point(int v) { x = v; }
+};
+
+int main() {
+    Point a = new Point(1);
+    Point alias = a;
+    Point other = new Point(1);
+    Point otherAlias = other;
+    std::cout << "same object: " << (a == alias) << std::endl;
+    std::cout << "equal fields, different objects: " << (a == other) << std::endl;
+    std::cout << "not the same: " << (a != other) << std::endl;
+    std::cout << "still usable: " << a.x << " " << other.x << std::endl;
+    return 0;
+}

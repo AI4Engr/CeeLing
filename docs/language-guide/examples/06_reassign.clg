@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: use of dangling observer `n` (its owner `a` is gone)
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    ref Node n = a;
+    a = new Node(2);        // death event: the first object is released here
+    std::cout << n.v << std::endl;
+    return 0;
+}

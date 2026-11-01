@@ -1,0 +1,32 @@
+//@ expect: accept
+//@ run: Ann has Bo, aged 5
+//@ run: Bo's mother: Ann
+//@ generated: class Parent;
+//@ generated: class Child;
+class Parent {
+public:
+    string name;
+    Child kid;                         // Child is declared further down
+    Parent(string n) { name = n; }
+    void adopt(Child c) {
+        kid = c;
+        c.mother = this;
+    }
+};
+
+class Child {
+public:
+    string name;
+    int age;
+    Parent mother;
+    Child(string n, int a) { name = n; age = a; }
+    string describe() { return mother.name + " has " + name + ", aged " + std::to_string(age); }
+};
+
+int main() {
+    Parent p = new Parent("Ann");
+    p.adopt(new Child("Bo", 5));
+    std::cout << p.kid.describe() << std::endl;
+    std::cout << p.kid.name << "'s mother: " << p.kid.mother.name << std::endl;
+    return 0;
+}

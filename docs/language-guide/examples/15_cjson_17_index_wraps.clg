@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: found 10
+// decode_array_index_from_pointer adds up the digits in a size_t with no overflow check, so 2^64 wraps around to 0
+// and the pointer "/18446744073709551616" names the first element.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("[10,20,30]");
+    Item found = getPointer(doc, "/18446744073709551616");
+    if (found == nullptr) {
+        std::cout << "nothing" << std::endl;
+    } else {
+        std::cout << "found " << printUnformatted(found) << std::endl;
+    }
+    return 0;
+}

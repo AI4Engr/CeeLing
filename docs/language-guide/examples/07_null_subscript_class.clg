@@ -1,0 +1,22 @@
+class Table {
+public:
+    int base;
+    Table(int b) { base = b; }
+    int operator[](int i) { return base + i; }
+};
+
+Table nothing() {
+    return nullptr;
+}
+
+int main() {
+    Table ok = new Table(100);
+    int a = ok[5];
+    Table t = nothing();
+    int b = t[5];
+    std::cout << a + b << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ run-fail: cling: null dereference at line 16
+//@ generated: cling::nn(ok, "line 14")->operator[](5)

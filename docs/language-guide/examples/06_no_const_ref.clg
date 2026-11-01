@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: Syntax error
+string make() {
+    return "temporary";
+}
+
+int main() {
+    const std::string& s = make();      // C++ would extend the temporary's life here; CeeLing has no such local
+    std::cout << s << std::endl;
+    return 0;
+}

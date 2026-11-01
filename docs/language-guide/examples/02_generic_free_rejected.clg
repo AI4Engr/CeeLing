@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: Syntax error
+<T> T identity(T x) {
+    return x;
+}
+
+int main() {
+    return 0;
+}

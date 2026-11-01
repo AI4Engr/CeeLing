@@ -1,0 +1,33 @@
+//@ expect: accept
+//@ run: 1
+//@ generated: std::vector<std::shared_ptr<Cmd>> items;
+// Two containers called items in two classes: the compiler tells containers apart by name, so they get one element kind.
+class Cmd {
+public:
+    int n;
+    Cmd(int x) { n = x; }
+};
+
+class A {
+public:
+    std::vector<Cmd> items;
+    A() { }
+    void add(Cmd c) { items.push_back(c); }
+    int first() { Cmd c = items[0]; return c.n; }
+};
+
+class B {
+public:
+    std::vector<Cmd> items;       // B only pushes, but shares the decision of A.items
+    B() { }
+    void add(Cmd c) { items.push_back(c); }
+};
+
+int main() {
+    A a = new A();
+    a.add(new Cmd(1));
+    B b = new B();
+    b.add(new Cmd(2));
+    std::cout << a.first() << std::endl;
+    return 0;
+}

@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ error: escapes its function
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+Node makeDangling() {
+    Node n = new Node(1);
+    ref Node b = n;
+    return b;
+}
+
+int main() {
+    return 0;
+}

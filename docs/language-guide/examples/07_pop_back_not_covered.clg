@@ -1,0 +1,8 @@
+int main() {
+    std::vector<int> v;
+    v.pop_back();
+    std::cout << v.size() << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ generated: v.pop_back();

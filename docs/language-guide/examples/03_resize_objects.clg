@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: resize
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::vector<Node> nodes;
+    nodes.resize(3);
+    return 0;
+}

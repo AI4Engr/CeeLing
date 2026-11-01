@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ error: `this` passed as an argument from a constructor
+class Registry {
+public:
+    Registry() { }
+    void add(Registry r) { }
+};
+
+class Widget {
+public:
+    Widget() {
+        Registry reg = new Registry();
+        reg.add(this);                 // the object is not yet held by anyone
+    }
+};
+
+int main() {
+    Widget w = new Widget();
+    return 0;
+}

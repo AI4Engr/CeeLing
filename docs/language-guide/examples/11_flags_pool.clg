@@ -1,0 +1,16 @@
+//@ expect: accept
+//@ flags: --pool-shared
+//@ run: 1 1
+//@ generated: struct PoolAllocator
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+};
+
+int main() {
+    Item a = new Item(1);
+    Item b = a;                            // two owners: this object is shared
+    std::cout << a.v << " " << b.v << std::endl;
+    return 0;
+}

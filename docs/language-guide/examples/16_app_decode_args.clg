@@ -1,0 +1,40 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: untitled 800 0
+//@ run: Notes 1024 1
+//@ run: invalid_argument: `width` must be a number
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+
+struct OpenArgs {                      // the shape of one command's argument (app-cling's window.open has this shape)
+public:
+    string title;
+    int width;
+    bool debug;
+    OpenArgs() {                       // no parameters: every field is optional, and this is the default
+        title = "untitled";
+        width = 800;
+        debug = false;
+    }
+};
+
+string show(OpenArgs a) {
+    int d = 0;
+    if (a.debug) {
+        d = 1;
+    }
+    return a.title + " " + std::to_string(a.width) + " " + std::to_string(d);
+}
+
+int main() {
+    std::cout << show(decodeOpenArgs(parse("{}"))) << std::endl;
+    std::cout << show(decodeOpenArgs(parse("{\"title\":\"Notes\",\"width\":1024,\"debug\":true}"))) << std::endl;
+    try {
+        OpenArgs a = decodeOpenArgs(parse("{\"width\":\"wide\"}"));
+        std::cout << show(a) << std::endl;
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    return 0;
+}

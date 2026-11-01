@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: use of moved-from value `lone`
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) { }
+
+int main() {
+    Node lone = new Node(1);
+    sink(lone);                     // the same death event that justified std::move
+    std::cout << lone.v << std::endl;
+    return 0;
+}

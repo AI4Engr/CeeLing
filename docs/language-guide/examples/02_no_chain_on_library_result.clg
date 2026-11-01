@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: call to unknown function/method `size`
+int main() {
+    string s = "hello";
+    int n = s.substr(1, 3).size();
+    std::cout << n << std::endl;
+    return 0;
+}

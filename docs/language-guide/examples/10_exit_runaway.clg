@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ run: main done
+class Job { public: Job() { } virtual void run() { } };
+
+int main() {
+    cling::setExitGraceMs(300);
+    int never = 0;
+    spawn(closure Job [never] () {
+        while (true) {
+            std::cout << "";
+        }
+    });
+    std::cout << "main done" << std::endl;
+    return 0;
+}

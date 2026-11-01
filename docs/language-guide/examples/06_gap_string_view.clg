@@ -1,0 +1,11 @@
+//@ expect: accept
+//@ generated: std::string_view sv = make();
+string make() {
+    return "a string long enough to live on the heap, not in the string object";
+}
+
+int main() {
+    std::string_view sv = make();   // the string returned by make() is a temporary
+    std::cout << sv << std::endl;   // accepted -- and a read of freed memory
+    return 0;
+}

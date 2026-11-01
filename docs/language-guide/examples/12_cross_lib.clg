@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ with: 12_cross_accepted.clg
+//@ run: 1 7
+// A library file: no main.
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Holder {
+public:
+    std::vector<Node> items;
+    Holder() { }
+    void grow() { items.push_back(new Node(3)); }
+};
+
+class Job { public: Job() { } virtual void run() { } };
+
+void eat(Node n) { }
+void growAll(std::vector<Node> v) { }

@@ -1,0 +1,28 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: status 0 doc <nothing to print>
+// apply_patch/detach_path read a string node's value after checking only its type. Here a string node with
+// no text (type String, hasValuestring false) is the "path" of a patch. In the port the missing text reads as
+// the empty string, which is the path of the root: "remove the root".
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("{\"a\":1}");
+    Item path = new Item();
+    path.type = String;
+    Item patch = createObject();
+    addItemToObject(patch, "op", createString("remove"));
+    addItemToObject(patch, "path", path);
+    Item patches = createArray();
+    addItemToArray(patches, patch);
+    int status = applyPatches(doc, patches);
+    string text = printUnformatted(doc);
+    if (text.length() == 0) {
+        text = "<nothing to print>";
+    }
+    std::cout << "status " << status << " doc " << text << std::endl;
+    return 0;
+}

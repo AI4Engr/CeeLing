@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ error: has no owner to observe
+struct Point {
+public:
+    int v;
+    Point(int x) { v = x; }
+};
+
+int main() {
+    Point a = new Point(1);
+    ref Point b = a;
+    std::cout << b.v << std::endl;
+    return 0;
+}

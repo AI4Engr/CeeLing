@@ -1,0 +1,56 @@
+//@ expect: accept
+//@ run: add 5
+//@ run: hits 1
+//@ run: hits 2
+//@ run: nope: unknown command
+//@ generated: std::vector<std::shared_ptr<Command>> handlers;
+//@ generated: std::shared_ptr<Counter> hits;
+//@ generated: std::unique_ptr<Dispatcher> dispatcher = std::make_unique<Dispatcher>();
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+class Command {
+public:
+    Command() { }
+    virtual int call(int a, int b) { return 0; }
+};
+
+class Dispatcher {
+public:
+    std::vector<string> names;
+    std::vector<Command> handlers;
+    Dispatcher() { }
+    void add(string name, Command handler) {
+        names.push_back(name);
+        handlers.push_back(handler);
+    }
+    string handle(string name, int a, int b) {
+        int i = 0;
+        while (i < names.size()) {
+            if (names[i] == name) {
+                Command handler = handlers[i];
+                return name + " " + std::to_string(handler.call(a, b));
+            }
+            i = i + 1;
+        }
+        return name + ": unknown command";
+    }
+};
+
+int main() {
+    Dispatcher dispatcher = new Dispatcher();
+    Counter hits = new Counter();
+    dispatcher.add("add", closure Command [] (int a, int b) { return a + b; });
+    dispatcher.add("hits", closure Command [hits] (int a, int b) {
+        hits.n = hits.n + 1;
+        return hits.n;
+    });
+    std::cout << dispatcher.handle("add", 2, 3) << std::endl;
+    std::cout << dispatcher.handle("hits", 0, 0) << std::endl;
+    std::cout << dispatcher.handle("hits", 0, 0) << std::endl;
+    std::cout << dispatcher.handle("nope", 0, 0) << std::endl;
+    return 0;
+}

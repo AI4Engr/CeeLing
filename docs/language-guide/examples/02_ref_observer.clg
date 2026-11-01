@@ -1,0 +1,16 @@
+//@ expect: accept
+//@ run: 7 7
+//@ generated: Counter* view = (c).get();
+class Counter {
+public:
+    int n;
+    Counter() { n = 0; }
+};
+
+int main() {
+    Counter c = new Counter();
+    ref Counter view = c;        // view looks at c's object; it does not own it
+    view.n = 7;
+    std::cout << c.n << " " << view.n << std::endl;
+    return 0;
+}

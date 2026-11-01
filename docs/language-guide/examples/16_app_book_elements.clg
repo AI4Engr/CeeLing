@@ -1,0 +1,63 @@
+//@ expect: accept
+//@ run: window 7: Notes
+//@ run: 2 entries, last: closed 7
+//@ generated: std::vector<std::shared_ptr<Window>> items;
+//@ generated: std::vector<std::unique_ptr<Entry>> entries;
+//@ generated: std::shared_ptr<Window> WindowBook::get(
+class Window {
+public:
+    int handle;
+    string title;
+    Window(int h, string t) { handle = h; title = t; }
+};
+
+class WindowBook {                         // like app-cling's WindowBook: a vector of objects and a lookup
+public:
+    std::vector<Window> items;
+    WindowBook() { }
+    void add(Window w) { items.push_back(w); }
+    int indexOf(int handle) {
+        int i = 0;
+        while (i < items.size()) {
+            if (items[i].handle == handle) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+    Window get(int handle) {
+        int i = indexOf(handle);
+        if (i < 0) {
+            return nullptr;
+        }
+        Window w = items[i];               // the book and the caller now both hold this window
+        return w;
+    }
+};
+
+class Entry {
+public:
+    string text;
+    Entry(string t) { text = t; }
+};
+
+class Journal {                            // elements are only added and read in place: nobody else holds them
+public:
+    std::vector<Entry> entries;
+    Journal() { }
+    void note(string text) { entries.push_back(new Entry(text)); }
+    string last() { return entries[entries.size() - 1].text; }
+};
+
+int main() {
+    WindowBook book = new WindowBook();
+    book.add(new Window(7, "Notes"));
+    Window w = book.get(7);
+    std::cout << "window " << w.handle << ": " << w.title << std::endl;
+    Journal journal = new Journal();
+    journal.note("opened 7");
+    journal.note("closed 7");
+    std::cout << journal.entries.size() << " entries, last: " << journal.last() << std::endl;
+    return 0;
+}

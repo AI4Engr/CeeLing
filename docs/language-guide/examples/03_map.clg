@@ -1,0 +1,9 @@
+//@ expect: accept
+//@ run: 5 0
+int main() {
+    std::map<string, int> stock;
+    stock["apple"] = 3;
+    stock["apple"] = stock["apple"] + 2;
+    std::cout << stock["apple"] << " " << stock["pear"] << std::endl;
+    return 0;
+}

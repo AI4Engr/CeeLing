@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ with: 12_cross_lib.clg
+//@ run: 1 7
+#include "12_cross_lib.clh"
+
+int main() {
+    Node a = new Node(1);
+    ref Node o = a;                  // observes a local; grow() cannot touch it
+    Holder h = new Holder();
+    h.grow();
+    Node b = new Node(7);
+    eat(b);
+    std::cout << o.v << " " << 7 << std::endl;
+    return 0;
+}

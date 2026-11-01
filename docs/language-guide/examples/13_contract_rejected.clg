@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ error: use of dangling observer `first`
+class Item {
+public:
+    int id;
+    Item(int i) { id = i; }
+};
+
+int main() {
+    ref Item first = nullptr;
+    if (1) {
+        Item inner = new Item(7);
+        first = inner;                 // first observes inner
+    }                                  // inner's scope ends: the object is destroyed
+    std::cout << first.id << std::endl;
+    return 0;
+}

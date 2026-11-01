@@ -7,7 +7,7 @@
 //@ reason: so by-value is not merely suboptimal -- it does not compile at
 //@ reason: all). The streamed class-typed argument survives the call (its
 //@ reason: parameter is INFERRED read-only via the same mechanism Clone
-//@ reason: uses -- see ceeling/docs/language-guide/18-implementation-notes.md
+//@ reason: uses -- see docs/internals/implementation-log.md
 //@ reason: Step 30), proving the caller's value is still usable afterward.
 //@ run: Foo(5) still usable: 5
 //

@@ -1,0 +1,29 @@
+//@ expect: accept
+//@ run: 5 5
+//@ run: 9
+//@ generated: std::shared_ptr<Item> b = a;
+//@ generated: std::unique_ptr<Item> y = std::move(x);
+class Item {
+public:
+    int v;
+    Item(int x) { v = x; }
+};
+
+void twoHandles() {
+    Item a = new Item(1);
+    Item b = a;                 // a is used again below: two owners
+    b.v = 5;
+    std::cout << a.v << " " << b.v << std::endl;
+}
+
+void handOver() {
+    Item x = new Item(9);
+    Item y = x;                 // x is never used again: one owner, moved
+    std::cout << y.v << std::endl;
+}
+
+int main() {
+    twoHandles();
+    handOver();
+    return 0;
+}

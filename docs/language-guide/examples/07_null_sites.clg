@@ -1,0 +1,24 @@
+class Node {
+public:
+    int v;
+    Node next;
+    Node(int x) { v = x; }
+    int value() { return v; }
+};
+
+int main() {
+    std::vector<Node> row;
+    row.push_back(new Node(1));
+    Node first = row[0];
+    std::cout << first.v << std::endl;
+    std::cout << first.value() << std::endl;
+    std::cout << row[0].v << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ run: 1
+//@ run: 1
+//@ run: 1
+//@ generated: cling::nn(first, "line 13")->v
+//@ generated: cling::nn(first, "line 14")->value()
+//@ generated: cling::nn(cling::at(row, 0, 15), "line 15")->v

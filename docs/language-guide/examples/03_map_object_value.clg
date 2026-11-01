@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: is not supported
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    std::map<int, Node> m;
+    return 0;
+}

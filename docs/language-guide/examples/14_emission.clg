@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: 1
+//@ run: 1
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Box {
+public:
+    Node item;
+    std::vector<int> sizes;
+    Box(Node n) { item = n; sizes.push_back(1); }
+};
+
+int main() {
+    Box box = new Box(new Node(1));
+    std::cout << box.item.v << std::endl;
+    std::cout << box.sizes[0] << std::endl;
+    return 0;
+}

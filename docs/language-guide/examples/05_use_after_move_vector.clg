@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ error: use of moved-from value `names`
+void consume(std::vector<string> v) {
+    v.push_back("z");                      // changes its argument, so the argument is handed over
+    std::cout << v.size() << std::endl;
+}
+
+int main() {
+    std::vector<string> names;
+    names.push_back("a");
+    consume(names);
+    std::cout << names.size() << std::endl;
+    return 0;
+}

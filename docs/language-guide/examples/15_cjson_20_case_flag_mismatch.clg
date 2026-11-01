@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: status 0 doc {"b":2}
+// detach_path finds the parent with the case flag it was given, but removes the child with
+// cJSON_DetachItemFromObject, which ignores case: in the case-sensitive entry point "remove /a" removes the member "A".
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("{\"A\":1,\"b\":2}");
+    Item patches = parse("[{\"op\":\"remove\",\"path\":\"/a\"}]");
+    int status = applyPatchesCaseSensitive(doc, patches);
+    std::cout << "status " << status << " doc " << printUnformatted(doc) << std::endl;
+    return 0;
+}

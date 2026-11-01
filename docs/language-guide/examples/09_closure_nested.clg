@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 2
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int total = 100;
+    each(closure Callback [total] (int x) {
+        each(closure Callback [x] (int y) {     // x is the outer closure's parameter
+            std::cout << (x + y) << std::endl;
+        });
+    });
+    return 0;
+}

@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: field `grid` of struct `Board`
+#include "12_mini_item.clh"
+
+struct Board {
+public:
+    std::vector<std::vector<int>> grid;      // a vector of vectors
+    Board(std::vector<std::vector<int>> g) { grid = g; }
+};
+
+int main() {
+    Item doc = node(6, "");
+    Board b = decodeBoard(doc);
+    return 0;
+}

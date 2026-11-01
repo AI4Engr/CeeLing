@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: 2 1
+//@ generated: std::weak_ptr<Node> prev;
+//@ generated: std::unique_ptr<Node> next;
+//@ generated: std::shared_ptr<Node> a = std::make_shared<Node>(1);
+class Node {
+public:
+    int v;
+    Node next;
+    Node prev;
+    Node(int x) { v = x; next = nullptr; prev = nullptr; }
+};
+
+int main() {
+    Node a = new Node(1);
+    a.next = new Node(2);
+    a.next.prev = a;
+    std::cout << a.next.v << " " << a.next.prev.v << std::endl;
+    return 0;
+}

@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 1
+//@ run: 1
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+Node makeNode() {
+    Node n = new Node(1);
+    ref Node b = n;
+    std::cout << b.v << std::endl;
+    return n;               // the owner moves out; the observer ends with the function
+}
+
+int main() {
+    Node result = makeNode();
+    std::cout << result.v << std::endl;
+    return 0;
+}

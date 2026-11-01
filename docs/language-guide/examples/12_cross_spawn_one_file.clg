@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ run: 2
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+class Job { public: Job() { } virtual void run() { } };
+
+int main() {
+    Node a = new Node(1);
+    spawn(closure Job [a] () {
+        a.v = 2;
+        std::cout << a.v << std::endl;
+    });
+    return 0;
+}

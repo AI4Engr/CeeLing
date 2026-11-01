@@ -1,0 +1,13 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: self-assign 1 value hello world
+// SetValuestring compares pointers from unrelated allocations and refuses legitimate calls such as assigning
+// an item's own string back to itself.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+int main() {
+    Item s = createString("hello world");
+    bool ok = setValuestring(s, s.valuestring);
+    std::cout << "self-assign " << ok << " value " << s.valuestring << std::endl;
+    return 0;
+}

@@ -1,0 +1,13 @@
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node p = new Node(1);
+    int r = p.get();
+    return 0;
+}
+//@ expect: reject
+//@ error: '.get()' is forbidden on a CeeLing object

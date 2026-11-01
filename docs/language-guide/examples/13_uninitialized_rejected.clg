@@ -1,0 +1,7 @@
+//@ expect: reject
+//@ error: Syntax error
+int main() {
+    int total;                         // a local must be given a value where it is declared
+    std::cout << total << std::endl;
+    return 0;
+}

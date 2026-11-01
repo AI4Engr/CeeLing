@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: merge patch: none
+// generate_merge_patch calls itself through the public case-insensitive wrapper, so the case-sensitive entry point is
+// case-sensitive only at the top level. Two levels down, "a" and "A" count as the same key and the difference is lost.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item from = parse("{\"x\":{\"y\":{\"a\":1}}}");
+    Item to = parse("{\"x\":{\"y\":{\"A\":1}}}");
+    Item patch = generateMergePatchCaseSensitive(from, to);
+    if (patch == nullptr) {
+        std::cout << "merge patch: none" << std::endl;
+    } else {
+        std::cout << "merge patch " << printUnformatted(patch) << std::endl;
+    }
+    return 0;
+}

@@ -1,65 +1,49 @@
-# CeeLing Language Guide
+# The CeeLing Language Guide
 
-CeeLing is a **memory-safe, restricted subset of C++**. You write plain, Java-like
-code; the compiler infers ownership, picks smart-pointer types, inserts moves, and
-statically rejects code that could dangle — while still emitting ordinary C++ that
-reuses the C++ ecosystem (`std`, Eigen, ...).
+CeeLing is a small, Java-looking language that compiles to ordinary C++ and refuses to produce a program in which a reference can outlive its object. You write objects and method calls;
+the compiler picks the smart pointers, inserts the moves, rejects dangling references and use after move, and adds run-time checks for indexing and null. The output is plain C++ that
+works with the standard library, Eigen and any other C++ code.
 
-> **The safety contract:** *If a program compiles under CeeLing, it contains no
-> dangling references* (single-threaded). See [Chapter 2](02-safety-contract.md).
+This guide is a book. Read chapter 1 first: it shows, with real programs, what goes wrong in C++, why the C++ compiler cannot see it, and what CeeLing does instead. The other chapters
+take each feature in turn. In every chapter a feature is explained the same way: the C++ problem (with a C++ program that compiles and is wrong), why C++ does not stop it, what CeeLing
+does and why it can, and where it stops.
 
-## How to read this guide
+Every program in the guide is a file in [`examples/`](examples/README.md), compiled and run by a checker; the C++ twins sit beside them. Run any of them with `examples/run.sh NAME`.
 
-Every **problem chapter** (10–17) follows the same three-part structure:
+## Contents
 
-1. **The problem** — what goes wrong in raw C++ (with a broken example).
-2. **How CeeLing solves it** — the rule/mechanism.
-3. **Proof by example** — before (CeeLing) / after (generated C++), and what gets
-   rejected vs. accepted.
+**Start here**
 
-## Status
+1. [Why CeeLing](01-why-ceeling.md): the promise, nine bugs C++ accepts, what you write, what it costs.
+2. [The language](02-language.md): classes, structs, inheritance, enums, namespaces, operators, errors, and what is not there.
+3. [Values, text and containers](03-values-and-containers.md): numbers, strings, vectors, maps, the library allow-list.
 
-Most safety features here are still the **design target**, but a real slice works
-today: using a moved-away or dangling `ref` observer is caught at compile time, a
-new code generator is producing correct C++ for cases the original one couldn't, and
-closures (by-value capture, `[&]` unrepresentable by construction — see Chapter 9's
-Phase 3.5) let a value carry both code and data for the first time. See
-[Chapter 9](09-status-and-roadmap.md) for the honest breakdown and
-[Chapter 18](18-implementation-notes.md) for how it works.
+**The guarantees**
 
-## Part I — Foundations
+4. [Ownership](04-ownership.md): the compiler chooses `unique_ptr`, `shared_ptr` or `weak_ptr`.
+5. [Moves](05-moves.md): hand-over by default, `std::move` at the last use, use after move.
+6. [Dangling references](06-dangling-references.md): `ref` observers, death events, containers, views.
+7. [Run-time checks](07-run-time-checks.md): bounds and null.
+8. [Sealed escape hatches](08-sealed-escape-hatches.md): what the language removes and why.
+9. [Closures](09-closures.md): capture by value only.
+10. [Threads](10-threads.md): `spawn` and `Channel`, and exactly what they promise.
 
-1. [Philosophy — A Safe Subset of C++](01-philosophy.md)
-2. [The Safety Contract](02-safety-contract.md)
-3. [The Java-like Default Experience](03-java-like-experience.md)
-4. [Memory-Safety Threat Model](04-threat-model.md)
-5. [How the Analysis Works (provenance + lifetime)](05-how-analysis-works.md)
+**Working with the C++ world**
 
-## Part II — The Problems, One Per Chapter
+11. [Talking to C++](11-talking-to-cpp.md): `ext_fn`, the trust boundary, the generated C++ as a library.
+12. [Programs of many files](12-many-files.md): `#include "x.clh"`, separate compilation, JSON decoders.
 
-Each chapter: *the C++ problem → how CeeLing solves it → proof by example.*
+**Evidence and context**
 
-10. [Smart-Pointer Inference](10-smart-pointer-inference.md) — who owns what
-11. [Dangling References](11-dangling-references.md) — the core guarantee
-12. [Use-After-Move](12-use-after-move.md) — the cost of auto-`std::move`
-13. [Out-of-Bounds Access](13-bounds-checking.md) — runtime backstop
-14. [Null Dereference](14-null-safety.md) — empty smart pointers
-15. [Iterator Invalidation](15-iterator-invalidation.md) — the C++-specific trap
-16. [Dangling Views: `string_view`, `span`, Eigen](16-views-and-eigen.md)
-17. [Sealed Escape Hatches](17-escape-hatches.md) — `.get()`, casts, raw `new`
-18. [Implementation Notes](18-implementation-notes.md) — what is actually built, and how
-19. [Case Study: cJSON's 33 Published Vulnerabilities](19-case-study-cjson.md) — the claims above, tested on a real library
-20. [Threads — Only Values Cross](20-threads.md) — the one carve-out from the single-thread contract, and its limits
+13. [The contract and the threat model](13-contract-and-threats.md): what is promised, row by row, and what is open.
+14. [How the analysis works](14-how-it-works.md): summaries, provenance, death events.
+15. [Case study: cJSON](15-case-study-cjson.md): all 33 published vulnerabilities, in C and in CeeLing.
+16. [Case study: app-cling](16-case-study-app-cling.md): a real program, and the pointers the compiler inferred for it.
+17. [CeeLing, Rust, Circle and profiles](17-comparisons.md): an honest comparison.
+18. [Status and roadmap](18-status.md).
 
-## Part III — Context
+## Keeping the guide true
 
-6. [Why Not Transpile to Rust](06-why-not-rust.md)
-7. [Honest Comparison with Rust](07-vs-rust.md)
-8. [Landscape: Rust, Circle, and C++ Profiles](08-landscape.md)
-9. [Status & Roadmap](09-status-and-roadmap.md)
-
-## Related docs
-
-- [Smart Pointer Analysis (two-pass algorithm)](../SMART_POINTER_ANALYSIS.md) — merged into Ch. 10
-- [Smart Pointer Rules](../smart_pointer_rules.md)
-- [Before/After Examples](../before_after_examples.md) — merged into Ch. 10
+`python3 -I docs/language-guide/examples/check.py check` runs every example, compares every code block, compiler message and program output in the chapters with what the compiler really
+does, and fails if an example is not shown by any chapter. It is part of the test suite (`cling_guide_examples`). How to write a chapter: [CONTRIBUTING.md](CONTRIBUTING.md). The
+development history of the compiler, which the guide leaves out, is in [`../internals/`](../internals/).

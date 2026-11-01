@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: use of dangling observer `o` (its owner `a` is gone)
+#include "14_xf_lib.clh"
+
+int main() {
+    Node a = new Node(1);
+    ref Node o = a;
+    eat(a);                         // eat is defined in the other file and takes ownership
+    std::cout << o.v << std::endl;
+    return 0;
+}

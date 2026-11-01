@@ -1,0 +1,12 @@
+int pick(bool first) {
+    int n;
+    if (first) { n = 1; }
+    return n;
+}
+
+int main() {
+    std::cout << pick(false) << std::endl;
+    return 0;
+}
+//@ expect: reject
+//@ error: Syntax error

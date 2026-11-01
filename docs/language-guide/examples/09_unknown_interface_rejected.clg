@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ error: closure names interface `NoSuchInterface`
+class Callback {
+public:
+    Callback() { }
+    virtual void call(int x) { }
+};
+
+void each(Callback cb) {
+    cb.call(1);
+}
+
+int main() {
+    int total = 100;
+    each(closure NoSuchInterface [total] (int x) {
+        std::cout << x << std::endl;
+    });
+    return 0;
+}

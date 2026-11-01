@@ -1,0 +1,12 @@
+//@ expect: accept
+class Counter {
+public:
+    int n;                             // never given a value
+    Counter() { }
+};
+
+int main() {
+    Counter c = new Counter();
+    std::cout << c.n << std::endl;     // accepted today: prints whatever the memory held
+    return 0;
+}

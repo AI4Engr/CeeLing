@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ flags: --legacy-cpp
+//@ generated: - Node.prev -> std::weak_ptr because back-reference heuristic matched a backward edge
+class Node {
+public:
+    int v;
+    Node next;
+    Node prev;
+    Node(int x) { v = x; next = nullptr; prev = nullptr; }
+};
+
+int main() {
+    Node a = new Node(1);
+    return 0;
+}

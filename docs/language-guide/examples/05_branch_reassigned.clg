@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: 2
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+void sink(Node n) { }
+
+int main() {
+    Node a = new Node(1);
+    bool full = true;
+    if (full) {
+        sink(a);
+        a = new Node(2);                   // every path that moved a gives it a new value
+    }
+    std::cout << a.v << std::endl;
+    return 0;
+}

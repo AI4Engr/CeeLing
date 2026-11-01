@@ -1,0 +1,33 @@
+//@ expect: accept
+//@ run: job 3 2 7
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+struct Inner {
+public:
+    int a;
+    Inner(int x) { a = x; }
+};
+
+struct Packet {
+public:
+    Inner head;
+    std::vector<Inner> items;
+    Packet(int x) {
+        head = new Inner(x);
+        items.push_back(new Inner(2));
+        items.push_back(new Inner(7));
+    }
+};
+
+int main() {
+    Packet p = new Packet(3);
+    spawn(closure Job [p] () {
+        std::cout << "job " << p.head.a << " " << p.items[0].a << " " << p.items[1].a << std::endl;
+    });
+    p.head.a = 99;             // changes the creator's copy only
+    return 0;
+}

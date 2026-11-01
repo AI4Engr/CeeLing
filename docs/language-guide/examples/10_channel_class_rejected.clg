@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: `Channel<Thing>` would carry `Thing`, which is not a plain value
+class Thing {
+public:
+    int n;
+    Thing(int k) { n = k; }
+};
+
+int main() {
+    Channel<Thing> c;
+    return 0;
+}

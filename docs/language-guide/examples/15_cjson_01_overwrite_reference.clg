@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: status 0 reference 9 original [1,2,3]
+// overwrite_item frees a node's child/key/string without honouring the reference flags. Here a reference
+// node shares its children with the original; a root-level replace on the reference must not hurt the original.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item original = parse("[1,2,3]");
+    Item ref = createArrayReference(original.child);
+    Item patches = parse("[{\"op\":\"replace\",\"path\":\"\",\"value\":9}]");
+    int status = applyPatches(ref, patches);
+    std::cout << "status " << status << " reference " << printUnformatted(ref) << " original " << printUnformatted(original) << std::endl;
+    return 0;
+}

@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: raw `delete` is forbidden
+class Order {
+public:
+    int id;
+    Order(int i) { id = i; }
+};
+
+int main() {
+    Order order = new Order(5);
+    delete order;                      // row 15: there is no manual delete
+    return 0;
+}

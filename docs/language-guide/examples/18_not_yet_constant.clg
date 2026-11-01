@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: Syntax error
+const int LIMIT = 65536;                   // named constants are on the roadmap, not in the language
+
+int main() {
+    std::cout << LIMIT << std::endl;
+    return 0;
+}

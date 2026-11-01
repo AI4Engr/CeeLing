@@ -1,0 +1,11 @@
+//@ expect: accept
+//@ with: 11_clamp_shim.h
+//@ run: 10 0 5
+//@ generated: #include "11_clamp_shim.h"
+#include "11_clamp_shim.h"
+ext_fn int clampTo(int x, int lo, int hi);
+
+int main() {
+    std::cout << clampTo(99, 0, 10) << " " << clampTo(-4, 0, 10) << " " << clampTo(5, 0, 10) << std::endl;
+    return 0;
+}

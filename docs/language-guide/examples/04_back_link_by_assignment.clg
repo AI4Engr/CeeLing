@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 1
+//@ generated: std::shared_ptr<Node> down;
+//@ generated: std::weak_ptr<Node> up;
+// The names say nothing. Two variables are made to point at each other; the link written second is the back link.
+class Node {
+public:
+    int v;
+    Node down;
+    Node up;
+    Node(int x) { v = x; down = nullptr; up = nullptr; }
+};
+
+int main() {
+    Node a = new Node(1);
+    Node b = new Node(2);
+    a.down = b;
+    b.up = a;
+    std::cout << a.down.up.v << std::endl;
+    return 0;
+}

@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ error: `spawn` inside a `spawn` body
+class Job { public: Job() { } virtual void run() { } };
+
+int main() {
+    int n = 1;
+    spawn(closure Job [n] () {
+        int m = n;
+        spawn(closure Job [m] () {
+            std::cout << m << std::endl;
+        });
+    });
+    return 0;
+}

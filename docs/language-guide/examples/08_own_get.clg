@@ -1,0 +1,15 @@
+class Box {
+public:
+    int v;
+    Box(int x) { v = x; }
+    int get() { return v; }
+};
+
+int main() {
+    Box b = new Box(7);
+    int r = b.get();
+    std::cout << r << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ run: 7

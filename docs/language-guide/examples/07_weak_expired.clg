@@ -1,0 +1,26 @@
+class Node {
+public:
+    int v;
+    Node next;
+    Node prev;
+    Node(int x) { v = x; }
+};
+
+Node tailOf() {
+    Node first = new Node(1);
+    first.next = new Node(2);
+    first.next.prev = first;
+    return first.next;
+}
+
+int main() {
+    Node tail = tailOf();
+    int own = tail.v;
+    int before = tail.prev.v;
+    std::cout << own << " " << before << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ run-fail: cling: null dereference at line 19
+//@ generated: std::weak_ptr<Node> prev;
+//@ generated: cling::nn(cling::nn(tail, "line 19")->prev.lock(), "line 19")->v

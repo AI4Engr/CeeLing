@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ run: 15
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+int main() {
+    Channel<int> results;
+    int base = 5;
+    spawn(closure Job [results, base] () {      // the Channel handle and a copy of base cross; nothing else can
+        results.send(base + 10);
+    });
+    if (results.wait(5000)) {
+        std::cout << results.take() << std::endl;
+    }
+    return 0;
+}

@@ -1,0 +1,19 @@
+int main() {
+    std::vector<int> v;
+    v.push_back(10);
+    v.push_back(20);
+    v[1] = v[0] + v[1];
+    string s = "abc";
+    std::map<string, int> m;
+    m["k"] = 5;
+    m["k"] = m["k"] + 1;
+    std::vector<std::vector<int>> rows;
+    std::vector<int> r;
+    r.push_back(4);
+    rows.push_back(r);
+    rows[0][0] = rows[0][0] + 1;
+    std::cout << v[1] << " " << s[2] << " " << m["k"] << " " << rows[0][0] << std::endl;
+    return 0;
+}
+//@ expect: accept
+//@ run: 30 c 6 5

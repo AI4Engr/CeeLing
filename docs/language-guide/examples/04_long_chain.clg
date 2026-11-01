@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: built 999999
+//@ generated: Item::~Item() {
+class Item {
+public:
+    Item next;
+    int v;
+    Item(int x) { v = x; }
+};
+
+int main() {
+    Item head = new Item(0);
+    int i = 1;
+    while (i < 1000000) {
+        Item n = new Item(i);
+        n.next = head;
+        head = n;
+        i = i + 1;
+    }
+    std::cout << "built " << head.v << std::endl;
+    return 0;
+}

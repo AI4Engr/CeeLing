@@ -1,0 +1,10 @@
+int main() {
+    try {
+        throw mysteryUnknownMessage(7);
+    } catch (string e) {
+        std::cout << e << std::endl;
+    }
+    return 0;
+}
+//@ expect: reject
+//@ error: call to unknown function/method `mysteryUnknownMessage`

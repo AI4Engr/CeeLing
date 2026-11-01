@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ run: 6 3
+int sumAll(std::vector<int> data) {
+    int total = 0;
+    for (int x : data) {
+        total = total + x;
+    }
+    return total;
+}
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    int s = sumAll(v);
+    std::cout << s << " " << v.size() << std::endl;    // v is still here
+    return 0;
+}

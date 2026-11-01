@@ -1,0 +1,41 @@
+//@ expect: accept
+//@ run: 3 7 2
+//@ generated: std::weak_ptr<Tree> parent;
+class Tree {
+public:
+    int v;
+    Tree left;
+    Tree right;
+    Tree parent;
+    Tree(int x) { v = x; }
+    void attachLeft(Tree child) {
+        left = child;
+        child.parent = this;
+    }
+};
+
+class Book {
+public:
+    int pages;
+    Book(int p) { pages = p; }
+};
+
+class Shelf {
+public:
+    Book favourite;
+    Book latest;
+    Shelf() { }
+    void add(Book b) {
+        favourite = b;
+        latest = b;
+    }
+};
+
+int main() {
+    Tree root = new Tree(3);
+    root.attachLeft(new Tree(2));
+    Shelf s = new Shelf();
+    s.add(new Book(7));
+    std::cout << root.v << " " << s.favourite.pages << " " << root.left.v << std::endl;
+    return 0;
+}

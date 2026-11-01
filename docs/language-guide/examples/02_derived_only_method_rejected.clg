@@ -1,0 +1,20 @@
+//@ expect: reject
+//@ error: call to unknown function/method `fetch`
+class Animal {
+public:
+    Animal() { }
+    virtual string sound() { return "..."; }
+};
+
+class Dog : public Animal {
+public:
+    Dog() { }
+    string sound() override { return "woof"; }
+    string fetch() { return "ball"; }
+};
+
+int main() {
+    Animal a = new Dog();
+    std::cout << a.fetch() << std::endl;       // an Animal handle offers Animal's methods only; there is no downcast
+    return 0;
+}

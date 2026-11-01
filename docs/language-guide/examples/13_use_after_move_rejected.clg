@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: use of moved-from value `order`
+class Order {
+public:
+    int id;
+    Order(int i) { id = i; }
+};
+
+void ship(Order o) { }
+
+int main() {
+    Order order = new Order(5);
+    ship(order);                       // row 10: passing the object hands it over
+    std::cout << order.id << std::endl;
+    return 0;
+}

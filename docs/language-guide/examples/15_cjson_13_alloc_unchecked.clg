@@ -1,0 +1,17 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: pointer /a/1
+// Several allocation sites in cJSON_Utils write to the result of cJSON_malloc without checking for NULL.
+// There is no malloc in the port: strings are std::string, nodes come from make_shared. (An allocation
+// failure throws std::bad_alloc, which ends the program; it is never an unchecked NULL write.) The
+// function the article names is exercised here.
+#include "cjson_item.clh"
+#include "cjson_parse.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("{\"a\":[1,2]}");
+    Item target = getPointer(doc, "/a/1");
+    PointerResult p = findPointerFromObjectTo(doc, target);
+    std::cout << "pointer " << p.text << std::endl;
+    return 0;
+}

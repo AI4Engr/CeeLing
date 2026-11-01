@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ run: handler saw: first failed (req 5)
+class Job { public: Job() { } virtual void run() { } };
+
+class Failure {
+public:
+    Failure() { }
+    virtual void fail(string message) { }
+};
+
+int main() {
+    int request = 5;
+    onJobFailure(closure Failure [request] (string message) {
+        std::cout << "handler saw: " << message << " (req " << request << ")" << std::endl;
+    });
+    spawn(closure Job [request] () {
+        throw "first failed";
+    });
+    cling::clearJobFailure();
+    spawn(closure Job [request] () {
+        throw "second failed";       // no handler now: the message goes to stderr
+    });
+    return 0;
+}

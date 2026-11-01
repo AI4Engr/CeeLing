@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ run: 2 2
+//@ generated: this->data = bytes;
+class Holder {
+public:
+    std::vector<int> data;
+    Holder() { }
+    int take(std::vector<int> bytes) {
+        data = bytes;
+        return bytes.size();               // bytes is used after the store: the store must copy
+    }
+};
+
+int main() {
+    Holder h = new Holder();
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    int n = h.take(v);
+    std::cout << n << " " << h.data.size() << std::endl;
+    return 0;
+}

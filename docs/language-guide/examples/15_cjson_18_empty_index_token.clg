@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: found 10
+// An empty token after the last "/" is accepted as the index 0: the pointer "/a/" names the first element of "a".
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "cjson_utilities.clh"
+int main() {
+    Item doc = parse("{\"a\":[10,20]}");
+    Item found = getPointer(doc, "/a/");
+    if (found == nullptr) {
+        std::cout << "nothing" << std::endl;
+    } else {
+        std::cout << "found " << printUnformatted(found) << std::endl;
+    }
+    return 0;
+}

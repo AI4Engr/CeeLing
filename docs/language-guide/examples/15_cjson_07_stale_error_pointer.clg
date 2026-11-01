@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ project: cjson-cling
+//@ run: failed at 3; then empty input: item=0 errorPos=0
+// ParseWithOpts/GetErrorPtr return early on NULL input without resetting the saved error state, so the
+// error pointer can reference a buffer the caller already freed. Here the error position is a value in the
+// result, not a pointer into the caller's buffer, and there is no saved state to go stale.
+#include "cjson_item.clh"
+#include "cjson_parse.clh"
+int main() {
+    ParseResult first = parseWithOptsResult("[1,", false);
+    std::cout << "failed at " << first.errorPos << "; then empty input: ";
+    ParseResult second = parseWithOptsResult("", false);
+    std::cout << "item=" << (second.item != nullptr) << " errorPos=" << second.errorPos << std::endl;
+    return 0;
+}

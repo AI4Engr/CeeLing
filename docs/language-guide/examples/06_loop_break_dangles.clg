@@ -1,0 +1,22 @@
+//@ expect: reject
+//@ error: use of dangling observer `obs`
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node a = new Node(1);
+    ref Node obs = a;
+    int i = 0;
+    while (i < 3) {
+        i = i + 1;
+        Node b = new Node(2);
+        obs = b;
+        if (i == 2) { break; }      // leaves the loop while obs still follows b
+        obs = a;
+    }
+    std::cout << obs.v << std::endl;
+    return 0;
+}

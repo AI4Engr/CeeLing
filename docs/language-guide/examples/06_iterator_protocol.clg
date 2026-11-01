@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ run: x=1 x=2 x=3
+class Counter {
+public:
+    int value;
+    Counter(int v) { value = v; }
+    int operator*() { return value; }
+    void operator++() { value = value + 1; }
+    bool operator!=(Counter other) { return value != other.value; }
+};
+
+class Range {
+public:
+    int lo;
+    int hi;
+    Range(int a, int b) { lo = a; hi = b; }
+    Counter begin() { return new Counter(lo); }
+    Counter end() { return new Counter(hi); }
+};
+
+int main() {
+    Range r = new Range(1, 4);
+    bool first = true;
+    for (int x : r) {
+        if (!first) { std::cout << " "; }
+        std::cout << "x=" << x;
+        first = false;
+    }
+    std::cout << std::endl;
+    return 0;
+}

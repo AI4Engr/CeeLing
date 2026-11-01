@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ error: use of moved-from value `a`
+#include "12_cross_lib.clh"
+
+int main() {
+    Node a = new Node(1);
+    eat(a);                          // eat() is in the other file and takes its argument: a is gone
+    std::cout << a.v << std::endl;
+    return 0;
+}

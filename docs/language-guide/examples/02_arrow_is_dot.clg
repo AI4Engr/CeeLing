@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ run: 2 2
+//@ generated: cling::nn(n, "line 10")->v
+class Node {
+public:
+    int v;
+    Node(int x) { v = x; }
+};
+
+int main() {
+    Node n = new Node(2);
+    std::cout << n.v << " "
+              << n->v << std::endl;        // -> is accepted as another spelling of .
+    return 0;
+}

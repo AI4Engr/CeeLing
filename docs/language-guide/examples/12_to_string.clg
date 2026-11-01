@@ -1,0 +1,8 @@
+//@ expect: accept
+//@ run: list[3] must be a number
+int main() {
+    int i = 3;
+    string message = "list[" + std::to_string(i) + "] must be a number";   // number to text; returns a fresh string
+    std::cout << message << std::endl;
+    return 0;
+}

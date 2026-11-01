@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: error[semantic/nested-namespace]
+namespace Outer {
+    namespace Inner {
+        class Node {
+        public:
+            int v;
+            Node(int x) { v = x; }
+        };
+    }
+}
+
+int main() {
+    return 0;
+}

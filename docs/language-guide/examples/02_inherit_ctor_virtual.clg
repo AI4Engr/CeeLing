@@ -1,0 +1,26 @@
+//@ expect: reject
+//@ error: virtual method `speak` called from a constructor of `Animal`
+class Animal {
+public:
+    int age;
+    Animal(int a) {
+        age = a;
+        speak();                 // in C++ this runs Animal::speak even for a Dog
+    }
+    virtual void speak() {
+        std::cout << "generic" << std::endl;
+    }
+};
+
+class Dog : public Animal {
+public:
+    Dog(int a) { age = a; }
+    void speak() override {
+        std::cout << "woof" << std::endl;
+    }
+};
+
+int main() {
+    Animal a = new Dog(3);
+    return 0;
+}

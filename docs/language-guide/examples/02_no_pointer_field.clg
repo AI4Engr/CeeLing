@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: Syntax error
+class Node {
+public:
+    int v;
+    Node * next;               // a pointer field: no such declaration
+    Node(int x) { v = x; }
+};
+
+int main() {
+    return 0;
+}
