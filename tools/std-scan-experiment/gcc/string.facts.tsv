@@ -1,0 +1,149 @@
+name	const	return	shape	result-borrow	params	param-classes	mutates-receiver
+append		basic_string<char> &	self-reference	borrows self (returns *this)	_InputIterator; _InputIterator	template-param (needs witness); template-param (needs witness)	yes
+append		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &	template-param (needs witness)	yes
+append		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &; size_type; size_type	template-param (needs witness); by value; by value	yes
+append		basic_string<char> &	self-reference	borrows self (returns *this)	const basic_string<char> &	read-only ref	yes
+append		basic_string<char> &	self-reference	borrows self (returns *this)	const basic_string<char> &; size_type; size_type	read-only ref; by value; by value	yes
+append		basic_string<char> &	self-reference	borrows self (returns *this)	const char *	raw-pointer (SEALED)	yes
+append		basic_string<char> &	self-reference	borrows self (returns *this)	const char *; size_type	raw-pointer (SEALED); by value	yes
+append		basic_string<char> &	self-reference	borrows self (returns *this)	initializer_list<char>	by value	yes
+append		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; char	by value; by value	yes
+assign		basic_string<char> &	self-reference	borrows self (returns *this)	_InputIterator; _InputIterator	template-param (needs witness); template-param (needs witness)	yes
+assign		basic_string<char> &	self-reference	borrows self (returns *this)	basic_string<char> &&	consumed (rvalue)	yes
+assign		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &	template-param (needs witness)	yes
+assign		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &; size_type; size_type	template-param (needs witness); by value; by value	yes
+assign		basic_string<char> &	self-reference	borrows self (returns *this)	const basic_string<char> &	read-only ref	yes
+assign		basic_string<char> &	self-reference	borrows self (returns *this)	const basic_string<char> &; size_type; size_type	read-only ref; by value; by value	yes
+assign		basic_string<char> &	self-reference	borrows self (returns *this)	const char *	raw-pointer (SEALED)	yes
+assign		basic_string<char> &	self-reference	borrows self (returns *this)	const char *; size_type	raw-pointer (SEALED); by value	yes
+assign		basic_string<char> &	self-reference	borrows self (returns *this)	initializer_list<char>	by value	yes
+assign		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; char	by value; by value	yes
+at	const	const_reference	element-reference	borrows self	size_type	by value	
+at		reference	element-reference	borrows self	size_type	by value	accessor
+back		reference	element-reference	borrows self			accessor
+back	const	const_reference	element-reference	borrows self			
+basic_string_view	const	__sv_type	view	borrows self			
+begin		iterator	iterator-view	borrows self			accessor
+begin	const	const_iterator	iterator-view	borrows self			
+c_str	const	const char *	raw-pointer	SEALED (borrows self)			
+capacity	const	size_type	scalar	fresh			
+cbegin	const	const_iterator	iterator-view	borrows self			
+cend	const	const_iterator	iterator-view	borrows self			
+clear		void	void	none			yes
+compare	const	_If_sv<_Tp, int>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &	template-param (needs witness)	
+compare	const	int	scalar	fresh	const basic_string<char> &	read-only ref	
+compare	const	int	scalar	fresh	const char *	raw-pointer (SEALED)	
+compare	const	_If_sv<_Tp, int>	UNRESOLVED	unknown -> treat as borrows self (conservative)	size_type; size_type; const _Tp &	by value; by value; template-param (needs witness)	
+compare	const	_If_sv<_Tp, int>	UNRESOLVED	unknown -> treat as borrows self (conservative)	size_type; size_type; const _Tp &; size_type; size_type	by value; by value; template-param (needs witness); by value; by value	
+compare	const	int	scalar	fresh	size_type; size_type; const basic_string<char> &	by value; by value; read-only ref	
+compare	const	int	scalar	fresh	size_type; size_type; const basic_string<char> &; size_type; size_type	by value; by value; read-only ref; by value; by value	
+compare	const	int	scalar	fresh	size_type; size_type; const char *	by value; by value; raw-pointer (SEALED)	
+compare	const	int	scalar	fresh	size_type; size_type; const char *; size_type	by value; by value; raw-pointer (SEALED); by value	
+copy	const	size_type	scalar	fresh	char *; size_type; size_type	raw-pointer (SEALED); by value; by value	
+crbegin	const	const_reverse_iterator	iterator-view	borrows self			
+crend	const	const_reverse_iterator	iterator-view	borrows self			
+data	const	const char *	raw-pointer	SEALED (borrows self)			
+data		char *	raw-pointer	SEALED (borrows self)			accessor
+empty	const	bool	scalar	fresh			
+end		iterator	iterator-view	borrows self			accessor
+end	const	const_iterator	iterator-view	borrows self			
+ends_with	const	bool	scalar	fresh	basic_string_view<char, std::char_traits<char>>	by value	
+ends_with	const	bool	scalar	fresh	char	by value	
+ends_with	const	bool	scalar	fresh	const char *	raw-pointer (SEALED)	
+erase		iterator	iterator-view	borrows self	__const_iterator	iterator	yes
+erase		iterator	iterator-view	borrows self	__const_iterator; __const_iterator	iterator; iterator	yes
+erase		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; size_type	by value; by value	yes
+find	const	size_type	scalar	fresh	char; size_type	by value; by value	
+find	const	_If_sv<_Tp, size_type>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &; size_type	template-param (needs witness); by value	
+find	const	size_type	scalar	fresh	const basic_string<char> &; size_type	read-only ref; by value	
+find	const	size_type	scalar	fresh	const char *; size_type	raw-pointer (SEALED); by value	
+find	const	size_type	scalar	fresh	const char *; size_type; size_type	raw-pointer (SEALED); by value; by value	
+find_first_not_of	const	size_type	scalar	fresh	char; size_type	by value; by value	
+find_first_not_of	const	_If_sv<_Tp, size_type>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &; size_type	template-param (needs witness); by value	
+find_first_not_of	const	size_type	scalar	fresh	const basic_string<char> &; size_type	read-only ref; by value	
+find_first_not_of	const	size_type	scalar	fresh	const char *; size_type	raw-pointer (SEALED); by value	
+find_first_not_of	const	size_type	scalar	fresh	const char *; size_type; size_type	raw-pointer (SEALED); by value; by value	
+find_first_of	const	size_type	scalar	fresh	char; size_type	by value; by value	
+find_first_of	const	_If_sv<_Tp, size_type>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &; size_type	template-param (needs witness); by value	
+find_first_of	const	size_type	scalar	fresh	const basic_string<char> &; size_type	read-only ref; by value	
+find_first_of	const	size_type	scalar	fresh	const char *; size_type	raw-pointer (SEALED); by value	
+find_first_of	const	size_type	scalar	fresh	const char *; size_type; size_type	raw-pointer (SEALED); by value; by value	
+find_last_not_of	const	size_type	scalar	fresh	char; size_type	by value; by value	
+find_last_not_of	const	_If_sv<_Tp, size_type>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &; size_type	template-param (needs witness); by value	
+find_last_not_of	const	size_type	scalar	fresh	const basic_string<char> &; size_type	read-only ref; by value	
+find_last_not_of	const	size_type	scalar	fresh	const char *; size_type	raw-pointer (SEALED); by value	
+find_last_not_of	const	size_type	scalar	fresh	const char *; size_type; size_type	raw-pointer (SEALED); by value; by value	
+find_last_of	const	size_type	scalar	fresh	char; size_type	by value; by value	
+find_last_of	const	_If_sv<_Tp, size_type>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &; size_type	template-param (needs witness); by value	
+find_last_of	const	size_type	scalar	fresh	const basic_string<char> &; size_type	read-only ref; by value	
+find_last_of	const	size_type	scalar	fresh	const char *; size_type	raw-pointer (SEALED); by value	
+find_last_of	const	size_type	scalar	fresh	const char *; size_type; size_type	raw-pointer (SEALED); by value; by value	
+front		reference	element-reference	borrows self			accessor
+front	const	const_reference	element-reference	borrows self			
+get_allocator	const	allocator_type	value	fresh (owner)			
+insert		iterator	iterator-view	borrows self	__const_iterator; char	iterator; by value	yes
+insert		iterator	iterator-view	borrows self	const_iterator; _InputIterator; _InputIterator	iterator; template-param (needs witness); template-param (needs witness)	yes
+insert		iterator	iterator-view	borrows self	const_iterator; initializer_list<char>	iterator; by value	yes
+insert		iterator	iterator-view	borrows self	const_iterator; size_type; char	iterator; by value; by value	yes
+insert		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	size_type; const _Tp &	by value; template-param (needs witness)	yes
+insert		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	size_type; const _Tp &; size_type; size_type	by value; template-param (needs witness); by value; by value	yes
+insert		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; const basic_string<char> &	by value; read-only ref	yes
+insert		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; const basic_string<char> &; size_type; size_type	by value; read-only ref; by value; by value	yes
+insert		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; const char *	by value; raw-pointer (SEALED)	yes
+insert		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; const char *; size_type	by value; raw-pointer (SEALED); by value	yes
+insert		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; size_type; char	by value; by value; by value	yes
+length	const	size_type	scalar	fresh			
+max_size	const	size_type	scalar	fresh			
+operator+=		basic_string<char> &	self-reference	borrows self (returns *this)	char	by value	yes
+operator+=		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &	template-param (needs witness)	yes
+operator+=		basic_string<char> &	self-reference	borrows self (returns *this)	const basic_string<char> &	read-only ref	yes
+operator+=		basic_string<char> &	self-reference	borrows self (returns *this)	const char *	raw-pointer (SEALED)	yes
+operator+=		basic_string<char> &	self-reference	borrows self (returns *this)	initializer_list<char>	by value	yes
+operator=		basic_string<char> &	self-reference	borrows self (returns *this)	basic_string<char> &&	consumed (rvalue)	yes
+operator=		basic_string<char> &	self-reference	borrows self (returns *this)	char	by value	yes
+operator=		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &	template-param (needs witness)	yes
+operator=		basic_string<char> &	self-reference	borrows self (returns *this)	const basic_string<char> &	read-only ref	yes
+operator=		basic_string<char> &	self-reference	borrows self (returns *this)	const char *	raw-pointer (SEALED)	yes
+operator=		basic_string<char> &	self-reference	borrows self (returns *this)	initializer_list<char>	by value	yes
+operator[]	const	const_reference	element-reference	borrows self	size_type	by value	
+operator[]		reference	element-reference	borrows self	size_type	by value	accessor
+pop_back		void	void	none			yes
+push_back		void	void	none	char	by value	yes
+rbegin		reverse_iterator	iterator-view	borrows self			accessor
+rbegin	const	const_reverse_iterator	iterator-view	borrows self			
+rend		reverse_iterator	iterator-view	borrows self			accessor
+rend	const	const_reverse_iterator	iterator-view	borrows self			
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	__const_iterator; __const_iterator; char *; char *	iterator; iterator; raw-pointer (SEALED); raw-pointer (SEALED)	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	__const_iterator; __const_iterator; const basic_string<char> &	iterator; iterator; read-only ref	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	__const_iterator; __const_iterator; const char *	iterator; iterator; raw-pointer (SEALED)	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	__const_iterator; __const_iterator; const char *; const char *	iterator; iterator; raw-pointer (SEALED); raw-pointer (SEALED)	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	__const_iterator; __const_iterator; const char *; size_type	iterator; iterator; raw-pointer (SEALED); by value	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	__const_iterator; __const_iterator; const_iterator; const_iterator	iterator; iterator; iterator; iterator	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	__const_iterator; __const_iterator; iterator; iterator	iterator; iterator; iterator; iterator	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	__const_iterator; __const_iterator; size_type; char	iterator; iterator; by value; by value	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	const_iterator; const_iterator; _InputIterator; _InputIterator	iterator; iterator; template-param (needs witness); template-param (needs witness)	yes
+replace		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const_iterator; const_iterator; const _Tp &	iterator; iterator; template-param (needs witness)	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	const_iterator; const_iterator; initializer_list<char>	iterator; iterator; by value	yes
+replace		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	size_type; size_type; const _Tp &	by value; by value; template-param (needs witness)	yes
+replace		_If_sv<_Tp, basic_string<char> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	size_type; size_type; const _Tp &; size_type; size_type	by value; by value; template-param (needs witness); by value; by value	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; size_type; const basic_string<char> &	by value; by value; read-only ref	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; size_type; const basic_string<char> &; size_type; size_type	by value; by value; read-only ref; by value; by value	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; size_type; const char *	by value; by value; raw-pointer (SEALED)	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; size_type; const char *; size_type	by value; by value; raw-pointer (SEALED); by value	yes
+replace		basic_string<char> &	self-reference	borrows self (returns *this)	size_type; size_type; size_type; char	by value; by value; by value; by value	yes
+reserve		void	void	none			yes
+reserve		void	void	none	size_type	by value	yes
+resize		void	void	none	size_type	by value	yes
+resize		void	void	none	size_type; char	by value; by value	yes
+rfind	const	size_type	scalar	fresh	char; size_type	by value; by value	
+rfind	const	_If_sv<_Tp, size_type>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Tp &; size_type	template-param (needs witness); by value	
+rfind	const	size_type	scalar	fresh	const basic_string<char> &; size_type	read-only ref; by value	
+rfind	const	size_type	scalar	fresh	const char *; size_type	raw-pointer (SEALED); by value	
+rfind	const	size_type	scalar	fresh	const char *; size_type; size_type	raw-pointer (SEALED); by value; by value	
+shrink_to_fit		void	void	none			yes
+size	const	size_type	scalar	fresh			
+starts_with	const	bool	scalar	fresh	basic_string_view<char, std::char_traits<char>>	by value	
+starts_with	const	bool	scalar	fresh	char	by value	
+starts_with	const	bool	scalar	fresh	const char *	raw-pointer (SEALED)	
+substr	const	basic_string<char>	value	fresh (owner)	size_type; size_type	by value; by value	
+swap		void	void	none	basic_string<char> &	mutated (non-const ref)	yes

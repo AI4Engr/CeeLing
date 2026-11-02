@@ -1,0 +1,51 @@
+name	const	return	shape	result-borrow	params	param-classes	mutates-receiver
+assign		void	void	none	_InputIterator; _InputIterator	template-param (needs witness); template-param (needs witness)	yes
+assign		void	void	none	initializer_list<value_type>	by value	yes
+assign		void	void	none	size_type; const value_type &	by value; read-only ref	yes
+at		reference	element-reference	borrows self	size_type	by value	accessor
+at	const	const_reference	element-reference	borrows self	size_type	by value	
+back		reference	element-reference	borrows self			accessor
+back	const	const_reference	element-reference	borrows self			
+begin		iterator	iterator-view	borrows self			accessor
+begin	const	const_iterator	iterator-view	borrows self			
+capacity	const	size_type	scalar	fresh			
+cbegin	const	const_iterator	iterator-view	borrows self			
+cend	const	const_iterator	iterator-view	borrows self			
+clear		void	void	none			yes
+crbegin	const	const_reverse_iterator	iterator-view	borrows self			
+crend	const	const_reverse_iterator	iterator-view	borrows self			
+data		int *	raw-pointer	SEALED (borrows self)			accessor
+data	const	const int *	raw-pointer	SEALED (borrows self)			
+emplace		iterator	iterator-view	borrows self	const_iterator; _Args &&...	iterator; template-param (needs witness)	yes
+emplace_back		reference	element-reference	borrows self	_Args &&...	template-param (needs witness)	yes
+empty	const	bool	scalar	fresh			
+end		iterator	iterator-view	borrows self			accessor
+end	const	const_iterator	iterator-view	borrows self			
+erase		iterator	iterator-view	borrows self	const_iterator	iterator	yes
+erase		iterator	iterator-view	borrows self	const_iterator; const_iterator	iterator; iterator	yes
+front		reference	element-reference	borrows self			accessor
+front	const	const_reference	element-reference	borrows self			
+insert		iterator	iterator-view	borrows self	const_iterator; _InputIterator; _InputIterator	iterator; template-param (needs witness); template-param (needs witness)	yes
+insert		iterator	iterator-view	borrows self	const_iterator; const value_type &	iterator; read-only ref	yes
+insert		iterator	iterator-view	borrows self	const_iterator; initializer_list<value_type>	iterator; by value	yes
+insert		iterator	iterator-view	borrows self	const_iterator; size_type; const value_type &	iterator; by value; read-only ref	yes
+insert		iterator	iterator-view	borrows self	const_iterator; value_type &&	iterator; consumed (rvalue)	yes
+max_size	const	size_type	scalar	fresh			
+operator=		vector<int> &	self-reference	borrows self (returns *this)	const vector<int> &	read-only ref	yes
+operator=		vector<int> &	self-reference	borrows self (returns *this)	initializer_list<value_type>	by value	yes
+operator=		vector<int> &	self-reference	borrows self (returns *this)	vector<int> &&	consumed (rvalue)	yes
+operator[]		reference	element-reference	borrows self	size_type	by value	accessor
+operator[]	const	const_reference	element-reference	borrows self	size_type	by value	
+pop_back		void	void	none			yes
+push_back		void	void	none	const value_type &	read-only ref	yes
+push_back		void	void	none	value_type &&	consumed (rvalue)	yes
+rbegin		reverse_iterator	iterator-view	borrows self			accessor
+rbegin	const	const_reverse_iterator	iterator-view	borrows self			
+rend		reverse_iterator	iterator-view	borrows self			accessor
+rend	const	const_reverse_iterator	iterator-view	borrows self			
+reserve		void	void	none	size_type	by value	yes
+resize		void	void	none	size_type	by value	yes
+resize		void	void	none	size_type; const value_type &	by value; read-only ref	yes
+shrink_to_fit		void	void	none			yes
+size	const	size_type	scalar	fresh			
+swap		void	void	none	vector<int> &	mutated (non-const ref)	yes
