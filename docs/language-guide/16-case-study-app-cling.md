@@ -557,7 +557,7 @@ class __closure_16_app_command_table_1;
 #define CEELING_DECL_COUNTER
 class Counter {
 public:
-    int n;
+    int n{};
     Counter();
 };
 ```
@@ -646,7 +646,7 @@ first has no prev: 1
 ```
 class Item {
 public:
-    int value;
+    int value{};
     std::shared_ptr<Item> next;
     std::weak_ptr<Item> prev;
     Item(int v);

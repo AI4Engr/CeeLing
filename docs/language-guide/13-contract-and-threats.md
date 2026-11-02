@@ -147,7 +147,7 @@ The 19 threats CeeLing was designed against, each with what happens today. "Stat
 | 15 | Raw `new` / `delete` / `T*` | **Static, sealed.** `delete` has no syntax; `T*` is rejected; `new` is CeeLing's own constructor syntax. | [8](08-sealed-escape-hatches.md) |
 | 16 | `const_cast` | **Static, sealed.** Rejected as an unknown call. | [8](08-sealed-escape-hatches.md) |
 | 17 | `union` / `variant` confusion | **Union: static, sealed.** Raw `union` is a parse error with an explanation. **`variant`: not guarded.** A `std::variant` is accepted like any library type (a probe with `std::get<int>` compiled); the guard was never started. `std::get` itself checks and throws. | [8](08-sealed-escape-hatches.md), below |
-| 18 | Read of an uninitialised variable | **Partly.** A local must be initialised where it is declared (`int n;` does not parse). A primitive class **field** with no initialiser is not set, see below. | [8](08-sealed-escape-hatches.md), below |
+| 18 | Read of an uninitialised variable | A local must be initialised where it is declared (`int n;` does not parse); a number, `bool` or `char` class **field** starts at zero (`int count{};` in the generated C++). | [8](08-sealed-escape-hatches.md), below |
 | 19 | Data races | **Partly, narrowly.** What `spawn` and `Channel` carry is checked; deadlock, waiting forever, `ext_fn` shared state, the file system and thread count are not. Never "thread-safe". | [10](10-threads.md) |
 
 Eight of the rows (2, 3, 7, 13 to 17, the last for `union` only) are closed by removing the syntax. Rows 1 and 10 are the analysis proper. Rows 9 and 11 are the run-time half. Rows 4, 5, 6, 12, 17 (`variant`), 18 and 19 are where the

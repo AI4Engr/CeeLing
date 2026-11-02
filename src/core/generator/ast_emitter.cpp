@@ -1425,8 +1425,10 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
                 out << indentStr(1) << smartPointerType(var->type, var->identifier)
                     << "<" << var->type << "> " << var->identifier << ";\n";
             } else {
+                // A number, bool or char field starts at zero (`{}` value-initialises it), as in Java: a constructor that forgets one no longer leaves garbage behind.
+                const bool zeroed = isPrimitiveType(var->type) && var->type != "string" && var->type != "std::string";
                 out << indentStr(1) << cppTypeFor(var->type, var->identifier) << " "
-                    << var->identifier << ";\n";
+                    << var->identifier << (zeroed ? "{}" : "") << ";\n";
             }
         } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
             varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
@@ -1578,8 +1580,10 @@ void AstEmitter::emitClassHeader(const ClassDeclaration& cls, std::ostringstream
                 out << indentStr(1) << smartPointerType(var->type, var->identifier)
                     << "<" << var->type << "> " << var->identifier << ";\n";
             } else {
+                // A number, bool or char field starts at zero (`{}` value-initialises it), as in Java: a constructor that forgets one no longer leaves garbage behind.
+                const bool zeroed = isPrimitiveType(var->type) && var->type != "string" && var->type != "std::string";
                 out << indentStr(1) << cppTypeFor(var->type, var->identifier) << " "
-                    << var->identifier << ";\n";
+                    << var->identifier << (zeroed ? "{}" : "") << ";\n";
             }
         } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
             varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();

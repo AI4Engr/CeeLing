@@ -1,3 +1,6 @@
+//@ expect: accept
+//@ generated: int count{};
+//@ run: 0
 class Box {
 public:
     int count;
@@ -6,7 +9,6 @@ public:
 
 int main() {
     Box b = new Box();
+    std::cout << b.count << std::endl;
     return 0;
 }
-//@ expect: accept
-//@ generated: int count;

@@ -58,7 +58,7 @@ Grouped; each is described where it belongs and listed in [chapter 13](13-contra
 The common cause is that a type name the compiler does not know passes through unchanged, `auto` included. An older note in the repository, that CeeLing has no `auto`, is wrong. Also: `ref` observers are raw pointers in the
 generated C++, so a miss in the analysis is not caught by a run-time check (making them self-checking is an open item); an observer of a container element depends on the whole container, which refuses more than necessary.
 
-**Other static checks that stop short:** uninitialised primitive fields (only locals are checked), `std::variant` (never guarded), reference cycles (a back link becomes `weak_ptr` by a naming rule or a hint, not by cycle
+**Other static checks that stop short:** `std::variant` (never guarded), reference cycles (a back link becomes `weak_ptr` by a naming rule or a hint, not by cycle
 detection, so a leak is possible), `const` on methods (accepted by the grammar and not enforced).
 
 **Run-time checks that stop short:** `pop_back()` on an empty vector, iterators past `end()`, anything an `ext_fn` indexes, `this`, a bad `substr` position. The last is the clearest: it is not a subscript, so nothing of

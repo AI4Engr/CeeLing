@@ -412,7 +412,7 @@ namespace bank {
 class Account {
 public:
     std::string owner;
-    int balance;
+    int balance{};
     std::vector<int> history;
     Account(std::string who, int start);
     void deposit(int amount);

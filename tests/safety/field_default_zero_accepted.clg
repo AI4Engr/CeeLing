@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: 0 0 0 []
+//@ generated: int count{};
+//@ reason: a number, bool or char field the constructor never assigns starts at zero (value-initialised `{}`), as in Java. Before, `int count;` was emitted bare and read as garbage
+//@ reason: (threat #18, "read of uninitialised variable", held for locals only). Run, not just compiled: the claim is the value read.
+
+class Box {
+public:
+    int count;
+    double ratio;
+    bool flag;
+    string name;
+    Box() { }
+};
+
+int main() {
+    Box b = new Box();
+    std::cout << b.count << " " << b.ratio << " " << b.flag << " [" << b.name << "]" << std::endl;
+    return 0;
+}

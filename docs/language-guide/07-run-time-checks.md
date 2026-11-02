@@ -573,7 +573,7 @@ cling: null dereference at line 19
 ```cpp
 class Node {
 public:
-    int v;
+    int v{};
     std::shared_ptr<Node> next;
     std::weak_ptr<Node> prev;
     Node(int x);

@@ -188,7 +188,7 @@ int main() {
 ```cpp
 class Tree : public std::enable_shared_from_this<Tree> {
 public:
-    int v;
+    int v{};
     std::shared_ptr<Tree> left;
     std::unique_ptr<Tree> right;
     std::weak_ptr<Tree> parent;
@@ -361,9 +361,8 @@ The program printed `2` and then stopped at line 8, the access `next.v` inside `
 observer whose object is gone (that is the static analysis, chapter 6). It does not cover `this` or a handle handed to an `ext_fn`. It can be switched off per build with
 `--no-null-checks`, after which a claim about the program is a claim about how it was built ([chapter 7](07-run-time-checks.md)).
 
-A primitive field is different: `int`, `double`, `bool` fields that a constructor does not assign are **not** initialised. The compiler does protect locals (`int n;` is rejected), but a
-field you forget to assign holds whatever was in memory (observed here: `-998481776` for an `int`). Assign every primitive field in the constructor. This is a gap between the safety
-table in the project documentation, which lists "read of uninitialised variable" as handled, and the compiler, which handles it for locals only.
+A primitive field is never left uninitialised either: `int`, `double`, `bool` and `char` fields start at zero (the generated C++ writes `int count{};`), so a constructor that forgets one
+leaves 0, not garbage. Locals are protected the other way: `int n;` is rejected ([chapter 8](08-sealed-escape-hatches.md)).
 
 ## Object identity: `==` and `!=`
 
@@ -1085,7 +1084,7 @@ Wrapper::Wrapper(Point p) : point(p) {
 There is no initialiser-list syntax (`A(int v) : x(v)`) and no explicit base-constructor call (`B(int v) : A(v)`); a derived constructor assigns the inherited fields itself. The compiler
 supplies the base's no-argument constructor.
 
-**Where it stops.** The reordering rules protect fields from being read too early. A primitive field the constructor never assigns is still uninitialised (see "Empty handles").
+**Where it stops.** The reordering rules protect fields from being read too early. A primitive field the constructor never assigns starts at zero (see "Empty handles").
 
 ## Classes that refer to each other
 
@@ -1618,8 +1617,8 @@ enum Kind { Circle, Square };
 #define CEELING_DECL_SHAPE
 class Shape {
 public:
-    int kind;
-    int size;
+    int kind{};
+    int size{};
     Shape(int k, int s);
     int area();
 };

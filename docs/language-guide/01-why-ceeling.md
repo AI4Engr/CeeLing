@@ -541,7 +541,7 @@ int main() {
 ```cpp
 class Node {
 public:
-    int v;
+    int v{};
     std::unique_ptr<Node> next;
     std::weak_ptr<Node> prev;
     Node(int x);

@@ -154,7 +154,7 @@ int main() {
 ```cpp
 class Tree {
 public:
-    int v;
+    int v{};
     std::unique_ptr<Tree> left;
     std::unique_ptr<Tree> right;
     Tree(int x);
@@ -261,7 +261,7 @@ rock rock
 class Sprite {
 public:
     std::shared_ptr<Texture> texture;
-    int x;
+    int x{};
     Sprite(std::shared_ptr<Texture> t, int px);
 };
 ```
@@ -336,7 +336,7 @@ int main() {
 ```cpp
 class Node : public std::enable_shared_from_this<Node> {
 public:
-    int v;
+    int v{};
     Node(int x);
     std::shared_ptr<Node> self();
 };
@@ -614,7 +614,7 @@ int main() {
 ```cpp
 class Node {
 public:
-    int v;
+    int v{};
     std::unique_ptr<Node> next;
     std::weak_ptr<Node> prev;
     Node(int x);
@@ -670,7 +670,7 @@ int main() {
 ```cpp
 class Node {
 public:
-    int v;
+    int v{};
     std::shared_ptr<Node> down;
     std::weak_ptr<Node> up;
     Node(int x);
@@ -712,7 +712,7 @@ int main() {
 ```cpp
 class Node : public std::enable_shared_from_this<Node> {
 public:
-    int v;
+    int v{};
     std::vector<std::shared_ptr<Node>> children;
     std::shared_ptr<Node> parent;
     Node(int x);
@@ -818,7 +818,7 @@ int main() {
 ```cpp
 class Node : public std::enable_shared_from_this<Node> {
 public:
-    int v;
+    int v{};
     std::vector<std::shared_ptr<Node>> children;
     std::weak_ptr<Node> parent;
     Node(int x);
@@ -867,7 +867,7 @@ class Item {
 public:
     std::shared_ptr<Item> next;
     std::weak_ptr<Item> prev;
-    int v;
+    int v{};
     Item(int x);
     ~Item();
 };

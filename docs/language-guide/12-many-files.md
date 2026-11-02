@@ -90,7 +90,7 @@ int main() {
 ```cpp
 class Counter {
 public:
-    int n;
+    int n{};
     Counter(int start);
     void bump();
 };

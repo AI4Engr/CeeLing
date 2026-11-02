@@ -533,10 +533,10 @@ int main() {
 
 One exception, deliberate: a container (`std::vector<int> v;`) may be declared without an initializer, because an empty container is a well-defined state.
 
-**Where it stops.** This is a rule about locals. A class **field** may be declared without an initializer. For objects that is safe (the field is an empty handle, and a dereference is checked,
-chapter 7). A primitive field, however, is emitted as the bare C++ declaration and is not set unless the constructor sets it:
+**A field is different, and also safe.** A class **field** may be declared without an initializer. For an object the field is an empty handle, and a dereference is checked (chapter 7). A
+number, `bool` or `char` field starts at **zero**, as in Java: the compiler writes `{}` after it, which value-initialises it, so a constructor that forgets one leaves a defined value, not garbage:
 
-<!-- example: 08_field_uninitialized.clg -->
+<!-- example: 08_field_zero.clg -->
 ```cpp
 class Box {
 public:
@@ -546,20 +546,27 @@ public:
 
 int main() {
     Box b = new Box();
+    std::cout << b.count << std::endl;
     return 0;
 }
 ```
-<!-- generated: 08_field_uninitialized.clg "class Box {" -->
+<!-- generated: 08_field_zero.clg "class Box {" -->
 ```cpp
 class Box {
 public:
-    int count;
+    int count{};
     Box();
 };
 ```
 
-`Box()` never writes `count`, so `count` holds whatever the memory held. The threat table of `CLAUDE.md` lists "definite initialization" as a static check; as implemented it covers locals and
-not primitive fields. Initialize every primitive field in the constructor.
+<!-- output: 08_field_zero.clg -->
+```
+0
+```
+
+`Box()` never writes `count`, and the program reads 0. (Before this was done, the field was the bare C++ declaration `int count;` and held whatever the memory held; the guide's earlier
+draft showed that gap. It is closed by construction, not by an analysis: there is no uninitialised primitive left to find.) What stays unchecked is whether zero is the *right* value, and
+`std::string` and containers, which are empty to begin with.
 
 ## File-scope variables
 
