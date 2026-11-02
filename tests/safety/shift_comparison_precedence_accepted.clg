@@ -1,0 +1,9 @@
+//@ expect: accept
+//@ run: 1 8 0 10 1
+//@ reason: shift binds tighter than comparison, as in C++. The tiers were the wrong way round (shift 6, comparison 7), so `4 >> 1 == 2` parsed as `4 >> (1 == 2)`.
+//@ reason: Also pinned: + binds tighter than <<, and == binds tighter than & (C++'s own rule). Run, not compiled: the claim is the value.
+
+int main() {
+    std::cout << (4 >> 1 == 2) << " " << (1 << 2 + 1) << " " << (6 & 3 == 3) << " " << (2 + 3 << 1) << " " << (1 + 2 * 3 << 1 == 14) << std::endl;
+    return 0;
+}

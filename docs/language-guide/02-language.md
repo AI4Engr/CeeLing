@@ -1674,29 +1674,34 @@ int main() {
 40 5
 ```
 
-**One precedence rule differs from C++, and from the grammar's own comments.** In C++ shifts bind tighter than comparison. Here comparison binds tighter than `<<` and `>>`, so an
-unparenthesised `4 >> 1 == 2` is `4 >> (1 == 2)`. Parenthesise a shift next to a comparison:
+**Precedence is C++'s.** From tightest to loosest: `* / %`, `+ -`, `<< >>`, `< <= > >=`, `== !=`, `&`, `|`, `&&`, `||`. A shift binds tighter than a comparison, so `4 >> 1 == 2` is
+`(4 >> 1) == 2`; `==` binds tighter than `&`, which is C++'s famous trap, kept as it is (`6 & 3 == 3` is `6 & (3 == 3)`). Until the grammar was corrected the shift and comparison tiers were the
+wrong way round, so `4 >> 1 == 2` meant `4 >> (1 == 2)`; programs that relied on that need the parentheses they would have needed in C++.
 
 <!-- example: 02_precedence_shift.clg -->
 ```cpp
 int main() {
-    int bare = 4 >> 1 == 2;          // C++ reads (4 >> 1) == 2 and prints 1; here == binds tighter: 4 >> (1 == 2)
+    int bare = 4 >> 1 == 2;          // as in C++: (4 >> 1) == 2, which is 1
     int grouped = (4 >> 1) == 2;
-    std::cout << bare << " " << grouped << std::endl;
+    int sum = 1 << 2 + 1;            // + binds tighter than <<: 1 << 3
+    int masked = 6 & 3 == 3;         // == binds tighter than &, as in C++: 6 & (3 == 3) is 6 & 1
+    std::cout << bare << " " << grouped << " " << sum << " " << masked << std::endl;
     return 0;
 }
 ```
 <!-- output: 02_precedence_shift.clg -->
 ```
-4 1
+1 1 8 0
 ```
 
 <!-- generated: 02_precedence_shift.clg "int main()" -->
 ```cpp
 int main() {
-    int bare = (4 >> (1 == 2));
+    int bare = ((4 >> 1) == 2);
     int grouped = ((4 >> 1) == 2);
-    std::cout << bare << " " << grouped << std::endl;
+    int sum = (1 << (2 + 1));
+    int masked = (6 & (3 == 3));
+    std::cout << bare << " " << grouped << " " << sum << " " << masked << std::endl;
     return 0;
 }
 ```
