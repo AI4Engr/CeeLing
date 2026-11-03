@@ -35,6 +35,11 @@ python -I tools/fact-gauge/probe_pack.py --cling build/cling.exe --pack vx.clfac
 * `mutator` (changes the receiver): the compiler must reject; whether the library really invalidates is reported, not required (a mutator that invalidates nothing is merely conservative).
 * **Result on `Eigen::VectorXd`** (CTest `cling_scan_probe`, 40 s): 56 facts, 0 contradictions: 54 `fresh`/`borrow` facts run clean, and the two mutators that really reallocate (`resize`, `conservativeResize`) are
   confirmed by `heap-use-after-free`. **Negative control:** declare `resize` and `conservativeResize` `fresh` and the probe fails with `heap-use-after-free` from the real library.
+* **Second library, different shape: jsoncpp `Json::Value`** (a tree of deep-copied nodes; the library is compiled once under the sanitisers from its `.cpp` files, `sources =` in the conf): 41 facts, 0 contradictions
+  (36 clean; `clear` really frees the node a reference points into, `heap-use-after-free`; 4 `UNREACHABLE`: their parameters are enums). Negative control: `clear` declared fresh is caught. The C++ twin holds a real
+  reference into the object (`auto& view = obj["a"]`, the conf's `cxx_view_decl`/`cxx_view`), because `operator[]` is the way jsoncpp hands out views and the scanner does not write facts for operators.
+* **What the probe found about the scanner itself:** the first jsoncpp run failed to compile `obj.index()`: `Json::Value` had no such method. The scanner had read PAST the end of the class into the next node of clang's filtered
+  dump (`Json::Value::CZString`, whose name also contains `Value`) and attributed its methods to `Json::Value`. The pack committed one step earlier contained those bogus facts. Fixed, with a regression test.
 * Limits: one object, one view, one call, arguments chosen by a script; a clean run is evidence, not proof. It sees STORAGE going away or moving, not a value changing under the view (declaring `fill` fresh passes: `fill`
   rewrites values in place). A method that cannot be called with synthesised arguments is `UNREACHABLE`; a library assertion fired by the synthesised arguments is `NOT EVIDENCE`, never a pass.
 

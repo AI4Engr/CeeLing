@@ -24,6 +24,8 @@ want="borrow Shapes::at;borrow Shapes::raw;borrow Shapes::view;fresh Shapes::cou
 if [ "$got" = "$want" ]; then ok "each method shape gets exactly the fact its signature proves"; else bad "shape verdicts differ:
   got:  $got
   want: $want"; fi
+# a class that FOLLOWS another in the dump must not leak into it (found by the jsoncpp probe: Json::Value picked up ValueIteratorBase::index)
+if grep -qE '^(fresh|borrow|mutator|function) Shapes::viewCount' "$TMP/shapes.clfacts"; then bad "a later class whose name contains Shapes leaked into the Shapes pack"; else ok "a later class whose name contains the scanned one's (the next node in the filtered dump) does not leak into its pack"; fi
 for m in copy over ref; do
     grep -q "^# $m: no fact" "$TMP/shapes.clfacts" && ok "$m: left to the opaque default, with the reason written down" || bad "$m: no explanation in the pack"
 done

@@ -1,7 +1,7 @@
 """Probe a SCANNED fact pack against the compiler and against the real library under AddressSanitizer.
 
 usage: probe_pack.py --cling <cling.exe> --pack <pack.clfacts> --conf <conf> [--wsl <distro>] [--cxx g++] [-I <dir> ...]
-                     [--pretend-fresh NAME ...]  [--keep <dir>]
+                     [--pretend-fresh NAME ...]  [--keep <dir>] [--var KEY=VALUE ...]
 
 The conf file (key = value, `#` comments) says how to make an object of the scanned type and how to observe it:
 
@@ -37,6 +37,7 @@ import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 ap = argparse.ArgumentParser()
 ap.add_argument('--cling', required=True)
 ap.add_argument('--pack', required=True)
@@ -46,6 +47,7 @@ ap.add_argument('--cxx', default='g++')
 ap.add_argument('-I', dest='includes', action='append', default=[])
 ap.add_argument('--pretend-fresh', nargs='*', default=[])
 ap.add_argument('--keep')
+ap.add_argument('--var', action='append', default=[], help='KEY=VALUE: replaces @KEY@ in the conf (paths that differ per machine)')
 ap.add_argument('-j', type=int, default=6)
 args = ap.parse_args()
 args.cling = os.path.abspath(args.cling)
@@ -55,7 +57,11 @@ for ln in open(args.conf, encoding='utf-8'):
     ln = ln.split('#', 1)[0].strip()
     if ln and '=' in ln:
         k, v = ln.split('=', 1)
-        conf[k.strip()] = v.strip()
+        v = v.strip()
+        for kv in args.var:
+            kk, vv = kv.split('=', 1)
+            v = v.replace('@%s@' % kk, vv)
+        conf[k.strip()] = v
 for k in ('type', 'include', 'make', 'view', 'touch'):
     if k not in conf:
         sys.exit('conf is missing `%s`' % k)
@@ -83,6 +89,8 @@ def arg_for(p):
         return None
     if re.fullmatch(r'(unsigned |signed )?(char|short|int|long|long long|size_t|ptrdiff_t|int\d+_t|uint\d+_t)', p):
         return '1'
+    if p in ('char *', 'const char *'):
+        return '"a"'
     if p in ('float', 'double'):
         return '1.0'
     if p == 'bool':
@@ -115,7 +123,7 @@ def program(name, a):
         '#include %s' % conf['include'],
         '',
         'int main() {',
-        '    %s obj = %s;' % (T, conf['make']),
+        '    %s obj = %s;' % (T, conf.get('clg_make', conf['make'])),
         '    %s view = %s;' % (T, conf['view'].replace('{obj}', 'obj')),
         '    obj.%s(%s);' % (name, a),
         '    std::cout << %s << std::endl;' % conf['touch'].replace('{view}', 'view').replace('{obj}', 'obj'),
@@ -126,19 +134,21 @@ def program(name, a):
 
 
 def cxx_program(name, a):
-    """The same probe as plain C++ with a lazy `auto` view: what CeeLing's rule is meant to protect against."""
-    return '\n'.join([
-        '#include <iostream>',
-        '#include %s' % conf['include'],
-        '',
-        'int main() {',
-        '    %s obj = %s;' % (T, conf['make']),
-        '    auto view = %s;' % conf['view'].replace('{obj}', 'obj'),
-        '    obj.%s(%s);' % (name, a),
-        '    std::cout << %s << std::endl;' % conf['touch'].replace('{view}', 'view').replace('{obj}', 'obj'),
-        '    return 0;',
-        '}',
-        ''])
+    """The same probe as plain C++ with a LAZY view (`auto`, or a reference): what CeeLing's rule is meant to protect against."""
+    lines = ['#include <iostream>',
+             '#include %s' % conf['include'],
+             '',
+             'int main() {',
+             '    %s obj = %s;' % (T, conf['make'])]
+    if conf.get('cxx_setup'):
+        lines.append('    ' + conf['cxx_setup'].replace('{obj}', 'obj'))
+    lines += ['    %s view = %s;' % (conf.get('cxx_view_decl', 'auto'), conf.get('cxx_view', conf['view']).replace('{obj}', 'obj')),
+              '    obj.%s(%s);' % (name, a),
+              '    std::cout << %s << std::endl;' % conf.get('cxx_touch', conf['touch']).replace('{view}', 'view').replace('{obj}', 'obj'),
+              '    return 0;',
+              '}',
+              '']
+    return chr(10).join(lines)
 
 
 def cling(src, keep_cpp=None):
@@ -180,6 +190,20 @@ def wsl_path(p):
     return r.stdout.strip()
 
 
+# library sources named in the conf (`sources = a.cpp, b.cpp`) are compiled ONCE with the same sanitisers and linked into every probe
+lib_objects = []
+if conf.get('sources'):
+    incs0 = ' '.join('-I' + wsl_path(os.path.abspath(i)) for i in args.includes)
+    for k, srcfile in enumerate(x.strip() for x in conf['sources'].split(',') if x.strip()):
+        obj = '/tmp/probe_lib_%d.o' % k
+        r = subprocess.run(['wsl', '-d', args.wsl, '--', 'bash', '-c',
+                            'g++ -std=c++17 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined %s %s -c %s -o %s 2>&1 | grep -m3 error' %
+                            (incs0, conf.get('flags', ''), wsl_path(srcfile), obj)], capture_output=True, text=True, errors='replace')
+        if r.stdout.strip():
+            sys.exit('building %s failed: %s' % (srcfile, r.stdout.strip()[:300]))
+        lib_objects.append(obj)
+
+
 def sanitise(res):
     name, v, verdict_, detail, cpp = res
     if verdict_ not in ('COMPILER OK', 'FALSE ACCEPT') or cpp is None:
@@ -188,8 +212,10 @@ def sanitise(res):
     open(src, 'w', encoding='utf-8', newline='').write(cpp)
     ws = wsl_path(src)
     incs = ' '.join('-I' + wsl_path(os.path.abspath(i)) for i in args.includes)
-    cmd = 'g++ -std=c++17 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined %s %s -o /tmp/probe_%s.out 2>&1 | grep -m3 -E "error" ; ' \
-          'ASAN_OPTIONS=detect_leaks=0 /tmp/probe_%s.out 2>&1 | head -12; echo "exit=${PIPESTATUS[0]}"' % (incs, ws, name, name)
+    extra = conf.get('flags', '')
+    objs = ' '.join(lib_objects)
+    cmd = 'g++ -std=c++17 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined %s %s %s %s -o /tmp/probe_%s.out 2>&1 | grep -m3 -E "error" ; ' \
+          'ASAN_OPTIONS=detect_leaks=0 /tmp/probe_%s.out 2>&1 | head -12; echo "exit=${PIPESTATUS[0]}"' % (incs, extra, ws, objs, name, name)
     r = subprocess.run(['wsl', '-d', args.wsl, '--', 'bash', '-c', cmd], capture_output=True, text=True, errors='replace')
     out = r.stdout
     exit_code = re.search(r'exit=(\d+)', out)

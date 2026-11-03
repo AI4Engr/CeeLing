@@ -33,3 +33,9 @@ struct Plain {
     int getX() const { return x; }
     void setX(int v) { x = v; }
 };
+
+// A second class whose name CONTAINS the first one's: clang's name filter prints it as the next top-level node right after Shapes.
+class ShapesIterator {
+public:
+    int viewCount() const { return 0; }                             // must NOT become a fact of Shapes
+};

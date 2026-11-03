@@ -34,4 +34,20 @@ if [ $code -ne 0 ] && echo "$out" | grep -q "BEHAVIOUR CONTRADICTS FACT: Eigen::
     ok "negative control: a wrong fact (resize declared fresh) is caught by AddressSanitizer"
 else bad "negative control did not fail as it must (exit $code): $out"; fi
 
+# --- a second library of a different shape: jsoncpp's Json::Value (a tree with deep copies, not a flat numeric array) ---------------------------------
+JSONCPP_DIR="${JSONCPP_DIR:-/c/project/jsoncpp-master/jsoncpp-master}"
+if [ -f "$JSONCPP_DIR/include/json/json.h" ]; then
+    python -I "$ROOT/tools/cling-scan/cling_scan.py" --clang "$CLANG" --header "$JSONCPP_DIR/include/json/json.h" --class Json::Value -I "$JSONCPP_DIR/include" --out "$TMP/jv.clfacts" >/dev/null || bad "jsoncpp scan failed"
+    jprobe() { python -I "$ROOT/tools/fact-gauge/probe_pack.py" --cling "$CLING" --pack "$TMP/jv.clfacts" --conf "$HERE/probe/jsoncpp_value.conf" -I "$JSONCPP_DIR/include" --var "JSON=$JSONCPP_DIR" "$@" 2>&1; }
+    out="$(jprobe)"; code=$?
+    if [ $code -eq 0 ] && echo "$out" | grep -q "OK (sanitiser clean)=" && echo "$out" | grep -q "really invalidates"; then ok "the scanned jsoncpp pack agrees with the compiler and the real library: $(echo "$out" | head -1)"
+    else bad "jsoncpp probe failed (exit $code): $out"; fi
+    out="$(jprobe --pretend-fresh clear)"; code=$?
+    if [ $code -ne 0 ] && echo "$out" | grep -q "BEHAVIOUR CONTRADICTS FACT: Json::Value::clear (fresh) -- heap-use-after-free"; then ok "negative control: Json::Value::clear declared fresh is caught by AddressSanitizer"
+    else bad "jsoncpp negative control did not fail as it must (exit $code): $out"; fi
+else
+    echo "SKIP: jsoncpp probe (no jsoncpp at $JSONCPP_DIR; set JSONCPP_DIR)"
+fi
+
 exit $fail
+

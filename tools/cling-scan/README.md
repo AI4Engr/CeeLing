@@ -44,9 +44,12 @@ The scan reads signatures; the probe checks the facts against the real library: 
 Each overload's signature is written into the pack as a `# sig` comment (what the verdict was read from; `probe_pack.py` uses them to synthesise arguments). `fresh`, `borrow` and `mutator` additionally require every
 PARAMETER to be a plain value (number, bool, enum, string; not an object, a pointer, or a non-const reference): "retains none of its arguments" only follows from the types then.
 
+`const char *` parameters count as plain: in CeeLing the only source of one is a string literal (`c_str()` and `data()` are refused), which has static storage and cannot dangle. The same probe on **jsoncpp `Json::Value`** (a different
+shape: a tree) holds for all 41 facts, and it caught a bug in this scanner (methods of a later class whose name contains the scanned one's leaked into the pack; fixed, regression-tested).
+
 ## Tested (CTest `cling_scan`)
 
 `tests/fact-scan/`: a class with one method of every shape (the exact verdict per shape), the private library of `tests/facts/private_lib` (the scanned pack gives the same accept/reject results as the hand-written one),
-the header-hash check, **jsoncpp**'s `Json::Value` (50 facts: a CeeLing program using the pack builds against the real jsoncpp sources and runs, and a dangling use is rejected), and **Eigen**'s `VectorXd`
+the header-hash check, **jsoncpp**'s `Json::Value` (42 facts: a CeeLing program using the pack builds against the real jsoncpp sources and runs, and a dangling use is rejected), and **Eigen**'s `VectorXd`
 (69 facts, 93 methods left conservative, 265 headers bound, scanned in 3 s: a CeeLing program using the pack builds against the real Eigen headers and runs, and a lazy `head()` view dies when `fill()` changes its owner).
 The jsoncpp and Eigen parts are skipped when the library is absent (set `JSONCPP_DIR`, `EIGEN_DIR`).

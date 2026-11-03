@@ -286,6 +286,8 @@ def plain_param(p):
     """A parameter that is a number, bool, enum or string passed by value or const reference: it cannot be an object that something refers to."""
     if p.strip().endswith('&') and not p.strip().endswith('&&') and not re.search(r'\bconst\b', p):
         return False      # a non-const reference is an out-parameter: the callee gets the caller's variable itself and may keep it
+    if re.fullmatch(r'const\s+char\s*\*(\s*const)?', p.strip()):
+        return True       # in CeeLing the only source of a `const char *` is a string literal (c_str() and data() are refused): static storage, it cannot dangle
     r = re.sub(r'\s+', ' ', re.sub(r'\bconst\b', ' ', p)).strip()
     if r.endswith('&&') or r.endswith('*'):
         return False
@@ -300,7 +302,10 @@ for start in nodes:
     access = 'public' if is_struct else 'private'
     cp = child_prefix(lines[start])
     i = start
-    while i + 1 < len(lines) and lines[i + 1].startswith(cp):
+    # A node printed at the top level of a filtered dump has children with NO indentation (`|-` / `` `- ``), and the next top-level node (another
+    # declaration matching the filter, e.g. the nested `Json::Value::CZString`) starts with a letter: that line ends this class. Without this,
+    # an empty prefix matched everything and the nested class's methods were read as the outer class's.
+    while i + 1 < len(lines) and lines[i + 1].startswith(cp) and (cp != '' or lines[i + 1][:1] in ('|', '`')):
         i += 1
         ln = lines[i]
         m = re.match('^' + re.escape(cp) + r'[|`]-([A-Za-z]+) 0x[0-9a-f]+ (.*)$', ln)
