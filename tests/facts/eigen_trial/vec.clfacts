@@ -1,0 +1,6 @@
+# Eigen::VectorXd, used under the conservative model: nobody wrote method facts.
+@pack eigen-vectorxd
+@version 1
+@origin hand-written, a two-line pack for a trial
+opaque Eigen::VectorXd source=declared review=hand
+function Eigen::VectorXd::Ones source=declared review=hand

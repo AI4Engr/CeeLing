@@ -1,0 +1,6 @@
+# The same library as grid.clfacts, but nobody wrote any method facts: Grid is opaque (trusted, conservative model).
+@pack grid-opaque
+@version 1
+@origin hand-written for tests/facts/private_lib
+
+opaque Grid source=declared review=hand

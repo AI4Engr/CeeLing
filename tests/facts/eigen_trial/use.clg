@@ -1,0 +1,10 @@
+#include <Eigen/Dense>
+
+int main() {
+    Eigen::VectorXd v = Eigen::VectorXd::Ones(4);
+    double total = v.sum();
+    int n = v.size();
+    double biggest = v.maxCoeff();
+    std::cout << total << " " << n << " " << biggest << std::endl;
+    return 0;
+}

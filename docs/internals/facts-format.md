@@ -31,7 +31,8 @@ function std::stoi source=declared review=hand
 | `class` | type name | none | an external class type that may be declared (`Eigen::MatrixXd`) |
 | `operator` | `Type\|op` | none | the operator may be applied to that type; its result is always fresh |
 | `borrow` | `Class::method` | none | the method returns a view that borrows the receiver, with real dangling tracking |
-| `fresh` | `Class::method` | none | a method of an external class that returns a fresh value (a number, an owned object) and borrows nothing |
+| `fresh` | `Class::method` | none | a method of an external class that returns a fresh value (a number, an owned object), borrows nothing, does not change the receiver and **does not retain its arguments** |
+| `opaque` | type name | none | an external class nobody wrote method facts for: the conservative ("trusted") model, below |
 
 ## Signature facts (`*.sig`)
 
@@ -54,13 +55,26 @@ skipped silently, because a skipped line turns a "no" into a "yes" without anyon
 
 ## Project packs: `cling --facts mylib.clfacts`
 
-A project teaches the compiler about its own C++ library with a pack of `class`, `fresh`, `borrow`, `operator` and `function` facts (repeatable flag). A `class` fact makes the name a known type (a value type, emitted
+A project teaches the compiler about its own C++ library with a pack of `class`, `opaque`, `fresh`, `borrow`, `operator` and `function` facts (repeatable flag). A `class` fact makes the name a known type (a value type, emitted
 bare like `Eigen::MatrixXd`); `fresh` and `borrow` list the methods that may be called on it; a method not listed is rejected as an unknown call. A project pack can only ADD: it may not hold the std signature kinds (so it
 cannot relax how `std` is judged) and may not repeat a fact the compiler ships (so it cannot replace one). A malformed or missing pack is an error (exit 2). `tests/facts/private_lib/` is a worked example: a header
 (`grid.h`), its facts (`grid.clfacts`), a program that uses it and runs, and the two rejections.
 
 `cling --report-facts` prints, after a successful compile, every fact a check answered "yes" from, with its pack and source: the trusted-boundary report. A fact whose source is `inferred` or whose review is `unreviewed`
 is a scanner's draft; a `declared` fact in a project pack is the project's own claim about its library.
+
+## `opaque`: a library nobody wrote facts for (the conservative model)
+
+`opaque Name` declares `Name` as a known value type (like `class Name`) whose methods are ALL callable, and assumes the worst about every method that has no `fresh Name::m` or `borrow Name::m` fact:
+
+* **its result borrows the receiver**: `Grid w = g.m();` makes `w` an observer of `g` (also by assignment, `w = g.m();`), so replacing or moving `g` kills `w`;
+* **it changes the receiver**: any call of such a method on `g` kills every existing observer of `g`, wherever the call stands in the statement (nested calls included; a use and a kill in one expression count as kill first);
+* **it may retain an object argument**: `g.m(h)` with an object-typed local `h` is refused, because nothing follows a reference the library keeps; a number, a `bool` or a `string` argument is fine;
+* the result may borrow an argument too: `Grid w = g.m(h);` is refused (an observer follows one owner).
+
+A `fresh` or `borrow` fact for a method replaces the default for that method; both assert, besides what they say, that the method does not retain its arguments. Not covered, still refused or unmodelled: operators on the type
+(they need an `operator` fact), a borrow taken from a FIELD receiver (`Grid w = this_field.m();` is refused for every borrowing method, `opaque` or listed, because a field has no owner the analysis follows), and
+anything the library does behind the call: the class's internals are trusted, as for an `ext_fn`. `tests/facts/private_lib/opaque*.clg` and `tests/facts/eigen_trial/` (a real `Eigen::VectorXd` with a two-line pack) are the examples.
 
 ## What a pack cannot do
 

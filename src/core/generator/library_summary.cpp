@@ -282,7 +282,18 @@ bool isKnownQualifiedFreeFunction(const std::string& qualifiedName) {
 }
 
 bool isKnownExternalClassType(const std::string& type) {
-    return builtinFacts().has("class", type);
+    return builtinFacts().has("class", type) || builtinFacts().has("opaque", type);
+}
+
+bool isOpaqueExternalClass(const std::string& type) {
+    return builtinFacts().has("opaque", type);
+}
+
+bool isConservativeOpaqueCall(const std::string& className, const std::string& methodName) {
+    const FactTable& f = builtinFacts();
+    if (!f.has("opaque", className)) return false;
+    const std::string key = className + "::" + methodName;
+    return !f.has("borrow", key) && !f.has("fresh", key);
 }
 
 bool isKnownExternalOperator(const std::string& type, const std::string& operatorStr) {
@@ -293,7 +304,8 @@ bool isKnownBorrowingMethod(const std::string& className, const std::string& met
     // Not exhaustive -- extend by consulting Eigen's own Block/Transpose/Ref/Map/Diagonal/Reverse expression-template
     // family (see this function's header doc comment), never by guessing. Each entry gets REAL dangling tracking
     // (DanglingChecker::resolveBorrowingMethodReceiver), unlike isKnownExternalOperator's set.
-    return builtinFacts().has("borrow", className + "::" + methodName);
+    // An opaque class's unlisted method is assumed to borrow the receiver (see isOpaqueExternalClass).
+    return builtinFacts().has("borrow", className + "::" + methodName) || isConservativeOpaqueCall(className, methodName);
 }
 
 bool isKnownFreshMethod(const std::string& className, const std::string& methodName) {
@@ -303,7 +315,7 @@ bool isKnownFreshMethod(const std::string& className, const std::string& methodN
 std::vector<std::string> knownExternalClassTypes() {
     std::vector<std::string> out;
     for (const auto& f : builtinFacts().facts()) {
-        if (f.kind == "class") out.push_back(f.subject);
+        if (f.kind == "class" || f.kind == "opaque") out.push_back(f.subject);
     }
     return out;
 }

@@ -171,6 +171,17 @@ private:
 
     // Walk an expression; for every use of a moved-from variable, emit an error.
     void checkExpressionUses(const Expression* expr);
+    // Opaque external classes (`opaque X` in a fact pack): a call to a method with no fact kills every observer of its receiver.
+    // Walks the whole expression, nested calls included, BEFORE any use in it is checked (C++ leaves the evaluation order of
+    // operands unspecified, so a use and a kill in one expression are treated as kill first).
+    void killObserversOfOpaqueCalls(const Expression* expr);
+    // `Grid w = g.merge(h);` with `merge` unlisted on an opaque class: the result may borrow `h` as well as `g`, and an observer follows ONE
+    // owner. Refused (the pack can say `fresh Grid::merge` or `borrow Grid::merge`) instead of guessing.
+    void rejectOpaqueResultWithObjectArgs(const Expression* init, const Statement* at);
+    // `Grid w = field.window(..)` / `Grid w = holder.field.window(..)`: the result borrows a FIELD (of an external class, borrowing by fact or by the
+    // opaque default). A field has no owner this analysis follows, so the dependence would be silently dropped: refuse it instead.
+    void rejectBorrowFromFieldReceiver(const Expression* init, const Statement* at);
+    int exprDepth_ = 0;
 
     // If `expr` is a bare object-typed local, return its name; else empty.
     std::string asObjectLocalName(const Expression* expr) const;

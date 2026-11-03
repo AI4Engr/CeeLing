@@ -1,0 +1,18 @@
+#include "grid.h"
+
+class Holder {
+public:
+    Grid grid;
+    Holder() { grid = new Grid(2, 2); }
+    int f() {
+        Grid w = grid.window(1, 1);   // borrows a FIELD: no owner the analysis follows
+        grid = new Grid(5, 5);
+        return w.windowWidth();
+    }
+};
+
+int main() {
+    Holder h = new Holder();
+    std::cout << h.f() << std::endl;
+    return 0;
+}

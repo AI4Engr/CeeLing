@@ -1,0 +1,9 @@
+#include <Eigen/Dense>
+
+int main() {
+    Eigen::VectorXd v = Eigen::VectorXd::Ones(4);
+    Eigen::VectorXd head = v.head(2);        // an Eigen block expression: refers to v's storage
+    v = Eigen::VectorXd::Ones(8);
+    std::cout << head.size() << std::endl;
+    return 0;
+}

@@ -23,7 +23,7 @@ class FactTable {
 public:
     // One loaded fact.
     struct Fact {
-        std::string kind;                 // "vector.sig", "string.sig", "map.sig", "vector.note", "vector.own", "function", "class", "operator", "borrow", "fresh"
+        std::string kind;                 // "vector.sig", "string.sig", "map.sig", "vector.note", "vector.own", "function", "class", "opaque", "operator", "borrow", "fresh"
         std::string subject;              // e.g. "push_back", "std::stoi", "Eigen::MatrixXd|*"
         std::set<std::string> flags;      // e.g. "shares-arg0"
         std::map<std::string, std::string> attrs;   // key=value words other than source= and review=, e.g. result=void
@@ -37,7 +37,7 @@ public:
     // On error nothing from this text is added.
     //
     // A PROJECT pack (`projectPack = true`, what `--facts` loads) may only hold facts about external classes and functions
-    // (function, class, operator, borrow, fresh). It cannot touch how `std` is judged (the *.sig, vector.note, vector.own kinds), so a
+    // (function, class, opaque, operator, borrow, fresh). It cannot touch how `std` is judged (the *.sig, vector.note, vector.own kinds), so a
     // project can add a library but never relax what the compiler assumes about the standard library.
     std::string addText(const std::string& text, const std::string& originName, bool projectPack = false);
 

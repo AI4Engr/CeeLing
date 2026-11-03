@@ -1,0 +1,11 @@
+#include "grid.h"
+
+int main() {
+    Grid g = new Grid(3, 2);
+    Grid h = new Grid(1, 1);
+    g.window(1, h.width());           // fine: a number is passed
+    g.shrink();
+    Grid other = new Grid(2, 2);
+    g.window2(other);                 // other is an object: the unlisted method may keep a reference to it
+    return 0;
+}

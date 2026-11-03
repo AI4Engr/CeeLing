@@ -1,0 +1,9 @@
+#include "grid.h"
+
+int main() {
+    Grid g = new Grid(3, 2);
+    int w = g.width();
+    double s = g.sum();
+    std::cout << w << " " << s << std::endl;
+    return 0;
+}

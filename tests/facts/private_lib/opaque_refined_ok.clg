@@ -1,0 +1,9 @@
+#include "grid.h"
+
+int main() {
+    Grid g = new Grid(3, 2);
+    Grid win = g.window(2, 1);
+    int n = g.width();                // width() is declared fresh: it does not disturb win
+    std::cout << n << " " << win.windowWidth() << std::endl;
+    return 0;
+}

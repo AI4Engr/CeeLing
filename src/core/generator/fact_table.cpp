@@ -43,6 +43,7 @@ const std::map<std::string, KindSpec>& kindSpecs() {
         {"class", {{}, {}}},
         {"operator", {{}, {}}},
         {"borrow", {{}, {}}},
+        {"opaque", {{}, {}}},         // an external class nobody wrote facts for: the conservative model (see library_summary.h)
         {"fresh", {{}, {}}},          // a method of an external class that returns a fresh value (a number, an owned object): borrows nothing
     };
     return m;
@@ -100,8 +101,8 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
         auto kindIt = kindSpecs().find(words[0]);
         if (kindIt == kindSpecs().end()) return fail(lineNo, "unknown fact kind `" + words[0] + "`");
 
-        if (projectPack && words[0] != "function" && words[0] != "class" && words[0] != "operator" && words[0] != "borrow" && words[0] != "fresh") {
-            return fail(lineNo, "a project fact pack may only hold function, class, operator, borrow and fresh facts, not `" + words[0] + "` (it cannot change how std is judged)");
+        if (projectPack && words[0] != "function" && words[0] != "class" && words[0] != "operator" && words[0] != "borrow" && words[0] != "fresh" && words[0] != "opaque") {
+            return fail(lineNo, "a project fact pack may only hold function, class, opaque, operator, borrow and fresh facts, not `" + words[0] + "` (it cannot change how std is judged)");
         }
         Fact f;
         f.kind = words[0];

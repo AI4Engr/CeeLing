@@ -334,6 +334,18 @@ int firstRemembered() { return (*kept)[0]; }
 It is not run by the checker, only compiled and linked. This is the same hole `unsafe` is in Rust, and just as real; the difference is the size of the list. In app-cling the checked code reaches the operating system
 only through its `ext_fn` declarations (the head of each `.clg` file, with `shim/app_native.h` the C++ side), so the trusted surface is a list you can read, not the whole program.
 
+## A library nobody wrote facts for: `--facts` and `opaque`
+
+A project can teach the compiler about its own C++ library without touching the compiler: a small text file of facts, passed as `cling --facts mylib.clfacts` (repeatable). `class Grid` makes `Grid` a known type;
+`fresh Grid::width` says a method returns a plain value and leaves everything alone; `borrow Grid::window` says its result refers to the receiver. A method nobody listed is refused, as ever.
+
+When even that is too much work, `opaque Grid` declares the class and assumes the worst about every method without a fact: its result borrows the receiver, calling it may change the receiver, and an object
+handed to it may be kept. Nothing needs to be listed for a first program to compile, and anything that could dangle is rejected rather than guessed at; writing `fresh` and `borrow` facts for the methods you use
+removes the rejections one by one. `cling --report-facts` lists every fact a compile relied on, so you can see exactly what you are trusting. Format and rules: `docs/internals/facts-format.md`; worked examples
+(a private class, and a real `Eigen::VectorXd` with a two-line pack) run in CTest as `cling_project_facts`. The guide's own example checker cannot pass `--facts`, so there is no checked example here.
+
+An `opaque` or listed fact is the project's claim about its library. CeeLing never looks inside the library: a wrong claim voids the guarantee for calls that rely on it, like a wrong `ext_fn`.
+
 ## What the compiler knows about `std`, and about Eigen
 
 Every call to something CeeLing did not compile itself needs a fact, or it is rejected. The facts ship inside the compiler as plain-text packs (`facts/*.clfacts`, format in `docs/internals/facts-format.md`):

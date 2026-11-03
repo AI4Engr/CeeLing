@@ -1,0 +1,9 @@
+#include "grid.h"
+
+int main() {
+    Grid g = new Grid(3, 2);
+    Grid win = g.window(2, 1);        // window() has no fact: assumed to borrow g
+    g = new Grid(5, 5);
+    std::cout << win.windowWidth() << std::endl;
+    return 0;
+}

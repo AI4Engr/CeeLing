@@ -1,0 +1,8 @@
+# opaque Grid plus two method facts: width() and height() are known to return plain numbers and to leave the grid alone.
+@pack grid-opaque-refined
+@version 1
+@origin hand-written for tests/facts/private_lib
+
+opaque Grid source=declared review=hand
+fresh Grid::width source=declared review=hand
+fresh Grid::windowWidth source=declared review=hand

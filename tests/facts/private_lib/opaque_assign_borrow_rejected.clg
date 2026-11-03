@@ -1,0 +1,10 @@
+#include "grid.h"
+
+int main() {
+    Grid g = new Grid(3, 2);
+    Grid w = new Grid(1, 1);
+    w = g.window(2, 1);               // assignment from an unlisted method: w now observes g
+    g = new Grid(5, 5);
+    std::cout << w.windowWidth() << std::endl;
+    return 0;
+}

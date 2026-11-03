@@ -250,6 +250,16 @@ bool isKnownExternalOperator(const std::string& type, const std::string& operato
 // handled).
 bool isKnownBorrowingMethod(const std::string& className, const std::string& methodName);
 
+// `opaque Name` in a fact pack: an external class nobody wrote method facts for ("trusted", the conservative model of
+// PLAN_third_party_inference.md). Every method may be called. A method with no `fresh`/`borrow` fact is assumed to (a) return something
+// that borrows the receiver, so `Grid w = g.anything();` makes `w` an observer of `g`, and (b) change the receiver, so it kills
+// every existing observer of the receiver. `fresh` and `borrow` facts refine this per method. The class's internals are never examined:
+// what the library does with what it is handed is trusted, exactly as for an `ext_fn`.
+bool isOpaqueExternalClass(const std::string& type);
+
+// Is this call to `className::methodName` one that falls back to the opaque default (an opaque class, no fact for the method)?
+bool isConservativeOpaqueCall(const std::string& className, const std::string& methodName);
+
 // A method of an external class whose result is fresh (a number, an owned object) and borrows nothing: `fresh Class::method` in a
 // fact pack. Like a borrowing method it may be called; unlike one, nothing is tracked about its result.
 bool isKnownFreshMethod(const std::string& className, const std::string& methodName);

@@ -1,0 +1,8 @@
+#include "grid.h"
+
+int main() {
+    Grid a = new Grid(2, 2);
+    Grid b = new Grid(3, 3);
+    Grid w = a.window(b);             // window(b) has no fact: its result may borrow a AND b, and an observer follows one owner
+    return 0;
+}

@@ -1,0 +1,9 @@
+#include "grid.h"
+
+int main() {
+    Grid g = new Grid(3, 2);
+    Grid win = g.window(2, 1);
+    g.shrink();                       // shrink() has no fact: assumed to change g, so win dies
+    std::cout << win.windowWidth() << std::endl;
+    return 0;
+}

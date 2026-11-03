@@ -1,4 +1,6 @@
 #include "dangling_checker.h"
+
+#include <functional>
 #include "class_hierarchy.h"
 #include "library_summary.h"
 #include "closure_desugar.h"
@@ -889,8 +891,128 @@ void DanglingChecker::checkReturnedReference(const Expression* expr) {
     errors_.push_back(e);
 }
 
+void DanglingChecker::killObserversOfOpaqueCalls(const Expression* expr) {
+    if (expr == nullptr) return;
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+            if (auto recv = dynamic_cast<const Identifier*>(member->object.get())) {
+                auto typeIt = localType_.find(recv->name);
+                if (typeIt != localType_.end() && isConservativeOpaqueCall(typeIt->second, member->member)) {
+                    for (const auto& [obs, owner] : observerOf_) {
+                        if (owner == recv->name) danglingObservers_.insert(obs);
+                    }
+                    // An unlisted method may KEEP a reference to an object it is handed (`g.attach(h)`). CeeLing would then have to
+                    // follow `h` for as long as `g` lives, which nothing models: refuse, and let the pack state that it does not retain.
+                    for (const auto& arg : call->arguments) {
+                        std::string argName = asObjectLocalName(arg.get());
+                        if (argName.empty()) continue;
+                        DanglingError e;
+                        e.line = expr->loc.line;
+                        e.column = expr->loc.column;
+                        e.message = "`" + recv->name + "." + member->member + "(" + argName + ")` may keep a reference to `" + argName + "`";
+                        e.help = "`" + member->member + "` has no fact in a loaded pack, so the compiler assumes it may retain what it is handed, and "
+                                 "nothing follows that. Declare `fresh " + typeIt->second + "::" + member->member + "` (or `borrow`) in your --facts pack "
+                                 "to state that it does not retain its arguments.";
+                        errors_.push_back(e);
+                        break;
+                    }
+                }
+            }
+            killObserversOfOpaqueCalls(member->object.get());
+        }
+        for (const auto& arg : call->arguments) killObserversOfOpaqueCalls(arg.get());
+        return;
+    }
+    if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+        killObserversOfOpaqueCalls(bin->left.get());
+        killObserversOfOpaqueCalls(bin->right.get());
+    } else if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+        killObserversOfOpaqueCalls(un->operand.get());
+    } else if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        killObserversOfOpaqueCalls(sub->object.get());
+        killObserversOfOpaqueCalls(sub->index.get());
+    } else if (auto mem = dynamic_cast<const MemberAccess*>(expr)) {
+        killObserversOfOpaqueCalls(mem->object.get());
+    } else if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
+        for (const auto& arg : neww->arguments) killObserversOfOpaqueCalls(arg.get());
+    }
+}
+
+void DanglingChecker::rejectOpaqueResultWithObjectArgs(const Expression* init, const Statement* at) {
+    auto call = dynamic_cast<const FunctionCall*>(init);
+    if (call == nullptr) return;
+    auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+    if (member == nullptr) return;
+    auto recv = dynamic_cast<const Identifier*>(member->object.get());
+    if (recv == nullptr) return;
+    auto typeIt = localType_.find(recv->name);
+    if (typeIt == localType_.end() || !isConservativeOpaqueCall(typeIt->second, member->member)) return;
+    for (const auto& arg : call->arguments) {
+        std::string argName = asObjectLocalName(arg.get());
+        if (argName.empty()) continue;
+        DanglingError e;
+        e.line = at->loc.line;
+        e.column = at->loc.column;
+        e.message = "the result of `" + recv->name + "." + member->member + "(" + argName + ")` may borrow `" + argName + "` as well as `" + recv->name + "`";
+        e.help = "`" + member->member + "` has no fact in a loaded pack, so the compiler assumes the worst: its result borrows the receiver and "
+                 "every argument, but an observer can follow only one owner. State what it does: `fresh " + typeIt->second + "::" + member->member +
+                 "` (the result owns its data) or `borrow " + typeIt->second + "::" + member->member + "` (it borrows the receiver) in your --facts pack.";
+        errors_.push_back(e);
+        return;
+    }
+}
+
+void DanglingChecker::rejectBorrowFromFieldReceiver(const Expression* init, const Statement* at) {
+    auto call = dynamic_cast<const FunctionCall*>(init);
+    if (call == nullptr) return;
+    auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+    if (member == nullptr) return;
+    std::string recvClass, recvText;
+    auto fieldTypeOf = [&](const std::string& cls, const std::string& field) -> std::string {
+        auto cf = classFieldTypes_.find(cls);
+        if (cf == classFieldTypes_.end()) return {};
+        auto ft = cf->second.find(field);
+        return ft == cf->second.end() ? std::string{} : ft->second;
+    };
+    // the type and the spelling of a receiver that is a field or a chain of fields; "" when it is not one
+    std::function<std::string(const Expression*, std::string&)> typeOf = [&](const Expression* e, std::string& text) -> std::string {
+        if (auto id = dynamic_cast<const Identifier*>(e)) {
+            text = id->name;
+            auto lt = localType_.find(id->name);
+            if (lt != localType_.end()) return lt->second;
+            return fieldTypeOf(currentClass_, id->name);              // a bare name that is a field of the current class
+        }
+        if (auto mem = dynamic_cast<const MemberAccess*>(e)) {
+            std::string baseText;
+            std::string baseType = typeOf(mem->object.get(), baseText);
+            text = baseText + "." + mem->member;
+            return baseType.empty() ? std::string{} : fieldTypeOf(baseType, mem->member);
+        }
+        return {};
+    };
+    if (auto id = dynamic_cast<const Identifier*>(member->object.get())) {
+        if (localType_.count(id->name) > 0) return;               // a local or parameter: tracked by the ordinary rules
+    }
+    recvClass = typeOf(member->object.get(), recvText);
+    if (recvClass.empty() || !isKnownExternalClassType(recvClass) || !isKnownBorrowingMethod(recvClass, member->member)) return;
+    DanglingError e;
+    e.line = at->loc.line;
+    e.column = at->loc.column;
+    e.message = "`" + member->member + "` returns something that borrows `" + recvText + "`, which is a field";
+    e.help = "A field has no owner the analysis follows, so the borrow would be dropped silently (the field could be replaced while the result lives). "
+             "Copy the object into a local first, work on the local, or declare `fresh " + recvClass + "::" + member->member + "` if the result owns its data.";
+    errors_.push_back(e);
+}
+
 void DanglingChecker::checkExpressionUses(const Expression* expr) {
     if (expr == nullptr) return;
+    struct DepthGuard {
+        int& d;
+        explicit DepthGuard(int& depth) : d(depth) { ++d; }
+        ~DepthGuard() { --d; }
+    };
+    if (exprDepth_ == 0) killObserversOfOpaqueCalls(expr);   // the outermost expression of a statement: kills first
+    DepthGuard guard(exprDepth_);
 
     if (auto id = dynamic_cast<const Identifier*>(expr)) {
         // Direct use of a moved-from owner.
@@ -1297,6 +1419,8 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             std::string borrowedOwner;
             if (aliasedOwner.empty() && isObjectType(decl->type) && decl->expression) {
                 borrowedOwner = resolveBorrowingMethodReceiver(decl->expression.get());
+                if (!borrowedOwner.empty()) rejectOpaqueResultWithObjectArgs(decl->expression.get(), decl);
+                else rejectBorrowFromFieldReceiver(decl->expression.get(), decl);
             }
             if (!aliasedOwner.empty()) {
                 observerNames_.insert(decl->identifier);
@@ -1399,6 +1523,18 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             // `x = f(a);` — a call RHS moves its own object-typed arguments, same as
             // any other call site.
             applyCallArgMoves(assign->expression.get());
+            // `w = g.window(...);` (an external class's borrowing method, an opaque class's unlisted one): `w` stops being an owner and
+            // observes the receiver, as in the declaration form above.
+            if (objectLocals_.find(assign->variable) != objectLocals_.end()) {
+                if (std::string borrowedOwner = resolveBorrowingMethodReceiver(assign->expression.get()); !borrowedOwner.empty()) {
+                    objectLocals_.erase(assign->variable);
+                    observerNames_.insert(assign->variable);
+                    danglingObservers_.erase(assign->variable);
+                    observerOf_[assign->variable] = borrowedOwner;
+                } else {
+                    rejectBorrowFromFieldReceiver(assign->expression.get(), assign);
+                }
+            }
             // `x = f(a);` where f's summary says the return aliases a parameter: `x`
             // becomes an observer of that argument instead of an independent owner,
             // same reasoning as the VariableDeclaration case above.
