@@ -1,0 +1,14 @@
+//@ expect: accept
+//@ run: aXbc ac
+//@ reason: string insert(pos, text) and erase(pos, len) return *this and are admitted; the overloads that take an
+//@ reason: iterator can never be written in CeeLing, so they do not count against the name.
+
+int main() {
+    string s = "abc";
+    s.insert(1, "X");
+    std::cout << s << " ";
+    string t = "abc";
+    t.erase(1, 1);
+    std::cout << t << std::endl;
+    return 0;
+}

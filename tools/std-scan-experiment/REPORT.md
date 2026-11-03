@@ -99,12 +99,11 @@ lists, signature level only, no run of the facts through the checker.
 ## Rerun
 
 ```
-clang++ -std=c++20 -fsyntax-only -Xclang -ast-dump probe.cc > ast_msvc.txt            # MSVC STL (default on this machine)
-clang++ -std=c++20 -fsyntax-only -target x86_64-w64-mingw32 -nostdinc++ \
-    -isystem <mingw>/include/c++/16.2.0 -isystem <mingw>/include/c++/16.2.0/x86_64-w64-mingw32 -isystem <mingw>/include \
-    -Xclang -ast-dump probe.cc > ast_gcc.txt
-grep -n "ClassTemplateSpecializationDecl.*class \(vector\|basic_string\) definition.*explicit_instantiation" ast_*.txt   # the two line numbers
-python -I classify.py ast_msvc.txt <vector-line> <string-line> .
-python -I classify.py ast_gcc.txt <vector-line> <string-line> gcc
-python -I diffimpl.py . gcc vector.facts.tsv
+cd tools/std-scan-experiment
+CLANG=<clang++> MINGW=<mingw dir> GCCVER=<libstdc++ version> bash scan.sh     # AST dumps at C++17 -> *.facts.tsv here and in gcc/
+python -I gen_pack.py . gcc ../../facts                                      # -> facts/std-vector|string|map.clfacts
+python -I diffimpl.py . gcc vector.facts.tsv                                 # the two implementations side by side
 ```
+
+(2026-11-02: `classify.py` takes `label=class@line[+baseline]` arguments now and walks base classes; the older `classify.py <ast> <vector-line> <string-line> <outdir>` form of the sections above is gone. The hand-table comparison it used to print
+is gone with the hand tables; the gauge, `tools/fact-gauge/`, does the standard comparison.)

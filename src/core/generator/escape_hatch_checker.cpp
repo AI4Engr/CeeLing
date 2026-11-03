@@ -284,6 +284,9 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         if (isStringType(declaredType)) {
             return isKnownStringMethod(member->member);
         }
+        if (isMapType(declaredType)) {
+            return isKnownMapMethod(member->member);
+        }
         // A known-external class (e.g. Eigen::MatrixXd) calling one of its
         // allow-listed borrowing methods (`.block()`, `.row()`, ...) -- see
         // library_summary.h's isKnownBorrowingMethod doc comment. Checked
@@ -516,6 +519,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                 std::string why;
                 if (isVectorType(recvType)) why = vectorMethodRefusal(calleeMember->member);
                 else if (isStringType(recvType)) why = stringMethodRefusal(calleeMember->member);
+                else if (isMapType(recvType)) why = mapMethodRefusal(calleeMember->member);
                 if (!why.empty()) {
                     e.message = "`" + calleeMember->member + "` is not available on `" + recvType + "`: " + why;
                     e.help = "CeeLing admits a method of the standard library only when the checker can follow what it hands back; "

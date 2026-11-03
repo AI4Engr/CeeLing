@@ -25,18 +25,17 @@ struct KindSpec {
 };
 
 const std::map<std::string, KindSpec>& kindSpecs() {
-    // A `*.sig` fact is what a scan found for one method name (split by const-ness): the shapes its overloads return
-    // (`result`, comma-separated), whether calling it may change the receiver (`mutates`), whether some overload takes a
-    // non-const reference parameter (`mparam`), whether only some of the scanned implementations resolved the result
-    // (`partial`), the implementations scanned (`impls`).
+    // A `*.sig` fact is what a scan found for one SIGNATURE, subject `name/const|nonconst/<parameter kinds joined by +>`:
+    // the shapes it returns over the scanned implementations (`result`, comma-separated), whether calling it may change the
+    // receiver (`mutates`), whether only some of the implementations resolved the result (`partial`), which were scanned (`impls`).
     const KindSpec sig = {{}, {{"result", {}},
                                {"mutates", {"yes", "no"}},
-                               {"mparam", {"yes", "no"}},
                                {"partial", {"yes", "no"}},
                                {"impls", {}}}};
     static const std::map<std::string, KindSpec> m = {
         {"vector.sig", sig},
         {"string.sig", sig},
+        {"map.sig", sig},
         {"vector.note", {{"shares-arg0"}, {}}},   // a declared fact no signature can give (the argument is linked, not consumed)
         {"vector.own", {{}, {}}},                // a method CeeLing itself defines (no std counterpart)
         {"function", {{}, {}}},
@@ -130,7 +129,7 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
         }
         if (f.source.empty()) return fail(lineNo, "missing `source=`");
         if (f.kind.size() > 4 && f.kind.compare(f.kind.size() - 4, 4, ".sig") == 0) {
-            for (const char* required : {"result", "mutates", "mparam"}) {
+            for (const char* required : {"result", "mutates"}) {
                 if (f.attrs.count(required) == 0) return fail(lineNo, std::string("a `") + f.kind + "` fact needs `" + required + "=`");
             }
         }
@@ -155,6 +154,15 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
 
 bool FactTable::has(const std::string& kind, const std::string& subject) const {
     return index_.count(kind + "|" + subject) > 0;
+}
+
+std::vector<const FactTable::Fact*> FactTable::withPrefix(const std::string& kind, const std::string& prefix) const {
+    std::vector<const Fact*> out;
+    const std::string start = kind + "|" + prefix;
+    for (auto it = index_.lower_bound(start); it != index_.end() && it->first.compare(0, start.size(), start) == 0; ++it) {
+        out.push_back(&facts_[it->second]);
+    }
+    return out;
 }
 
 const FactTable::Fact* FactTable::find(const std::string& kind, const std::string& subject) const {

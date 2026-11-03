@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ error: `find` is not available on `std::map<int, int>`
+//@ reason: find returns an iterator and iterators are not tracked; refused with the reason in the message.
+
+int main() {
+    std::map<int, int> m;
+    m[1] = 2;
+    auto it = m.find(1);
+    return 0;
+}

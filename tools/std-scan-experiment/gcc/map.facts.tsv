@@ -1,0 +1,76 @@
+name	const	return	shape	result-borrow	params	param-classes	mutates-receiver	param-kinds
+at		mapped_type &	element-reference	borrows self	const key_type &	read-only ref	accessor	value
+at	const	const mapped_type &	element-reference	borrows self	const key_type &	read-only ref		value
+begin		iterator	iterator-view	borrows self			accessor	-
+begin	const	const_iterator	iterator-view	borrows self				-
+cbegin	const	const_iterator	iterator-view	borrows self				-
+cend	const	const_iterator	iterator-view	borrows self				-
+clear		void	void	none			yes	-
+count	const	auto	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Kt &	template-param (needs witness)		value
+count	const	size_type	scalar	fresh	const key_type &	read-only ref		value
+crbegin	const	const_reverse_iterator	iterator-view	borrows self				-
+crend	const	const_reverse_iterator	iterator-view	borrows self				-
+emplace		std::pair<iterator, bool>	iterator-view	borrows self	_Args &&...	template-param (needs witness)	yes	args
+emplace_hint		iterator	iterator-view	borrows self	const_iterator; _Args &&...	iterator; template-param (needs witness)	yes	iterator,args
+empty	const	bool	scalar	fresh				-
+end		iterator	iterator-view	borrows self			accessor	-
+end	const	const_iterator	iterator-view	borrows self				-
+equal_range		auto	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Kt &	template-param (needs witness)	accessor	value
+equal_range	const	auto	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Kt &	template-param (needs witness)		value
+equal_range		std::pair<iterator, iterator>	iterator-view	borrows self	const key_type &	read-only ref	accessor	value
+equal_range	const	std::pair<const_iterator, const_iterator>	iterator-view	borrows self	const key_type &	read-only ref		value
+erase		size_type	scalar	fresh	const key_type &	read-only ref	yes	value
+erase		iterator	iterator-view	borrows self	const_iterator	iterator	yes	iterator
+erase		iterator	iterator-view	borrows self	const_iterator; const_iterator	iterator; iterator	yes	iterator,iterator
+erase		iterator	iterator-view	borrows self	iterator	iterator	yes	iterator
+extract		node_type	UNRESOLVED	unknown -> treat as borrows self (conservative)	const key_type &	read-only ref	yes	value
+extract		node_type	UNRESOLVED	unknown -> treat as borrows self (conservative)	const_iterator	iterator	yes	iterator
+find		auto	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Kt &	template-param (needs witness)	accessor	value
+find	const	auto	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Kt &	template-param (needs witness)		value
+find		iterator	iterator-view	borrows self	const key_type &	read-only ref	accessor	value
+find	const	const_iterator	iterator-view	borrows self	const key_type &	read-only ref		value
+get_allocator	const	allocator_type	value	fresh (owner)				-
+insert		void	void	none	_InputIterator; _InputIterator	template-param (needs witness); template-param (needs witness)	yes	iterator,iterator
+insert		__enable_if_t<is_constructible<value_type, _Pair>::value, pair<iterator, bool>>	iterator-view	borrows self	_Pair &&	template-param (needs witness)	yes	value
+insert		std::pair<iterator, bool>	iterator-view	borrows self	const value_type &	read-only ref	yes	pair
+insert		__enable_if_t<is_constructible<value_type, _Pair>::value, iterator>	iterator-view	borrows self	const_iterator; _Pair &&	iterator; template-param (needs witness)	yes	iterator,value
+insert		iterator	iterator-view	borrows self	const_iterator; const value_type &	iterator; read-only ref	yes	iterator,pair
+insert		iterator	iterator-view	borrows self	const_iterator; node_type &&	iterator; consumed (rvalue)	yes	iterator,allocator
+insert		iterator	iterator-view	borrows self	const_iterator; value_type &&	iterator; consumed (rvalue)	yes	iterator,pair
+insert		insert_return_type	iterator-view	borrows self	node_type &&	consumed (rvalue)	yes	allocator
+insert		void	void	none	std::initializer_list<value_type>	by value	yes	initlist
+insert		std::pair<iterator, bool>	iterator-view	borrows self	value_type &&	consumed (rvalue)	yes	pair
+insert_or_assign		pair<iterator, bool>	iterator-view	borrows self	const key_type &; _Obj &&	read-only ref; template-param (needs witness)	yes	value,value
+insert_or_assign		iterator	iterator-view	borrows self	const_iterator; const key_type &; _Obj &&	iterator; read-only ref; template-param (needs witness)	yes	iterator,value,value
+insert_or_assign		iterator	iterator-view	borrows self	const_iterator; key_type &&; _Obj &&	iterator; consumed (rvalue); template-param (needs witness)	yes	iterator,value,value
+insert_or_assign		pair<iterator, bool>	iterator-view	borrows self	key_type &&; _Obj &&	consumed (rvalue); template-param (needs witness)	yes	value,value
+key_comp	const	key_compare	value	fresh (owner)				-
+lower_bound		auto	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Kt &	template-param (needs witness)	accessor	value
+lower_bound	const	auto	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Kt &	template-param (needs witness)		value
+lower_bound		iterator	iterator-view	borrows self	const key_type &	read-only ref	accessor	value
+lower_bound	const	const_iterator	iterator-view	borrows self	const key_type &	read-only ref		value
+max_size	const	size_type	scalar	fresh				-
+merge		void	void	none	map<int, int, _Cmp2, std::allocator<std::pair<const int, int>>> &	mutated (non-const ref)	yes	allocator
+merge		void	void	none	map<int, int, _Cmp2, std::allocator<std::pair<const int, int>>> &&	consumed (rvalue)	yes	allocator
+merge		void	void	none	multimap<int, int, _Cmp2, std::allocator<std::pair<const int, int>>> &	mutated (non-const ref)	yes	allocator
+merge		void	void	none	multimap<int, int, _Cmp2, std::allocator<std::pair<const int, int>>> &&	consumed (rvalue)	yes	allocator
+operator=		map<int, int> &	self-reference	borrows self (returns *this)	const map<int, int> &	read-only ref	yes	value
+operator=		map<int, int> &	self-reference	borrows self (returns *this)	initializer_list<value_type>	by value	yes	initlist
+operator=		map<int, int> &	self-reference	borrows self (returns *this)	map<int, int> &&	consumed (rvalue)	yes	value
+operator[]		mapped_type &	element-reference	borrows self	const key_type &	read-only ref	yes	value
+operator[]		mapped_type &	element-reference	borrows self	key_type &&	consumed (rvalue)	yes	value
+rbegin		reverse_iterator	iterator-view	borrows self			accessor	-
+rbegin	const	const_reverse_iterator	iterator-view	borrows self				-
+rend		reverse_iterator	iterator-view	borrows self			accessor	-
+rend	const	const_reverse_iterator	iterator-view	borrows self				-
+size	const	size_type	scalar	fresh				-
+swap		void	void	none	map<int, int> &	mutated (non-const ref)	yes	mref
+try_emplace		pair<iterator, bool>	iterator-view	borrows self	const key_type &; _Args &&...	read-only ref; template-param (needs witness)	yes	value,args
+try_emplace		iterator	iterator-view	borrows self	const_iterator; const key_type &; _Args &&...	iterator; read-only ref; template-param (needs witness)	yes	iterator,value,args
+try_emplace		iterator	iterator-view	borrows self	const_iterator; key_type &&; _Args &&...	iterator; consumed (rvalue); template-param (needs witness)	yes	iterator,value,args
+try_emplace		pair<iterator, bool>	iterator-view	borrows self	key_type &&; _Args &&...	consumed (rvalue); template-param (needs witness)	yes	value,args
+upper_bound		auto	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Kt &	template-param (needs witness)	accessor	value
+upper_bound	const	auto	UNRESOLVED	unknown -> treat as borrows self (conservative)	const _Kt &	template-param (needs witness)		value
+upper_bound		iterator	iterator-view	borrows self	const key_type &	read-only ref	accessor	value
+upper_bound	const	const_iterator	iterator-view	borrows self	const key_type &	read-only ref		value
+value_comp	const	value_compare	UNRESOLVED	unknown -> treat as borrows self (conservative)				-

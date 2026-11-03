@@ -2,12 +2,12 @@
 
 usage: members.py <ast.txt> <start-line> > members.tsv
 
-Prints one tab-separated row per CXXMethodDecl / CXXConstructorDecl / CXXDestructorDecl /
-CXXConversionDecl that is a direct child of the specialization node at <start-line>:
-access, kind, name, type, qualifiers (const / ref-qualifier / static / virtual), line.
-Members are treated as public only if the last AccessSpecDecl before them says so (a `class`
-starts private, a `struct` public; both std::vector and std::basic_string here are written
-`public:` first, which the dump shows as an AccessSpecDecl).
+Prints one tab-separated row per CXXMethodDecl / CXXConstructorDecl / CXXDestructorDecl / CXXConversionDecl that is a direct
+child of the specialization node at <start-line>: access, kind, name, type, qualifiers, line. The node may sit at any depth
+(a base class such as the MSVC STL's `_Tree` is nested inside `namespace std`): the indentation of the node's own line decides
+how its children look.
+
+Members are public only if the last AccessSpecDecl before them says so (a `class` starts private, a `struct` public).
 """
 import re
 import sys
@@ -16,12 +16,16 @@ path, start = sys.argv[1], int(sys.argv[2])
 lines = open(path, encoding='utf-8', errors='replace').read().split('\n')
 
 head = lines[start - 1]
-assert 'ClassTemplateSpecializationDecl' in head, head[:80]
+m = re.match(r'^((?:[| ] )*)[|`]-ClassTemplateSpecializationDecl ', head)
+assert m, head[:80]
+base_indent = m.group(1)                              # '' for a top-level node, '| ' per level of nesting
+is_last = head[len(base_indent)] == '`'               # the node is the last child: its children are indented with spaces
+child_indent = base_indent + ('  ' if is_last else '| ')
 is_struct = ' struct ' in head
 access = 'public' if is_struct else 'private'
 
-# direct children of the node are the lines that start with "| |-" or "| `-" (depth 1 under a top-level "|-")
-child = re.compile(r'^\| [|`]-([A-Za-z]+) 0x[0-9a-f]+ (.*)$')
+child = re.compile('^' + re.escape(child_indent) + r'[|`]-([A-Za-z]+) 0x[0-9a-f]+ (.*)$')
+member_decl = re.compile('^' + re.escape(child_indent) + r'[| ] [|`]-([A-Za-z]+) 0x[0-9a-f]+ (.*)$')
 decl_kinds = {'CXXMethodDecl', 'CXXConstructorDecl', 'CXXDestructorDecl', 'CXXConversionDecl', 'FunctionTemplateDecl'}
 
 rows = []
@@ -29,12 +33,12 @@ i = start
 while i < len(lines):
     i += 1
     ln = lines[i - 1]
-    if not ln.startswith('| '):
+    if not ln.startswith(child_indent):
         break
-    m = child.match(ln)
-    if not m:
+    mm = child.match(ln)
+    if not mm:
         continue
-    kind, rest = m.groups()
+    kind, rest = mm.groups()
     if kind == 'AccessSpecDecl':
         access = rest.split()[-1]
         continue
@@ -43,15 +47,15 @@ while i < len(lines):
     if kind == 'FunctionTemplateDecl':
         # the member template's declaration is the next child line one level deeper
         j = i
-        while j < len(lines) and not re.match(r'^\| [| ] [|`]-(CXXMethodDecl|CXXConstructorDecl|CXXConversionDecl) ', lines[j]):
+        while j < len(lines) and not re.match('^' + re.escape(child_indent) + r'[| ] [|`]-(CXXMethodDecl|CXXConstructorDecl|CXXConversionDecl) ', lines[j]):
             j += 1
             if j - i > 40:
                 break
         ln = lines[j] if j < len(lines) else ln
-        mm = re.match(r'^\| [| ] [|`]-([A-Za-z]+) 0x[0-9a-f]+ (.*)$', ln)
-        if not mm:
+        m2 = member_decl.match(ln)
+        if not m2:
             continue
-        kind, rest = mm.groups()
+        kind, rest = m2.groups()
         kind = 'Template' + kind
     # <loc> [line:N:M, col:K] col:K [implicit] [used|referenced] name 'type' [qualifiers]
     t = re.search(r"(?:^|\s)(~?[A-Za-z_][A-Za-z_0-9]*|operator\S*?)\s+'([^']*)'(?::'[^']*')?(.*)$", rest)

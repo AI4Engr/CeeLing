@@ -23,7 +23,7 @@ class FactTable {
 public:
     // One loaded fact.
     struct Fact {
-        std::string kind;                 // "vector.sig", "vector.note", "vector.own", "string.sig", "function", "class", "operator", "borrow"
+        std::string kind;                 // "vector.sig", "string.sig", "map.sig", "vector.note", "vector.own", "function", "class", "operator", "borrow"
         std::string subject;              // e.g. "push_back", "std::stoi", "Eigen::MatrixXd|*"
         std::set<std::string> flags;      // e.g. "shares-arg0"
         std::map<std::string, std::string> attrs;   // key=value words other than source= and review=, e.g. result=void
@@ -41,6 +41,9 @@ public:
     bool has(const std::string& kind, const std::string& subject) const;
     // Does it hold that fact AND does the fact carry `flag`?
     bool hasFlag(const std::string& kind, const std::string& subject, const std::string& flag) const;
+
+    // Every fact of this kind whose subject starts with `prefix` (sorted by subject).
+    std::vector<const Fact*> withPrefix(const std::string& kind, const std::string& prefix) const;
 
     // The fact with this kind and subject, or nullptr.
     const Fact* find(const std::string& kind, const std::string& subject) const;

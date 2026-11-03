@@ -1,20 +1,22 @@
-"""Classify the scanned members of std::vector<int> and std::basic_string<char> and compare them.
+"""Classify the scanned members of library classes from a clang text AST dump (signature level only: declared types, never bodies).
 
-usage: classify.py <ast.txt> <vector-line> <string-line> <outdir>
+usage (as a script):  classify.py <ast.txt> <outdir> <label>=<class>[,<class>...]@<line>[+<line>...] ...
+    e.g.  classify.py ast_msvc.txt . vector=vector@273856 string=basic_string@280332 map=map,_Tree@293905+254666
 
-Inputs: the clang text AST (see README), the line of each ClassTemplateSpecializationDecl.
-Outputs (in <outdir>): vector.facts.tsv, string.facts.tsv (one row per public overload),
-and a comparison summary on stdout (also what REPORT.md quotes).
+  label     names the output file: <outdir>/<label>.facts.tsv (one row per public overload)
+  class     the class names whose own name counts as "returns *this" (the class and its bases: `map`, `_Tree`)
+  line      the AST line of the ClassTemplateSpecializationDecl; further lines after `+` are PUBLIC BASE classes whose members
+            are part of the interface (the MSVC STL's `map` keeps most of its members in `_Tree`)
 
-Signature-level facts only: this looks at declared types, never at bodies.
+As a module: run(ast_path, outdir, specs) with specs = [(label, [class names], [lines])].
 """
 import re
 import subprocess
 import sys
 
-ast, vec_line, str_line, outdir = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 here = __file__.rsplit('/', 1)[0].rsplit('\\', 1)[0]
-lines = open(ast, encoding='utf-8', errors='replace').read().split('\n')
+ast = None
+lines = []
 
 
 def aliases(start):
@@ -136,6 +138,35 @@ def classify_param(p, al, cls):
     return 'by value'
 
 
+def param_kind(resolved_param):
+    """What a parameter IS, in a few coarse kinds (the compiler decides which kinds CeeLing can write):
+         value     a plain value or a const reference/rvalue reference to one (int, char, string, key, mapped value)
+         args      a forwarding parameter pack (`emplace_back(args...)`)
+         mref      a non-const lvalue reference (swap(vector &), merge(map &)): the callee may change the argument
+         iterator  an iterator of any kind (also the template parameters libstdc++ and the MSVC STL name _Iter, _InIt, ...)
+         initlist  std::initializer_list
+         allocator std::allocator
+         pair      std::pair or a map node
+         ptr-w     a pointer to writable memory (`char *dest`)
+         cstr      a `const char *` (a string literal arrives this way: harmless)"""
+    q = resolved_param.strip()
+    if re.search(r'iterator|\b_(Iter|InIt|FwdIt|InputIterator|ForwardIterator|Sent)\b', q):
+        return 'iterator'
+    if 'initializer_list' in q:
+        return 'initlist'
+    if 'allocator' in q:
+        return 'allocator'
+    if re.search(r'pair<|node_type', q):
+        return 'pair'
+    if '*' in q:
+        return 'cstr' if q.startswith('const ') else 'ptr-w'
+    if '...' in q:
+        return 'args'
+    if q.endswith('&') and not q.endswith('&&') and not re.search(r'\bconst\b', q):
+        return 'mref'
+    return 'value'
+
+
 def facts(rows, al, cls):
     out = []
     for r in rows:
@@ -147,7 +178,8 @@ def facts(rows, al, cls):
         shape, borrow = classify_return(ret, al, cls)
         out.append(dict(name=r['name'], params=params, const=const, ret=ret, shape=shape, borrow=borrow,
                         template=r['kind'].startswith('Template'),
-                        pclass=[classify_param(p, al, cls) for p in params], line=r['line']))
+                        pclass=[classify_param(p, al, cls) for p in params], line=r['line'],
+                        pkinds=[param_kind(resolve(p, al)) for p in params]))
     # accessor test: a non-const overload with a const twin (same name, same parameter list)
     twins = {(f['name'], tuple(f['params'])) for f in out if f['const']}
     for f in out:
@@ -158,70 +190,33 @@ def facts(rows, al, cls):
 
 def write_tsv(path, fs):
     with open(path, 'w', encoding='utf-8', newline='\n') as o:
-        o.write('name\tconst\treturn\tshape\tresult-borrow\tparams\tparam-classes\tmutates-receiver\n')
+        o.write('name\tconst\treturn\tshape\tresult-borrow\tparams\tparam-classes\tmutates-receiver\tparam-kinds\n')
         for f in sorted(fs, key=lambda f: (f['name'], f['params'])):
             o.write('\t'.join([f['name'], 'const' if f['const'] else '', f['ret'], f['shape'], f['borrow'], '; '.join(f['params']),
-                               '; '.join(f['pclass']), 'yes' if f['mutates'] else ('accessor' if f['accessor'] else '')]) + '\n')
+                               '; '.join(f['pclass']), 'yes' if f['mutates'] else ('accessor' if f['accessor'] else ''),
+                               ','.join(f['pkinds']) or '-']) + '\n')
 
 
-# --- what the standard says (transcribed, [vector.modifiers] / [vector.capacity] / [string.modifiers] / [string.capacity] ...) --
-# Members that may invalidate references, pointers and iterators into the object (some only "if capacity changes" or "at/after the
-# point of modification"; any of these is a possible death event for an element observer).
-STD_VECTOR_INVALIDATES = {'push_back', 'emplace_back', 'insert', 'emplace', 'erase', 'pop_back', 'clear', 'resize', 'reserve',
-                          'shrink_to_fit', 'assign', 'operator=', 'swap'}
-# swap invalidates nothing in the iterator sense (iterators now refer into the other container); for an owner-keyed provenance
-# table it is a death event for observers of the *original* owner, so it is kept in the set.
-STD_STRING_INVALIDATES = {'push_back', 'pop_back', 'append', 'operator+=', 'insert', 'erase', 'clear', 'resize', 'reserve',
-                          'shrink_to_fit', 'assign', 'operator=', 'replace', 'swap', 'copy_not'}  # 'copy_not' is a placeholder removed below
-STD_STRING_INVALIDATES.discard('copy_not')
-# Accessors that do NOT invalidate (give out mutable access to the same storage):
-STD_ACCESSORS = {'begin', 'end', 'rbegin', 'rend', 'data', 'operator[]', 'at', 'front', 'back'}
-
-HAND_VECTOR_ADMITTED = {'push_back', 'pop_back', 'size', 'begin', 'end', 'resize', 'reserve', 'copyWithin'}
-HAND_VECTOR_INVALIDATES = {'push_back', 'pop_back', 'resize'}
-HAND_STRING_ADMITTED = {'length', 'size', 'empty', 'substr', 'find', 'append', 'clear', 'push_back', 'reserve'}
-HAND_STRING_INVALIDATES = set()  # there is no string equivalent of vectorMethodInvalidatesReferences
-
-vrows, srows = members(vec_line), members(str_line)
-vf = facts(vrows, aliases(vec_line), 'vector')
-sf = facts(srows, aliases(str_line), 'basic_string')
-write_tsv(outdir + '/vector.facts.tsv', vf)
-write_tsv(outdir + '/string.facts.tsv', sf)
+def run(ast_path, outdir, specs):
+    global ast, lines
+    ast = ast_path
+    lines = open(ast, encoding='utf-8', errors='replace').read().split('\n')
+    for label, classes, line_numbers in specs:
+        al, rows = {}, []
+        for ln in reversed(line_numbers):          # bases first, so the derived class's aliases win
+            al.update(aliases(ln))
+        for ln in line_numbers:
+            rows += members(ln)
+        fs = facts(rows, al, tuple(classes))
+        write_tsv('%s/%s.facts.tsv' % (outdir, label), fs)
+        print('%s: %d public overloads, %d names' % (label, len(fs), len({f['name'] for f in fs})))
 
 
-def names(fs, pred):
-    return {f['name'] for f in fs if pred(f)}
-
-
-def show(title, s):
-    print('%s (%d): %s' % (title, len(s), ', '.join(sorted(s)) if s else '-'))
-
-
-for label, fs, std_inv, hand_adm, hand_inv in (('std::vector<int>', vf, STD_VECTOR_INVALIDATES, HAND_VECTOR_ADMITTED, HAND_VECTOR_INVALIDATES),
-                                                ('std::basic_string<char>', sf, STD_STRING_INVALIDATES, HAND_STRING_ADMITTED, HAND_STRING_INVALIDATES)):
-    print('=' * 8, label)
-    allnames = {f['name'] for f in fs}
-    print('public overloads: %d, distinct names: %d' % (len(fs), len(allnames)))
-    shapes = {}
-    for f in fs:
-        shapes[f['shape']] = shapes.get(f['shape'], 0) + 1
-    print('result shapes:', ', '.join('%s=%d' % kv for kv in sorted(shapes.items())))
-    print('overloads with a raw-pointer result or parameter (sealed by rule): %d' % sum(1 for f in fs if f['shape'] == 'raw-pointer' or any('raw-pointer' in c for c in f['pclass'])))
-    print('template overloads (need witness types): %d' % sum(1 for f in fs if f['template']))
-    mut = names(fs, lambda f: f['mutates'])
-    acc = names(fs, lambda f: f['accessor'])
-    show('signature-derived: non-const without a const twin ("mutates receiver")', mut)
-    show('signature-derived: accessors (non-const with a const twin)', acc)
-    print('-- derived rule vs the standard')
-    show('  derived-mutators the standard does NOT list as invalidating', mut - std_inv)
-    show('  standard-invalidating members the derived rule misses', (std_inv & allnames) - mut)
-    show('  derived accessors vs the standard accessor list: only-derived', acc - STD_ACCESSORS)
-    show('  standard accessors the twin rule does not find', (STD_ACCESSORS & allnames) - acc)
-    print('-- hand tables vs the scan')
-    show('  hand-admitted names with no std member of that name', hand_adm - allnames)
-    adm = hand_adm & allnames
-    show('  hand-admitted names the scan says mutate the receiver', adm & mut)
-    show('  of those, NOT in the hand invalidation table', (adm & mut) - hand_inv)
-    show('  hand-invalidating names the scan does not mark as mutators', hand_inv - mut)
-    show('  scan mutators (standard-invalidating) that the hand tables do not admit at all', (mut & std_inv) - hand_adm)
-    print('  non-ctor public names in the scan:', len(allnames), '; hand admits', len(adm), '= %.1f%%' % (100.0 * len(adm) / max(1, len(allnames))))
+if __name__ == '__main__':
+    path, outdir = sys.argv[1], sys.argv[2]
+    specs = []
+    for arg in sys.argv[3:]:
+        label, rest = arg.split('=', 1)
+        classes, nums = rest.split('@', 1)
+        specs.append((label, classes.split(','), [int(x) for x in nums.split('+')]))
+    run(path, outdir, specs)

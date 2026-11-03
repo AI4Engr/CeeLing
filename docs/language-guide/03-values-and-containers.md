@@ -1019,23 +1019,43 @@ error[semantic/use-after-move]: use of moved-from value `m`
   help: `m` was moved earlier; assign a new value before using it
 ```
 
-**Where it stops.** A map has **no methods**: `size`, `find`, `erase`, `count` and iteration are not available. In the example above the lookup of a missing key therefore returns `0` and
-silently adds the entry, exactly as in C++, and you cannot ask the map whether it contains a key. It is a lookup table, not a general container. `TODO.md` lists this as a gap.
+**Methods.** A map has the methods whose results the checker can follow, decided by the same rule as for `std::vector` and `string` (see above; the facts are `facts/std-map.clfacts`, scanned from the MSVC STL and
+libstdc++ with two key types): `size`, `empty`, `max_size`, `count` and `clear`, and `erase(key)`, which returns how many entries it removed. The overloads of `erase` that take an iterator can never be called from
+CeeLing, so they do not count against the name. Every method that mutates the map kills the observers of it, as `push_back` does for a vector.
 
 <!-- example: 03_map_methods.clg -->
 ```cpp
 int main() {
     std::map<string, int> stock;
     stock["apple"] = 3;
-    stock.erase("apple");
+    stock["pear"] = 0;
+    int removed = stock.erase("apple");
+    std::cout << removed << " " << stock.count("apple") << " " << stock.count("pear") << " " << stock.size() << std::endl;
     return 0;
 }
 ```
-<!-- error: 03_map_methods.clg -->
+<!-- output: 03_map_methods.clg -->
 ```
-error[semantic/forbidden-construct]: call to unknown function/method `erase`
-  --> 03_map_methods.clg:4:5
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `erase` in CeeLing source, or call an existing CeeLing function/method instead.
+1 0 1 1
+```
+
+**Where it stops.** `find`, `at`, `begin`, `insert`, `emplace`, `lower_bound` and the rest are refused, each with its reason: they return an iterator, a reference to an element or a pair, and none of those is tracked.
+In the example above the lookup of a missing key still returns `0` and silently adds the entry, exactly as in C++; `count` is how you ask whether a key is there without adding it. There is no iteration.
+
+<!-- example: 03_map_find_refused.clg -->
+```cpp
+int main() {
+    std::map<string, int> stock;
+    stock["apple"] = 3;
+    auto it = stock.find("apple");
+    return 0;
+}
+```
+<!-- error: 03_map_find_refused.clg -->
+```
+error[semantic/forbidden-construct]: `find` is not available on `std::map<string, int>`: it returns an iterator, and iterators are not tracked yet, so nothing would stop one from dangling
+  --> 03_map_find_refused.clg:4:15
+  help: CeeLing admits a method of the standard library only when the checker can follow what it hands back; the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.
 ```
 
 ## Reading files
@@ -1109,4 +1129,4 @@ exists=0 chars=0 bytes=0
 | library calls | signatures hide borrows | only listed calls are accepted | `03_unknown_call` |
 | `resize`, `reserve`, `copyWithin` | null elements | primitives only | `03_resize_objects` |
 | vector parameters | copy or dangling reference | read-only ones by `const&`, others moved | `03_vector_param`, `03_vector_moved` |
-| `std::map` | a read inserts | kept; primitives only, no methods | `03_map`, `03_map_object_value` |
+| `std::map` | a read inserts | kept; primitives only; `size empty count clear erase(key)` only | `03_map`, `03_map_object_value` |

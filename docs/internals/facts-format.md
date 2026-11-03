@@ -24,7 +24,7 @@ function std::stoi source=declared review=hand
 
 | kind | subject | flags | meaning |
 |---|---|---|---|
-| `vector.sig`, `string.sig` | `name/const` or `name/nonconst` | attributes `result`, `mutates`, `mparam`, `partial`, `impls` | what a scan found for one method name and const-ness (below); written by `gen_pack.py`, `source=inferred review=unreviewed` |
+| `vector.sig`, `string.sig`, `map.sig` | `name/const\|nonconst/<parameter kinds joined by +>` (`-` for none) | attributes `result`, `mutates`, `partial`, `impls` | what a scan found for one SIGNATURE (below); written by `gen_pack.py`, `source=inferred review=unreviewed` |
 | `vector.note` | method name | `shares-arg0` | a declared fact no signature can give: the first argument is linked into the container, not consumed |
 | `vector.own` | method name | none | a method CeeLing itself defines (`copyWithin`); admitted without a scan fact |
 | `function` | called name | none | a free function the program may call; matched on the bare name, with or without a namespace qualifier |
@@ -34,12 +34,16 @@ function std::stoi source=declared review=hand
 
 ## Signature facts (`*.sig`)
 
-`result` is a comma-separated set of the shapes the overloads return: `void`, `scalar`, `string` (a fresh std::string), `self-reference` (`*this`), `element-reference`, `iterator-view`, `view`, `raw-pointer`, `value` (a type
-CeeLing has no shape for), `unresolved`. `mutates=yes`: some overload may change the receiver (a non-const member with no const twin), so every observer of the container dies. `mparam=yes`: some overload takes a non-const
-reference or a pointer to writable memory. `partial=yes`: a scanned implementation could not resolve an overload that another resolved. `impls`: the implementations scanned. All three of `result`, `mutates`, `mparam` are required.
+The subject names the signature: the method, its const-ness and the KIND of each parameter: `value` (a plain value or const reference), `args` (a parameter pack), `mref` (a non-const lvalue reference), `iterator`,
+`initlist`, `allocator`, `pair`, `ptr-w` (a pointer to writable memory), `cstr` (a `const char *`, how a string literal arrives). Example: `map.sig erase/nonconst/value` is `erase(key)`, `map.sig erase/nonconst/iterator`
+is `erase(iterator)`. The facts only say what each parameter IS; the compiler decides which kinds CeeLing can write (not `iterator initlist allocator pair ptr-w`), so no language rule is baked into the data.
 
-**Admission is computed from these, not listed** (`library_summary.cpp`, `methodVerdict`): a name is admitted when, for every overload, `mparam=no` and every shape in `result` is one of `void scalar string self-reference`; the
-refusal reason for the first shape that is not is part of the error message. A name with no fact is not admitted.
+`result` is a comma-separated set of the shapes the signature returns: `void`, `scalar`, `string` (a fresh std::string), `self-reference` (`*this`), `element-reference`, `iterator-view`, `view`, `raw-pointer`, `value` (a type
+CeeLing has no shape for), `unresolved`. `mutates=yes`: the signature may change the receiver (a non-const member with no const twin), so every observer of the container dies. `partial=yes`: a scanned implementation could not resolve an overload that another resolved. `impls`: the implementations scanned. `result` and `mutates` are required.
+
+**Admission is computed from these, not listed** (`library_summary.cpp`, `methodVerdict`): a name is admitted when, for every CALLABLE signature (no parameter of kind `iterator initlist allocator pair ptr-w`), there is no `mref`
+parameter and every shape in `result` is one of `void scalar string self-reference`; the refusal reason for the first shape that is not is part of the error message. A name with no fact, or with no callable
+signature, is not admitted. Signatures that cannot be called do not count against the name, which is how `map::erase(key)` is admitted while `erase(iterator)` is not.
 
 ## What the loader refuses
 
@@ -59,5 +63,5 @@ re-runs the generator at the next build. `tests/facts/fact_table_test.cpp` (CTes
 
 ## Not in version 1 yet (planned, see the TODO)
 
-Per-overload keys (a `*.sig` fact is per name and const-ness today); the library version and header SHA-256 a pack was scanned from; the scanner and implementation versions; `--facts <file>`; result-shape and parameter-mode facts; `sealed`
+The library version and header SHA-256 a pack was scanned from; the scanner and implementation versions; `--facts <file>`; result-shape and parameter-mode facts; `sealed`
 and `not yet` admission states; `trusted include`.

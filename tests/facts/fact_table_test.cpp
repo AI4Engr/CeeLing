@@ -56,22 +56,23 @@ int main() {
     {   // a scanned signature fact
         FactTable t;
         std::string err = t.addText(std::string(kHeader) +
-                                    "vector.sig f/const result=void,scalar mutates=no mparam=no partial=no impls=a,b source=inferred review=unreviewed\n",
+                                    "vector.sig f/const/- result=void,scalar mutates=no partial=no impls=a,b source=inferred review=unreviewed\n",
                                     "t.clfacts");
         check(err.empty(), "sig fact should load: " + err);
-        const FactTable::Fact* f = t.find("vector.sig", "f/const");
+        const FactTable::Fact* f = t.find("vector.sig", "f/const/-");
         check(f != nullptr && f->attrs.at("result") == "void,scalar" && f->attrs.at("mutates") == "no", "sig attributes kept");
-        check(t.find("vector.sig", "g/const") == nullptr, "find of an absent fact");
+        check(t.find("vector.sig", "g/const/-") == nullptr, "find of an absent fact");
+        check(t.withPrefix("vector.sig", "f/").size() == 1 && t.withPrefix("vector.sig", "g/").empty(), "withPrefix");
     }
 
     // everything the loader does not understand is an error
     rejects("frob x source=declared\n", "unknown fact kind");
     rejects("vector.note push_back wobbles source=declared\n", "unknown flag");
     rejects("vector.own copyWithin shares-arg0 source=declared\n", "unknown flag");          // a flag of another kind
-    rejects("vector.sig f/const result=void mutates=no mparam=no colour=red source=inferred\n", "unknown attribute");
-    rejects("vector.sig f/const result=void mutates=maybe mparam=no source=inferred\n", "bad value");
-    rejects("vector.sig f/const result=void mutates=no source=inferred\n", "needs `mparam=`");   // a .sig fact needs all three
-    rejects("vector.sig f/const result=void result=scalar mutates=no mparam=no source=inferred\n", "given twice");
+    rejects("vector.sig f/const/- result=void mutates=no colour=red source=inferred\n", "unknown attribute");
+    rejects("vector.sig f/const/- result=void mutates=maybe source=inferred\n", "bad value");
+    rejects("vector.sig f/const/- mutates=no source=inferred\n", "needs `result=`");   // a .sig fact needs result and mutates
+    rejects("vector.sig f/const/- result=void result=scalar mutates=no source=inferred\n", "given twice");
     rejects("function f\n", "needs");                                                         // too few words
     rejects("function f review=hand\n", "missing `source=`");
     rejects("function f source=guessed\n", "source must be");
@@ -96,9 +97,9 @@ int main() {
 
     {   // the shipped packs: they loaded (otherwise builtinFacts() would have aborted)
         const FactTable& b = cling::builtinFacts();
-        check(b.packs().size() == 5, "five shipped packs, got " + std::to_string(b.packs().size()));
+        check(b.packs().size() == 6, "six shipped packs, got " + std::to_string(b.packs().size()));
         for (const auto& f : b.facts()) {
-            bool scanned = f.kind == "vector.sig" || f.kind == "string.sig";
+            bool scanned = f.kind == "vector.sig" || f.kind == "string.sig" || f.kind == "map.sig";
             check(scanned ? (f.source == "inferred" && f.review == "unreviewed") : (f.source == "declared" && f.review == "hand"),
                   "provenance of a shipped fact: " + f.kind + " " + f.subject);
         }
@@ -111,15 +112,25 @@ int main() {
             check(!cling::vectorMethodRefusal(no).empty(), std::string("a refusal reason is given: ") + no);
         }
         check(cling::vectorMethodRefusal("push_back").empty(), "no refusal reason for an admitted method");
-        for (const char* ok : {"length", "size", "empty", "substr", "find", "append", "clear", "push_back", "reserve", "compare", "assign", "resize"}) {
+        for (const char* ok : {"length", "size", "empty", "substr", "find", "append", "clear", "push_back", "reserve", "compare", "assign", "resize", "insert", "erase"}) {   // callable overloads return *this
             check(cling::isKnownStringMethod(ok), std::string("string method admitted by rule: ") + ok);
         }
-        for (const char* no : {"c_str", "data", "begin", "insert", "erase", "swap", "copy_not_there"}) {
+        for (const char* no : {"c_str", "data", "begin", "end", "copy", "swap", "front", "at", "copy_not_there"}) {
             check(!cling::isKnownStringMethod(no), std::string("string method refused by rule: ") + no);
         }
         check(cling::vectorMethodInvalidatesReferences("reserve") && cling::vectorMethodInvalidatesReferences("clear") &&
                   cling::vectorMethodInvalidatesReferences("assign"), "derived mutators invalidate");
         check(!cling::vectorMethodInvalidatesReferences("size") && !cling::vectorMethodInvalidatesReferences("empty"), "readers do not");
+        // std::map: only the methods whose callable overloads return nothing or a number
+        for (const char* ok : {"size", "empty", "clear", "count", "erase", "max_size"}) {
+            check(cling::isKnownMapMethod(ok), std::string("map method admitted by rule: ") + ok);
+        }
+        for (const char* no : {"find", "begin", "end", "at", "insert", "emplace", "swap", "merge", "lower_bound", "try_emplace", "extract", "frobnicate"}) {
+            check(!cling::isKnownMapMethod(no), std::string("map method refused by rule: ") + no);
+            check(!cling::mapMethodRefusal(no).empty(), std::string("a map refusal reason is given: ") + no);
+        }
+        check(cling::mapMethodInvalidatesReferences("erase") && cling::mapMethodInvalidatesReferences("clear") && !cling::mapMethodInvalidatesReferences("size"), "map mutators");
+        check(cling::vectorMethodRefusal("erase").find("cannot write") != std::string::npos, "vector erase: every overload needs an iterator");
         check(cling::vectorMethodSharesArg("push_back", 0) && !cling::vectorMethodSharesArg("push_back", 1), "push_back shares arg 0");
         check(cling::isKnownBorrowingMethod("Eigen::MatrixXd", "block") && !cling::isKnownBorrowingMethod("Eigen::MatrixXd", "Unit"), "eigen borrow");
     }

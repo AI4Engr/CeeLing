@@ -854,6 +854,8 @@ void DanglingChecker::invalidateContainerObservers(const Expression* callExpr) {
         if (!vectorMethodInvalidatesReferences(member->member)) return;
     } else if (isStringType(typeIt->second)) {
         if (!stringMethodInvalidatesReferences(member->member)) return;
+    } else if (isMapType(typeIt->second)) {
+        if (!mapMethodInvalidatesReferences(member->member)) return;
     } else {
         return;
     }

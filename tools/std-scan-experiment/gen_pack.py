@@ -2,18 +2,21 @@
 
 usage: gen_pack.py [--check] <msvc-dir> <gcc-dir> <out-dir>
 
-Reads <dir>/vector.facts.tsv and <dir>/string.facts.tsv for each implementation (written by classify.py) and writes
-<out-dir>/std-vector.clfacts and <out-dir>/std-string.clfacts: one `*.sig` fact per (method name, const-ness), the
-merge of what the implementations say. With --check, writes nothing and exits 1 if a file differs from what would be written
-(CTest `cling_facts_generated`: the packs in facts/ must be exactly what this script produces from the committed scans).
+Reads the *.facts.tsv tables written by classify.py (see scan.sh) for each implementation and writes
+<out-dir>/std-vector.clfacts, std-string.clfacts and std-map.clfacts: one `*.sig` fact per (method name, const-ness), the
+merge of what the implementations (and, for map, the two key types scanned as witnesses) say. With --check, writes nothing and
+exits 1 if a file differs from what would be written (CTest `cling_facts_generated`).
 
-Merge rule (conservative):
-  * result = the union of the resolved result shapes over the implementations;
-  * a shape the scanner could not resolve (UNRESOLVED) in one implementation is dropped when another implementation
-    resolved every overload of that name, and the fact is marked partial=yes; if no implementation resolved it, the fact says
-    result=...,unresolved and the compiler will not admit the name;
-  * mutates=yes if any overload of any implementation may change the receiver; mparam=yes if any overload takes a non-const
-    reference parameter or a pointer to non-const (it may write through it).
+One fact per SIGNATURE: the subject is `name/const|nonconst/<parameter kinds>` (kinds joined by `+`, `-` for none), for example
+`erase/nonconst/value` (map::erase(key)) and `erase/nonconst/iterator` (erase(iterator)). The kinds only say what each parameter IS
+(value, args, mref, iterator, initlist, allocator, pair, ptr-w, cstr); the COMPILER decides which of them CeeLing can write, so no
+language rule is baked into the facts.
+
+Merge rule (conservative), per signature:
+  * result = the union of the resolved result shapes over all implementations/witnesses;
+  * a shape the scanner could not resolve (UNRESOLVED) in one implementation is dropped when another resolved every overload with
+    that signature, and the fact is marked partial=yes; if none did, the fact says result=...,unresolved;
+  * mutates=yes if any overload with that signature, in any implementation, may change the receiver.
 Everything written is source=inferred review=unreviewed: it is a scanner's draft, not a reviewed fact.
 """
 import csv
@@ -24,71 +27,69 @@ args = [a for a in sys.argv[1:] if a != '--check']
 check = '--check' in sys.argv[1:]
 msvc_dir, gcc_dir, out_dir = args
 
-IMPLS = (('msvc-stl', msvc_dir), ('libstdc++', gcc_dir))
-PACKS = (('vector', 'std-vector', 'std::vector<int>'), ('string', 'std-string', 'std::basic_string<char>'))
+# (class label in the facts, pack name, description, the implementations/witnesses and the tsv stems they come from)
+PACKS = (
+    ('vector', 'std-vector', 'std::vector<int>',
+     (('msvc-stl', msvc_dir, 'vector'), ('libstdc++', gcc_dir, 'vector'))),
+    ('string', 'std-string', 'std::basic_string<char>',
+     (('msvc-stl', msvc_dir, 'string'), ('libstdc++', gcc_dir, 'string'))),
+    ('map', 'std-map', 'std::map<int,int> and std::map<std::string,int> (two key types as witnesses)',
+     (('msvc-stl/int', msvc_dir, 'map'), ('msvc-stl/string', msvc_dir, 'map_si'),
+      ('libstdc++/int', gcc_dir, 'map'), ('libstdc++/string', gcc_dir, 'map_si'))),
+)
 VERSIONS = 'MSVC STL 14.44.35207 and libstdc++ 16.2.0 (clang AST dumps at C++17, the standard the generated code is compiled with, 2026-11-02)'
 
 
 def shape_of(row):
     s = row['shape']
-    if s == 'value' and row['return'].startswith('basic_string<'):
+    if s == 'value' and row['return'].startswith(('basic_string<', 'std::basic_string<', 'string')):
         return 'string'
     return {'UNRESOLVED': 'unresolved'}.get(s, s)
 
 
-def writable_pointer(param):
-    """A raw pointer parameter whose pointee is not const (`char *const dest`): the callee may write through it. A `const char *`
-    is read-only (the only source of one in CeeLing is a string literal)."""
-    p = param.strip()
-    return '*' in p and not p.startswith('const ')
-
-
-def load(directory, cls):
+def load(directory, stem):
     groups = {}
-    with open(os.path.join(directory, cls + '.facts.tsv'), encoding='utf-8', newline='') as f:
+    with open(os.path.join(directory, stem + '.facts.tsv'), encoding='utf-8', newline='') as f:
         for r in csv.DictReader(f, delimiter='\t'):
-            key = (r['name'], 'yes' if r['const'] == 'const' else 'no')
-            g = groups.setdefault(key, {'shapes': [], 'mutates': False, 'mparam': False})
+            kinds = '+'.join(k for k in r['param-kinds'].split(',') if k and k != '-') or '-'
+            key = (r['name'], 'const' if r['const'] == 'const' else 'nonconst', kinds)
+            g = groups.setdefault(key, {'shapes': [], 'mutates': False})
             g['shapes'].append(shape_of(r))
             g['mutates'] = g['mutates'] or r['mutates-receiver'] == 'yes'
-            g['mparam'] = g['mparam'] or 'mutated' in r['param-classes'] or any(writable_pointer(p) for p in r['params'].split('; '))
     return groups
 
 
-def render(cls, pack, shown):
-    per = {name: load(d, cls) for name, d in IMPLS}
+def render(cls, pack, shown, sources):
+    per = {name: load(d, stem) for name, d, stem in sources}
     keys = sorted(set().union(*[set(g) for g in per.values()]))
     out = ['# GENERATED by tools/std-scan-experiment/gen_pack.py from the committed scans of %s.' % shown,
-           '# Do not edit: rerun the script. One `%s.sig` fact per method name and const-ness; source=inferred review=unreviewed' % cls,
-           '# because a scanner wrote them. The compiler decides which names to admit from these facts (library_summary.cpp).',
+           '# Do not edit: rerun scan.sh and gen_pack.py. One `%s.sig` fact per signature (name/const-ness/parameter kinds);' % cls,
+           '# source=inferred review=unreviewed because a scanner wrote them. The compiler decides which names to admit (library_summary.cpp).',
            '@pack ' + pack, '@version 1', '@origin scanned: ' + VERSIONS, '']
-    for name, const in keys:
-        shapes, mutates, mparam, impls, unresolved_only, any_unres = set(), False, False, [], [], False
-        fully_resolved_impl = False
+    for name, const, kinds in keys:
+        shapes, mutates, impls = set(), False, []
+        any_unres, fully_resolved = False, False
         for impl, g in per.items():
-            grp = g.get((name, const))
+            grp = g.get((name, const, kinds))
             if grp is None:
                 continue
             impls.append(impl)
-            resolved = {s for s in grp['shapes'] if s != 'unresolved'}
-            shapes |= resolved
+            shapes |= {x for x in grp['shapes'] if x != 'unresolved'}
             had_unres = 'unresolved' in grp['shapes']
             any_unres = any_unres or had_unres
-            fully_resolved_impl = fully_resolved_impl or not had_unres
+            fully_resolved = fully_resolved or not had_unres
             mutates = mutates or grp['mutates']
-            mparam = mparam or grp['mparam']
-        partial = any_unres and fully_resolved_impl
-        if any_unres and not fully_resolved_impl:
+        partial = any_unres and fully_resolved
+        if any_unres and not fully_resolved:
             shapes.add('unresolved')
-        out.append('%s.sig %s/%s result=%s mutates=%s mparam=%s partial=%s impls=%s source=inferred review=unreviewed' % (
-            cls, name, 'const' if const == 'yes' else 'nonconst', ','.join(sorted(shapes)),
-            'yes' if mutates else 'no', 'yes' if mparam else 'no', 'yes' if partial else 'no', ','.join(impls)))
+        out.append('%s.sig %s/%s/%s result=%s mutates=%s partial=%s impls=%s source=inferred review=unreviewed' % (
+            cls, name, const, kinds, ','.join(sorted(shapes)), 'yes' if mutates else 'no', 'yes' if partial else 'no', ','.join(impls)))
     return '\n'.join(out) + '\n'
 
 
 status = 0
-for cls, pack, shown in PACKS:
-    text = render(cls, pack, shown)
+for cls, pack, shown, sources in PACKS:
+    text = render(cls, pack, shown, sources)
     path = os.path.join(out_dir, pack + '.clfacts')
     if check:
         have = open(path, encoding='utf-8', newline='').read().replace('\r\n', '\n') if os.path.exists(path) else None

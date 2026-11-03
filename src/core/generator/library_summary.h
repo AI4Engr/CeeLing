@@ -101,6 +101,12 @@ bool vectorMethodInvalidatesReferences(const std::string& methodName);
 // iterators are not tracked yet ..."). Empty when the method is admitted. Admission is computed from the scan of the standard
 // library (facts/std-vector.clfacts, std-string.clfacts) by a rule in library_summary.cpp; there is no list of names.
 std::string vectorMethodRefusal(const std::string& methodName);
+
+// The same for `std::map<K, V>` (facts/std-map.clfacts): which methods may be called on a map, and why not. A map has no
+// methods other than these and the subscript.
+bool isKnownMapMethod(const std::string& methodName);
+std::string mapMethodRefusal(const std::string& methodName);
+bool mapMethodInvalidatesReferences(const std::string& methodName);
 std::string stringMethodRefusal(const std::string& methodName);
 
 // The same question for a `string`. The standard: `push_back`, `append`, `clear`, `reserve`

@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ reason: `erase` changes the map (a non-const member with no const twin, found by the scan), so it kills every observer
+//@ reason: of it. Coarser than the standard (erase invalidates only the erased entry), and the safe direction.
+
+int main() {
+    std::map<int, int> m;
+    m[1] = 2;
+    ref std::map<int, int> r = m;
+    m.erase(1);
+    std::cout << r.size() << std::endl;   // ERROR: r observes a possibly-invalidated container
+    return 0;
+}

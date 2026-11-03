@@ -80,10 +80,11 @@ std::string vectorElementType(const std::string& type) {
 
 namespace {
 
-// ADMISSION BY RULE (2026-11-02). There is no list of admitted std::vector / std::string method names any more. The scan of
-// the library's own declarations (facts/std-vector.clfacts, std-string.clfacts) says what every method returns and whether
-// it changes the receiver; a name is admitted when every overload's result is a shape the checkers can honour. "Honour"
-// means: after the call, the analysis still knows what the result may alias, so admitting it does not open a hole.
+// ADMISSION BY RULE (2026-11-02). There is no list of admitted std::vector / std::string / std::map method names. The scan of
+// the library's own declarations (facts/std-vector.clfacts, std-string.clfacts, std-map.clfacts) holds one fact per SIGNATURE:
+// what it returns, whether it changes the receiver, and the kind of each parameter. A name is admitted when every signature
+// CeeLing code could actually call returns a shape the checkers can honour. "Honour" means: after the call, the analysis still
+// knows what the result may alias, so admitting it does not open a hole.
 //   void, scalar      nothing to alias.
 //   string            a fresh std::string (a value type).
 //   self-reference    `append` & co return *this; CeeLing binds no observer to a call result, so it is used as a statement
@@ -93,10 +94,15 @@ namespace {
 //   iterator-view     an iterator dangles when the container grows; iterators are not tracked.
 //   element-reference at()/front()/back(): only `v[i]` is tracked as an observer of the container.
 //   view              string_view conversion: views are not tracked.
-//   value             a type CeeLing has no shape for (std::allocator).
+//   value             a type CeeLing has no shape for (std::allocator, a pair, a comparison object).
 //   unresolved        the scan could not determine the result.
-// A method with a non-const reference parameter (swap) is also out: CeeLing moves a container argument by default, which
-// would empty the other operand.
+// A signature is CALLABLE unless a parameter is of a kind CeeLing has no value of: an iterator, an initializer_list, an
+// allocator, a pair or map node, a pointer to writable memory (`vector::erase(const_iterator)` is not callable, `map::erase(key)`
+// is). Every call that returns an iterator is refused, a string literal is the only `const char *`, and CeeLing has no pairs,
+// so such an overload can never be written; leaving it out is exact, and it is what lets `map::erase(key)` and
+// `string::insert(pos, text)` in while `erase(iterator)` stays out. A parameter pack (`emplace_back(args...)`) is callable.
+// A callable signature with a non-const reference parameter (`swap(other)`, `merge(other)`) is out: CeeLing moves a container
+// argument by default, which would empty the other operand.
 bool shapeHonoured(const std::string& shape) {
     return shape == "void" || shape == "scalar" || shape == "string" || shape == "self-reference";
 }
@@ -110,6 +116,30 @@ std::string shapeRefusal(const std::string& shape) {
     return "the scan of the standard library could not determine what it returns";
 }
 
+// The parameter kinds of a signature fact, from its subject `name/const|nonconst/kind+kind`.
+std::vector<std::string> signatureKinds(const std::string& subject) {
+    size_t second = subject.find('/', subject.find('/') + 1);
+    std::vector<std::string> kinds;
+    if (second == std::string::npos) return kinds;
+    std::string rest = subject.substr(second + 1);
+    size_t start = 0;
+    while (start <= rest.size()) {
+        size_t plus = rest.find('+', start);
+        std::string k = rest.substr(start, plus == std::string::npos ? std::string::npos : plus - start);
+        if (!k.empty() && k != "-") kinds.push_back(k);
+        if (plus == std::string::npos) break;
+        start = plus + 1;
+    }
+    return kinds;
+}
+
+bool signatureCallable(const std::vector<std::string>& kinds) {
+    for (const auto& k : kinds) {
+        if (k == "iterator" || k == "initlist" || k == "allocator" || k == "pair" || k == "ptr-w") return false;
+    }
+    return true;
+}
+
 struct MethodVerdict {
     bool admitted = false;
     std::string reason;   // why not, when !admitted
@@ -118,15 +148,17 @@ struct MethodVerdict {
 MethodVerdict methodVerdict(const std::string& cls, const std::string& name) {
     const FactTable& facts = builtinFacts();
     if (facts.has(cls + ".own", name)) return {true, ""};   // a method CeeLing itself defines (copyWithin)
-    bool any = false;
-    for (const char* constness : {"nonconst", "const"}) {
-        const FactTable::Fact* f = facts.find(cls + ".sig", name + "/" + constness);
-        if (f == nullptr) continue;
-        any = true;
-        if (f->attrs.at("mparam") == "yes") {
-            return {false, "an overload takes a non-const reference parameter, and CeeLing would move the argument out"};
+    std::vector<const FactTable::Fact*> sigs = facts.withPrefix(cls + ".sig", name + "/");
+    if (sigs.empty()) return {false, "the standard library has no such member"};
+    bool anyCallable = false;
+    for (const FactTable::Fact* f : sigs) {
+        std::vector<std::string> kinds = signatureKinds(f->subject);
+        if (!signatureCallable(kinds)) continue;
+        anyCallable = true;
+        for (const auto& k : kinds) {
+            if (k == "mref") return {false, "an overload takes a non-const reference parameter, and CeeLing would move the argument out"};
         }
-        std::string results = f->attrs.at("result");
+        const std::string& results = f->attrs.at("result");
         size_t start = 0;
         while (start <= results.size()) {
             size_t comma = results.find(',', start);
@@ -136,16 +168,16 @@ MethodVerdict methodVerdict(const std::string& cls, const std::string& name) {
             start = comma + 1;
         }
     }
-    if (!any) return {false, "the standard library has no such member"};
+    if (!anyCallable) {
+        return {false, "every overload needs an argument CeeLing cannot write (an iterator, a pair, an initializer_list, a pointer to writable memory)"};
+    }
     return {true, ""};
 }
 
-// Does any overload of `name` change the receiver (so every observer of the container dies)?
+// Does any signature of `name` change the receiver (so every observer of the container dies)? Counted over ALL signatures, callable or not.
 bool methodMutates(const std::string& cls, const std::string& name) {
-    const FactTable& facts = builtinFacts();
-    for (const char* constness : {"nonconst", "const"}) {
-        const FactTable::Fact* f = facts.find(cls + ".sig", name + "/" + constness);
-        if (f != nullptr && f->attrs.at("mutates") == "yes") return true;
+    for (const FactTable::Fact* f : builtinFacts().withPrefix(cls + ".sig", name + "/")) {
+        if (f->attrs.at("mutates") == "yes") return true;
     }
     return false;
 }
@@ -190,6 +222,21 @@ bool stringMethodInvalidatesReferences(const std::string& methodName) {
 
 bool isStringType(const std::string& type) {
     return type == "string" || type == "std::string";
+}
+
+bool isKnownMapMethod(const std::string& methodName) {
+    return methodVerdict("map", methodName).admitted;
+}
+
+std::string mapMethodRefusal(const std::string& methodName) {
+    return methodVerdict("map", methodName).reason;
+}
+
+bool mapMethodInvalidatesReferences(const std::string& methodName) {
+    // Coarser than the standard (insert does not invalidate references into a map, erase only those of the erased element):
+    // any method that changes the map kills its observers. Conservative, and no map observer can be written today (a map holds
+    // primitives only, and `ref` to a primitive does not compile), so nothing is lost.
+    return methodMutates("map", methodName);
 }
 
 bool isKnownStringMethod(const std::string& methodName) {

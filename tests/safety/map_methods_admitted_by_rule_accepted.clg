@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ run: 1 0 1 1 0
+//@ reason: map methods admitted by the rule over the scanned signatures: count, size, empty (scalars), clear (void) and
+//@ reason: erase(key) (the callable overload returns a number; the iterator overloads can never be written in CeeLing).
+
+int main() {
+    std::map<string, int> m;
+    m["a"] = 1;
+    m["b"] = 2;
+    int removed = m.erase("a");
+    std::cout << removed << " " << m.count("a") << " " << m.count("b") << " " << m.size() << " ";
+    m.clear();
+    std::cout << m.size() << std::endl;
+    return 0;
+}
