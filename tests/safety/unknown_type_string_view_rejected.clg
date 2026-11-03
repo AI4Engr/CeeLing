@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ error: unknown type `std::string_view`
+//@ reason: a view of a string is not tracked, so the type cannot be declared (it used to pass through to C++ and a view of a
+//@ reason: temporary was accepted).
+
+string make() {
+    return "a string long enough to live on the heap";
+}
+
+int main() {
+    std::string_view sv = make();
+    std::cout << sv << std::endl;
+    return 0;
+}

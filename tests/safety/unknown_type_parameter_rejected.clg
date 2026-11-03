@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: unknown type `size_t` for the type of parameter `n`
+//@ reason: parameter and return types are checked too, not only locals.
+
+int twice(size_t n) {
+    return 2;
+}
+
+int main() {
+    std::cout << twice(1) << std::endl;
+    return 0;
+}

@@ -8,6 +8,8 @@
 #include "core/generator/channel_check.h"
 #include "core/generator/ast_emitter.h"
 #include "core/generator/smart_pointer_analyzer.h"
+#include "core/generator/fact_table.h"
+#include "core/generator/library_summary.h"
 #include <iostream>
 #include <vector>
 #include <fstream>
@@ -178,6 +180,8 @@ void showUsage(const char* programName) {
     std::cout << "  --no-null-checks   - Do not insert runtime null checks on object-handle dereferences" << std::endl;
     std::cout << "  --ptr-demands-out <file> - Write the pointer kinds this file needs from the classes it includes (separate compilation; see smart_pointer_analyzer.h)" << std::endl;
     std::cout << "  --ptr-demands <file>     - Read such demands written by other files (repeatable)" << std::endl;
+    std::cout << "  --facts <file>     - Add a project fact pack (functions, classes, operators, borrowing and fresh methods of a C++ library; repeatable). It can add, never replace, what the compiler knows" << std::endl;
+    std::cout << "  --report-facts     - After a successful compile, list every fact the program relied on and where it came from (the trusted-boundary report)" << std::endl;
     std::cout << "  -g, --debug-lines  - Mark every generated statement with its .clg line (#line), so g++ -g and gdb show and step through the .clg source" << std::endl;
     std::cout << "  --pool-shared      - Allocate shared objects from a per-thread free list (faster node-heavy code)" << std::endl;
     std::cout << "  --legacy-cpp    - Use the legacy regex/text-substitution generator" << std::endl;
@@ -230,6 +234,7 @@ int main(int argc, char* argv[]) {
     bool nullChecks = true;
     bool poolShared = false;
     bool debugLines = false;                          // -g: #line directives (see AstEmitter::setDebugLines)
+    bool reportFacts = false;                         // --report-facts: print the facts the program relied on
     std::string demandsOutFile;                       // --ptr-demands-out: write what this file needs from the classes it includes
     std::vector<std::string> demandsInFiles;          // --ptr-demands: read what other files need (see SmartPointerAnalyzer::setDemands)
 
@@ -253,6 +258,18 @@ int main(int argc, char* argv[]) {
             }
             if (arg == "--ptr-demands-out") demandsOutFile = argv[++i];
             else demandsInFiles.push_back(argv[++i]);
+        } else if (arg == "--facts") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --facts requires a filename" << std::endl;
+                return 1;
+            }
+            std::string err = cling::addProjectFacts(argv[++i]);
+            if (!err.empty()) {
+                std::cerr << "Error: --facts: " << err << std::endl;
+                return 2;
+            }
+        } else if (arg == "--report-facts") {
+            reportFacts = true;
         } else if (arg == "--legacy-cpp") {
             useLegacyGenerator = true;
         } else if (arg == "--cpp") {
@@ -500,6 +517,19 @@ int main(int argc, char* argv[]) {
         outFile.close();
 
         std::cout << "C++ code generated successfully: " << outputFile << std::endl;
+        if (reportFacts) {
+            // The trusted-boundary report: every fact a check answered "yes" from while this file was compiled. A fact below
+            // `declared` + `review=hand|reviewed` is a scanner's draft; a project pack is the project's own claim about its library.
+            const cling::FactTable& table = cling::builtinFacts();
+            std::vector<const cling::FactTable::Fact*> used = table.usedFacts();
+            std::cout << "Facts relied on (" << used.size() << "), packs loaded:";
+            for (const auto& p : table.packs()) std::cout << " " << p;
+            std::cout << std::endl;
+            for (const auto* f : used) {
+                std::cout << "  " << f->kind << " " << f->subject << "  [" << f->pack << ", " << f->source
+                          << (f->review.empty() ? "" : ", review=" + f->review) << "]" << std::endl;
+            }
+        }
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

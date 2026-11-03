@@ -296,6 +296,18 @@ bool isKnownBorrowingMethod(const std::string& className, const std::string& met
     return builtinFacts().has("borrow", className + "::" + methodName);
 }
 
+bool isKnownFreshMethod(const std::string& className, const std::string& methodName) {
+    return builtinFacts().has("fresh", className + "::" + methodName);
+}
+
+std::vector<std::string> knownExternalClassTypes() {
+    std::vector<std::string> out;
+    for (const auto& f : builtinFacts().facts()) {
+        if (f.kind == "class") out.push_back(f.subject);
+    }
+    return out;
+}
+
 bool isKnownRuntimeHelper(const std::string& qualifiedName) {
     // cling::spawn is produced only by closure_desugar's `spawn(closure ...)` rewrite (a hand-written call is
     // rejected there): it is what makes the sendable-capture check unavoidable.

@@ -1483,6 +1483,9 @@ int main() {
 ```
 <!-- error: 06_gap_auto_iterator.clg -->
 ```
+error[semantic/forbidden-construct]: `auto` has no known type
+  --> 06_gap_auto_iterator.clg:9:5
+  help: CeeLing passes `auto` to C++ unchanged, so nothing could follow what the variable holds (an iterator, a view, a lazy expression): that is how a dangling reference gets past the checker. Write the type, e.g. `int`, `string` or a class name.
 error[semantic/forbidden-construct]: `begin` is not available on `std::vector<int>`: it returns an iterator, and iterators are not tracked yet, so nothing would stop one from dangling
   --> 06_gap_auto_iterator.clg:9:15
   help: CeeLing admits a method of the standard library only when the checker can follow what it hands back; the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.
@@ -1599,7 +1602,7 @@ int main() {
 }
 ```
 
-**What CeeLing does.** Nothing yet. There is no tracking of a view that depends on a string or a vector, and the program below is accepted:
+**What CeeLing does.** It does not let you write one. There is no tracking of a view that depends on a string or a vector, so the type is refused as an unknown type (since 2026-11-02; before that the name passed through to C++ and the program was accepted):
 
 <!-- example: 06_gap_string_view.clg -->
 ```cpp
@@ -1609,22 +1612,20 @@ string make() {
 
 int main() {
     std::string_view sv = make();   // the string returned by make() is a temporary
-    std::cout << sv << std::endl;   // accepted -- and a read of freed memory
+    std::cout << sv << std::endl;   // refused before it can be written
     return 0;
 }
 ```
-<!-- generated: 06_gap_string_view.clg "int main()" -->
-```cpp
-int main() {
-    std::string_view sv = make();
-    std::cout << sv << std::endl;
-    return 0;
-}
+<!-- error: 06_gap_string_view.clg -->
+```
+error[semantic/forbidden-construct]: unknown type `std::string_view` for variable `sv`
+  --> 06_gap_string_view.clg:6:5
+  help: CeeLing has no shape for `std::string_view`, so every check would be blind to values of it. Declare it as a class/struct in CeeLing, or for a C++ library type add a fact pack that declares `class std::string_view` and its methods (`cling --facts mylib.clfacts`, docs/internals/facts-format.md).
 ```
 
-The cause is not a missing rule for `string_view` as such. A type name the compiler does not know is passed to C++ as it stands, and this holds for `std::string_view`, `std::span`, `auto`
-and any made-up name. The checks follow the types CeeLing knows (its classes, `string`, vectors and maps, a short list of external classes); a value of any other type is invisible to them. If you
-write a program for a build where this matters, do not use those types, and prefer a `string` or a `std::vector` (an owner) wherever you would use a view.
+The same holds for `std::span`, `auto` and any made-up name: **a type name the compiler has no shape for is an error.** The checks follow the types CeeLing knows (its classes, structs and enums, the primitives, `string`,
+vectors, maps, `Channel`, and the classes a loaded fact pack declares); a value of any other type would be invisible to them, so it cannot be declared. Use a `string` or a `std::vector` (an owner) where you would use a
+view. For a C++ library type, declare it in a fact pack and pass the pack with `--facts` ([chapter 11](11-talking-to-cpp.md)).
 
 ### Eigen
 
@@ -1711,9 +1712,9 @@ Now the limits, which are larger than the feature:
   because it tracks the call and not the type of the destination. It is conservative, not precise. The accepted case, using `b` while `a` is untouched, works and prints the right matrix
   (checked by compiling against Eigen by hand).
 * **The tracked form is the safe one; the dangerous form is not tracked.** The danger in Eigen is a *lazy expression* kept in a variable (`auto e = A * B;`), which holds references to its
-  operands. Written with `auto`, that is accepted by the compiler, because of the pass-through of unknown type names above. Checked by hand against Eigen: `auto e = a * b;`, then assigning a new
-  matrix to `a`, then `Eigen::MatrixXd r = e;` is accepted, and aborts at run time on Eigen's own assertion `invalid matrix product`. Older notes in the repository say that CeeLing has no
-  `auto` and so cannot express this; the compiler disagrees.
+  operands. Written with `auto`, that used to be accepted, because unknown type names passed through; checked by hand against Eigen: `auto e = a * b;`, then assigning a new matrix to `a`, then
+  `Eigen::MatrixXd r = e;` was accepted, and aborts at run time on Eigen's own assertion `invalid matrix product`. Since 2026-11-02 `auto` is an error ("has no known type"), so the lazy expression cannot be
+  held in a variable. (Older notes in the repository say that CeeLing has no `auto`; it has a spelling for it, and the checker now refuses it.)
 * **Only eight methods, only `MatrixXd`.** Eigen's other views (`topRows`, `array`, ...) are refused until someone adds them. A chained view (`a.block(...).transpose()`) is refused too.
 * **No Eigen program is in this guide's accepted examples**, because the checker that compiles the examples has no Eigen header path. The two Eigen examples above are rejected ones, which
   need only the CeeLing compiler. The accepted counterparts live in a separate spike folder and were run by hand.
@@ -1728,9 +1729,9 @@ compiled" is not read as more than it means.
 
 * **Iterators.** A range-`for` over a container that its own body changes is not tracked. An iterator held in a variable is refused where it comes from a `vector` or `string` method (`begin()`, `end()`, `insert`, `erase`); one
   that comes from anything else the compiler does not know is refused as an unknown call.
-* **Views.** `string_view`, `span` and similar types, and Eigen's lazy expressions held through `auto` (or any other type name the compiler does not know), are not tracked.
-* **Types the compiler does not know pass through.** A declaration whose type name is not one of CeeLing's is emitted unchanged. A hazard named by such a type is invisible to every check
-  in this chapter.
+* **Views.** `string_view`, `span` and similar types, and Eigen's lazy expressions held through `auto`, are not tracked, and cannot be declared: an unknown type name is an error.
+* **Unknown type names are errors (since 2026-11-02; they used to pass through).** A declaration whose type name is not one of CeeLing's, and not declared by a loaded fact pack, is refused.
+  The remaining blind spots are the ones a known type can hide.
 * **Other Eigen calls.** Eight view methods on one type; everything else is refused or untracked.
 * **Library code.** What a C++ library or an `ext_fn` does with what it is handed is trusted. A function declared `ext_fn` with a wrong `borrows N` makes the checker believe a wrong fact
   ([chapter 11](11-talking-to-cpp.md)).

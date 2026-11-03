@@ -1,0 +1,36 @@
+//@ expect: accept
+//@ run: 7 2 3
+//@ reason: every kind of known type is still accepted: primitives, string, struct, enum, class, vectors and maps of them,
+//@ reason: (a generic method's own type parameter has its own fixture, template_as_basic_accepted.clg).
+
+enum Color { Red, Green };
+
+struct Point {
+public:
+    int x;
+    Point(int v) { x = v; }
+};
+
+class Box {
+public:
+    int n;
+    Box(int v) { n = v; }
+    int get2() { return n; }
+};
+
+Color pick(int i) {
+    if (i == 0) { return Red; }
+    return Green;
+}
+
+int main() {
+    Point p = new Point(7);
+    Box b = new Box(3);
+    std::vector<Box> boxes;
+    boxes.push_back(new Box(2));
+    std::map<string, int> m;
+    m["k"] = 2;
+    Color c = pick(1);
+    std::cout << p.x << " " << m["k"] << " " << b.get2() << std::endl;
+    return 0;
+}

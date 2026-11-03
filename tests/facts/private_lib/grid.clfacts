@@ -1,0 +1,12 @@
+# Facts about the private library in grid.h, written by its users. Everything here is `declared`: nobody scanned it.
+@pack grid
+@version 1
+@origin hand-written for tests/facts/private_lib
+
+class Grid source=declared review=hand
+fresh Grid::width source=declared review=hand
+fresh Grid::height source=declared review=hand
+fresh Grid::sum source=declared review=hand
+fresh Grid::windowWidth source=declared review=hand
+# window() returns a Grid that refers to the receiver's storage
+borrow Grid::window source=declared review=hand

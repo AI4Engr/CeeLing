@@ -1,0 +1,7 @@
+#include "grid.h"
+
+int main() {
+    Grid g = new Grid(3, 2);
+    g.shrink();                       // the pack says nothing about shrink()
+    return 0;
+}

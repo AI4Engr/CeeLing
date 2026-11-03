@@ -54,8 +54,7 @@ percent on decompression and 11.3 percent on compression.
 
 Grouped; each is described where it belongs and listed in [chapter 13](13-contract-and-threats.md). None of them is a plan to be quiet about.
 
-**Dangling analysis does not see:** a loop that grows the container it walks (a stored iterator is refused at `begin()`, not tracked), `string_view` and `span`, Eigen's lazy `auto` expressions and every Eigen view method beyond eight on one type.
-The common cause is that a type name the compiler does not know passes through unchanged, `auto` included. An older note in the repository, that CeeLing has no `auto`, is wrong. Also: `ref` observers are raw pointers in the
+**Dangling analysis does not see:** a loop that grows the container it walks (a stored iterator is refused at `begin()`, not tracked), every Eigen view method beyond eight on one type. (`string_view`, `span` and Eigen's lazy `auto` expressions cannot be written: since 2026-11-02 a type name the compiler does not know, `auto` included, is an error. They used to pass through unchanged.) Also: `ref` observers are raw pointers in the
 generated C++, so a miss in the analysis is not caught by a run-time check (making them self-checking is an open item); an observer of a container element depends on the whole container, which refuses more than necessary.
 
 **Other static checks that stop short:** `std::variant` (never guarded), reference cycles (a back link becomes `weak_ptr` by a naming rule or a hint, not by cycle
@@ -157,7 +156,7 @@ from a field, `ref` on a primitive or a vector). Not a safety hole, but "CeeLing
 
 - `CLAUDE.md` says `std::string` parameters are "not yet admitted" for the read-only `const&` inference; the compiler does it ([chapter 3](03-values-and-containers.md), and `cjson-cling/PERFORMANCE.md`).
 - `CLAUDE.md` and `TODO.md` call "definite initialization" a static check; it covers locals only.
-- `TODO.md` says CeeLing has no `auto`; it passes through ([chapter 6](06-dangling-references.md)).
+- `TODO.md` said CeeLing has no `auto`; it parsed and passed through, and is refused since 2026-11-02 ([chapter 6](06-dangling-references.md)).
 - `TODO.md`'s statement that the repository has no `LICENSE` file is out of date: the file exists, here and in each sibling project.
 - `cjson-cling/TODO.md` still gives a memory ratio of 2.2; `PERFORMANCE.md` gives 1.8.
 - The `cling_safety_contract_baseline` test is not run with `--strict`, so a missed reject shows as XFAIL, not as a failure.

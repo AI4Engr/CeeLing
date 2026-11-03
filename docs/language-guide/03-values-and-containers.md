@@ -1047,14 +1047,14 @@ In the example above the lookup of a missing key still returns `0` and silently 
 int main() {
     std::map<string, int> stock;
     stock["apple"] = 3;
-    auto it = stock.find("apple");
+    stock.find("apple");
     return 0;
 }
 ```
 <!-- error: 03_map_find_refused.clg -->
 ```
 error[semantic/forbidden-construct]: `find` is not available on `std::map<string, int>`: it returns an iterator, and iterators are not tracked yet, so nothing would stop one from dangling
-  --> 03_map_find_refused.clg:4:15
+  --> 03_map_find_refused.clg:4:5
   help: CeeLing admits a method of the standard library only when the checker can follow what it hands back; the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.
 ```
 

@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: `auto` has no known type
+//@ reason: `auto` was passed to C++ unchanged, so nothing could follow what the variable holds (an iterator, a view, a
+//@ reason: lazy expression). It is an error now (2026-11-02): write the type.
+
+int main() {
+    int n = 3;
+    auto m = n + 1;
+    std::cout << m << std::endl;
+    return 0;
+}

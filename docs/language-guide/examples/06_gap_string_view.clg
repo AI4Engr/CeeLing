@@ -1,4 +1,5 @@
-//@ expect: accept
+//@ expect: reject
+//@ error: unknown type `std::string_view`
 //@ generated: std::string_view sv = make();
 string make() {
     return "a string long enough to live on the heap, not in the string object";
@@ -6,6 +7,6 @@ string make() {
 
 int main() {
     std::string_view sv = make();   // the string returned by make() is a temporary
-    std::cout << sv << std::endl;   // accepted -- and a read of freed memory
+    std::cout << sv << std::endl;   // refused before it can be written
     return 0;
 }

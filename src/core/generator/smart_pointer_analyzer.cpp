@@ -2752,8 +2752,9 @@ void SmartPointerAnalyzer::classifyValueTypeClasses(const Program& program) {
     // This is what makes `new Eigen::MatrixXd(...)` emit as a bare, unwrapped
     // constructor call (matching real Eigen's own by-value usage) instead of
     // being wrapped in a smart pointer meant for CeeLing-owned heap objects.
-    if (isKnownExternalClassType("Eigen::MatrixXd")) {
-        valueTypeClasses_.insert("Eigen::MatrixXd");
+    // (Generalised 2026-11-02: every `class` fact of every loaded fact pack, Eigen's and a project's `--facts` pack alike.)
+    for (const std::string& external : knownExternalClassTypes()) {
+        valueTypeClasses_.insert(external);
     }
 }
 

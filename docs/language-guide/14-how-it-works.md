@@ -705,8 +705,8 @@ and a driver repeats the compile until they stop changing. A demand can only mak
 ## Where this stops
 
 * **Stage order matters for what is trusted.** The checks apply to the tree after stage 3. They are not a proof about the C++ compiler's own behaviour on the output.
-* **Unknown type names pass through.** The checks follow the types the compiler knows (its classes, `string`, vectors, maps, a short list of external classes). A declaration with another type name is
-  emitted unchanged and no check sees it ([chapter 6](06-dangling-references.md) gives the consequences).
+* **Unknown type names are errors.** The checks follow the types the compiler knows (its classes, structs and enums, `string`, vectors, maps, `Channel`, and the classes a loaded fact pack declares). A
+  declaration with another type name, `auto` included, is refused, because no check would see a value of it (until 2026-11-02 such a name was emitted unchanged; [chapter 6](06-dangling-references.md)).
 * **The facts are trusted.** The scanned facts are a scanner's draft that nobody has reviewed line by line (`review=unreviewed` in the pack), the hand-written ones are believed, an `ext_fn` is believed, and a library's behaviour behind them is not checked.
 * **Per-function.** The analysis does not follow an observer out of a function, which is why no observer can leave one.
 * **Granularity and conservatism.** A container is one owner; a condition is never evaluated. Both only ever refuse more.

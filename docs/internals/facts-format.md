@@ -31,6 +31,7 @@ function std::stoi source=declared review=hand
 | `class` | type name | none | an external class type that may be declared (`Eigen::MatrixXd`) |
 | `operator` | `Type\|op` | none | the operator may be applied to that type; its result is always fresh |
 | `borrow` | `Class::method` | none | the method returns a view that borrows the receiver, with real dangling tracking |
+| `fresh` | `Class::method` | none | a method of an external class that returns a fresh value (a number, an owned object) and borrows nothing |
 
 ## Signature facts (`*.sig`)
 
@@ -50,6 +51,16 @@ signature, is not admitted. Signatures that cannot be called do not count agains
 An unknown kind, an unknown flag for the kind, a missing `source=`, a `source` other than the two values, a duplicate fact (also across packs), a fact before the header, a missing header line,
 an unknown `@` line. A failed load adds nothing. A shipped pack that fails to load aborts the compiler at start-up with the message, rather than running with part of a table. Nothing is ever
 skipped silently, because a skipped line turns a "no" into a "yes" without anyone noticing.
+
+## Project packs: `cling --facts mylib.clfacts`
+
+A project teaches the compiler about its own C++ library with a pack of `class`, `fresh`, `borrow`, `operator` and `function` facts (repeatable flag). A `class` fact makes the name a known type (a value type, emitted
+bare like `Eigen::MatrixXd`); `fresh` and `borrow` list the methods that may be called on it; a method not listed is rejected as an unknown call. A project pack can only ADD: it may not hold the std signature kinds (so it
+cannot relax how `std` is judged) and may not repeat a fact the compiler ships (so it cannot replace one). A malformed or missing pack is an error (exit 2). `tests/facts/private_lib/` is a worked example: a header
+(`grid.h`), its facts (`grid.clfacts`), a program that uses it and runs, and the two rejections.
+
+`cling --report-facts` prints, after a successful compile, every fact a check answered "yes" from, with its pack and source: the trusted-boundary report. A fact whose source is `inferred` or whose review is `unreviewed`
+is a scanner's draft; a `declared` fact in a project pack is the project's own claim about its library.
 
 ## What a pack cannot do
 

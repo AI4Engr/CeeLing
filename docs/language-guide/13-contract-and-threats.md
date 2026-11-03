@@ -134,8 +134,8 @@ The 19 threats CeeLing was designed against, each with what happens today. "Stat
 | 2 | Return a reference to a local | **By construction.** There is no reference return type, so a return is always owning; returning a `ref` observer is rejected. | [6](06-dangling-references.md) |
 | 3 | A reference stored in a longer-lived field | **By construction.** The grammar has no `ref` field, and `ref` parameters are rejected, so an observer has no place to be stored. | [6](06-dangling-references.md), [8](08-sealed-escape-hatches.md) |
 | 4 | Iterator invalidation | **Partly.** A `ref` into a vector element dies at every method that changes the vector (`push_back`, `resize`, `pop_back`, `reserve`, `clear`, `assign`, ...). An iterator cannot be held: `v.begin()` and the other iterator-returning methods are refused. Mutation inside a range-for body is **open**, see below. | [6](06-dangling-references.md) |
-| 5 | `string_view` / `span` of a temporary | **Open.** A type name the compiler does not know is passed to C++ unchanged, so views are accepted and invisible to every check. | [6](06-dangling-references.md), below |
-| 6 | Expression-template dangle (Eigen `auto e = A + B`) | **Open, narrow exception.** The old claim that CeeLing has no `auto`, so the danger cannot be written, is stale: `auto` is accepted and not tracked. A short hand-written list of Eigen view methods (`block`, `row`, `col`, `transpose`, `segment`, `head`, `tail`, `diagonal`) is tracked; its fixtures live outside `tests/safety`, in a separate Eigen spike. | below |
+| 5 | `string_view` / `span` of a temporary | **Cannot be written.** A type name the compiler does not know is an error (since 2026-11-02), so a view type is refused rather than accepted and invisible. Using a view safely is not supported either: there is no tracking. | [6](06-dangling-references.md), below |
+| 6 | Expression-template dangle (Eigen `auto e = A + B`) | **Cannot be written with `auto`.** `auto` is refused ("has no known type", since 2026-11-02); before that it was accepted and not tracked. A short hand-written list of Eigen view methods (`block`, `row`, `col`, `transpose`, `segment`, `head`, `tail`, `diagonal`) is tracked; its fixtures live outside `tests/safety`, in a separate Eigen spike. | below |
 | 7 | A lambda captures `[&]` and escapes | **By construction.** Closures capture by value only; there is no `&` to write. | [9](09-closures.md) |
 | 8 | A temporary bound to a `const&` | **Listed open; the C++ shape cannot be written.** There is no `const T& x = f();` local (it is a syntax error), and a `ref` bound to a call result is rejected. Views returned from library calls fall under row 5. | [6](06-dangling-references.md) |
 | 9 | Null dereference | **Run time.** Every object-handle dereference is checked and aborts with the line. | [7](07-run-time-checks.md) |
@@ -222,8 +222,9 @@ The message is a generic parse error: the grammar has no production for a declar
 
 ## The open gaps, in plain words
 
-Three of the rows below (4, 5, 6) have one cause: **a type name the compiler does not know is passed to C++ unchanged.** `auto`, `std::string_view`, `std::span` and any made-up name are emitted as written,
-and every check in the compiler follows the types it knows (its own classes, `string`, vectors and maps, a short list of external classes). A value of any other type is invisible to the dangling analysis.
+Three of the rows below (4, 5, 6) had one cause: **a type name the compiler does not know was passed to C++ unchanged.** `auto`, `std::string_view`, `std::span` and any made-up name were emitted as written, and
+every check follows the types it knows (its own classes, structs and enums, `string`, vectors, maps, `Channel`, and the classes a loaded fact pack declares), so a value of any other type was invisible to the dangling analysis.
+**Since 2026-11-02 such a name is an error**, so the rows below are about what a *known* type can still hide, and the examples are rejections.
 
 These are the places where a program with the problem is accepted today. Each one is something I ran against the compiler; none is a proof that the program is wrong in every build, only that CeeLing
 does not stop it.
@@ -244,7 +245,7 @@ int main() {
 
 A `push_back` inside the body of a range-for over the same vector is accepted too. The run-time bounds check does not help: `*it` is not a subscript.
 
-**Views (row 5).** `std::string_view` is accepted and nothing records that it points into a string.
+**Views (row 5).** `std::string_view` is refused as an unknown type; before 2026-11-02 it was accepted and nothing recorded that it pointed into a string.
 
 <!-- example: 13_gap_string_view.clg -->
 ```cpp
@@ -252,12 +253,12 @@ std::string make() { return "abc"; }
 
 int main() {
     std::string_view v = make();       // a view of a temporary string
-    std::cout << v << std::endl;       // accepted today: views are not tracked
+    std::cout << v << std::endl;       // refused: views are not tracked
     return 0;
 }
 ```
 
-**Expression templates (row 6).** `auto e = a * b;` over Eigen matrices is accepted. In this form the danger needs a matrix that dies before `e` is used; nothing watches for it. The Eigen view
+**Expression templates (row 6).** `auto e = a * b;` over Eigen matrices is refused (`auto` has no known type); it used to be accepted, and the danger needs a matrix that dies before `e` is used. The Eigen view
 methods listed in the table are the narrow exception (from `TODO.md`; I did not re-run those fixtures, and I found none for them in `tests/safety`).
 
 **Reference cycles (row 12).** A class whose field points back at its owner leaks if the compiler infers `shared_ptr` for it. The inference gives `weak_ptr` to fields named `prev`, `previous`,

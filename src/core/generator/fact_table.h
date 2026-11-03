@@ -23,7 +23,7 @@ class FactTable {
 public:
     // One loaded fact.
     struct Fact {
-        std::string kind;                 // "vector.sig", "string.sig", "map.sig", "vector.note", "vector.own", "function", "class", "operator", "borrow"
+        std::string kind;                 // "vector.sig", "string.sig", "map.sig", "vector.note", "vector.own", "function", "class", "operator", "borrow", "fresh"
         std::string subject;              // e.g. "push_back", "std::stoi", "Eigen::MatrixXd|*"
         std::set<std::string> flags;      // e.g. "shares-arg0"
         std::map<std::string, std::string> attrs;   // key=value words other than source= and review=, e.g. result=void
@@ -35,7 +35,11 @@ public:
     // Parses `text` (the content of one pack) and adds it. `originName` is used in error messages only.
     // Returns an empty string on success, otherwise one error message of the form "origin:LINE: what".
     // On error nothing from this text is added.
-    std::string addText(const std::string& text, const std::string& originName);
+    //
+    // A PROJECT pack (`projectPack = true`, what `--facts` loads) may only hold facts about external classes and functions
+    // (function, class, operator, borrow, fresh). It cannot touch how `std` is judged (the *.sig, vector.note, vector.own kinds), so a
+    // project can add a library but never relax what the compiler assumes about the standard library.
+    std::string addText(const std::string& text, const std::string& originName, bool projectPack = false);
 
     // Does the table hold a fact with this kind and subject?
     bool has(const std::string& kind, const std::string& subject) const;
@@ -44,6 +48,9 @@ public:
 
     // Every fact of this kind whose subject starts with `prefix` (sorted by subject).
     std::vector<const Fact*> withPrefix(const std::string& kind, const std::string& prefix) const;
+
+    // Facts a query answered "yes" from since the table was loaded, for the trusted-boundary report (--report-facts).
+    std::vector<const Fact*> usedFacts() const;
 
     // The fact with this kind and subject, or nullptr.
     const Fact* find(const std::string& kind, const std::string& subject) const;
@@ -56,10 +63,17 @@ private:
     std::vector<Fact> facts_;
     std::map<std::string, size_t> index_;   // "kind|subject" -> position in facts_
     std::vector<std::string> packs_;
+    mutable std::set<size_t> used_;
 };
 
-// The packs that ship inside the compiler (facts/*.clfacts, embedded at build time). Parsed once. A parse error in a
-// shipped pack is a build defect: it prints the error and aborts the process rather than running with half a table.
+// The facts in force: the packs that ship inside the compiler (facts/*.clfacts, embedded at build time) plus any project packs
+// added with `--facts`. Parsed once. A parse error in a shipped pack is a build defect: it prints the error and aborts the
+// process rather than running with half a table.
 const FactTable& builtinFacts();
+
+// Adds a project pack (`cling --facts file.clfacts`) to the facts in force. Call it before the first query. Returns an empty
+// string on success, otherwise the error (unreadable file, or any load error of FactTable::addText, including a fact that
+// duplicates a shipped one: a project pack can ADD facts, never replace or weaken a shipped one).
+std::string addProjectFacts(const std::string& path);
 
 }  // namespace cling

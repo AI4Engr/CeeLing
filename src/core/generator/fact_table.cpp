@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <sstream>
 
 namespace cling {
@@ -42,6 +43,7 @@ const std::map<std::string, KindSpec>& kindSpecs() {
         {"class", {{}, {}}},
         {"operator", {{}, {}}},
         {"borrow", {{}, {}}},
+        {"fresh", {{}, {}}},          // a method of an external class that returns a fresh value (a number, an owned object): borrows nothing
     };
     return m;
 }
@@ -61,7 +63,7 @@ std::string trimRight(std::string s) {
 
 }  // namespace
 
-std::string FactTable::addText(const std::string& text, const std::string& originName) {
+std::string FactTable::addText(const std::string& text, const std::string& originName, bool projectPack) {
     std::vector<Fact> parsed;
     std::string pack, version, origin;
     std::set<std::string> seen;
@@ -98,6 +100,9 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
         auto kindIt = kindSpecs().find(words[0]);
         if (kindIt == kindSpecs().end()) return fail(lineNo, "unknown fact kind `" + words[0] + "`");
 
+        if (projectPack && words[0] != "function" && words[0] != "class" && words[0] != "operator" && words[0] != "borrow" && words[0] != "fresh") {
+            return fail(lineNo, "a project fact pack may only hold function, class, operator, borrow and fresh facts, not `" + words[0] + "` (it cannot change how std is judged)");
+        }
         Fact f;
         f.kind = words[0];
         f.subject = words[1];
@@ -153,7 +158,10 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
 }
 
 bool FactTable::has(const std::string& kind, const std::string& subject) const {
-    return index_.count(kind + "|" + subject) > 0;
+    auto it = index_.find(kind + "|" + subject);
+    if (it == index_.end()) return false;
+    used_.insert(it->second);
+    return true;
 }
 
 std::vector<const FactTable::Fact*> FactTable::withPrefix(const std::string& kind, const std::string& prefix) const {
@@ -161,22 +169,34 @@ std::vector<const FactTable::Fact*> FactTable::withPrefix(const std::string& kin
     const std::string start = kind + "|" + prefix;
     for (auto it = index_.lower_bound(start); it != index_.end() && it->first.compare(0, start.size(), start) == 0; ++it) {
         out.push_back(&facts_[it->second]);
+        used_.insert(it->second);
     }
     return out;
 }
 
 const FactTable::Fact* FactTable::find(const std::string& kind, const std::string& subject) const {
     auto it = index_.find(kind + "|" + subject);
-    return it == index_.end() ? nullptr : &facts_[it->second];
+    if (it == index_.end()) return nullptr;
+    used_.insert(it->second);
+    return &facts_[it->second];
 }
 
 bool FactTable::hasFlag(const std::string& kind, const std::string& subject, const std::string& flag) const {
     auto it = index_.find(kind + "|" + subject);
-    return it != index_.end() && facts_[it->second].flags.count(flag) > 0;
+    if (it == index_.end() || facts_[it->second].flags.count(flag) == 0) return false;
+    used_.insert(it->second);
+    return true;
 }
 
-const FactTable& builtinFacts() {
-    static const FactTable table = [] {
+std::vector<const FactTable::Fact*> FactTable::usedFacts() const {
+    std::vector<const Fact*> out;
+    for (size_t i : used_) out.push_back(&facts_[i]);
+    return out;
+}
+
+namespace {
+FactTable& factsInForce() {
+    static FactTable table = [] {
         FactTable t;
         for (unsigned long i = 0; i < kBuiltinPackCount; ++i) {
             const BuiltinPackText& p = kBuiltinPacks[i];
@@ -189,6 +209,19 @@ const FactTable& builtinFacts() {
         return t;
     }();
     return table;
+}
+}  // namespace
+
+const FactTable& builtinFacts() {
+    return factsInForce();
+}
+
+std::string addProjectFacts(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return path + ": cannot open the fact pack";
+    std::ostringstream text;
+    text << in.rdbuf();
+    return factsInForce().addText(text.str(), path, true);
 }
 
 }  // namespace cling

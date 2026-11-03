@@ -2,6 +2,7 @@
 
 #include <set>
 #include <string>
+#include <vector>
 
 namespace cling {
 
@@ -248,6 +249,13 @@ bool isKnownExternalOperator(const std::string& type, const std::string& operato
 // are conservatively rejected as unresolvable receivers, not specially
 // handled).
 bool isKnownBorrowingMethod(const std::string& className, const std::string& methodName);
+
+// A method of an external class whose result is fresh (a number, an owned object) and borrows nothing: `fresh Class::method` in a
+// fact pack. Like a borrowing method it may be called; unlike one, nothing is tracked about its result.
+bool isKnownFreshMethod(const std::string& className, const std::string& methodName);
+
+// Every external class type the fact packs declare (`class Name`), for the analyzers that must treat them as value types.
+std::vector<std::string> knownExternalClassTypes();
 
 // The C++ source text of the runtime helper(s) actually called in this program
 // (only the ones in `used`, so a program that never calls one gets no injected

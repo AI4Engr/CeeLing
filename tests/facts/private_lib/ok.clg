@@ -1,0 +1,8 @@
+#include "grid.h"
+
+int main() {
+    Grid g = new Grid(3, 2);
+    Grid w = g.window(2, 1);
+    std::cout << g.width() << " " << g.height() << " " << g.sum() << " " << w.windowWidth() << std::endl;
+    return 0;
+}

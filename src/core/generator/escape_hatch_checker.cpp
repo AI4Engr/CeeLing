@@ -15,6 +15,14 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
     classSpecializationArities_.clear();
     collectClasses(program);
     collectCallables(program);
+    enumNames_.clear();
+    reportedUnknownTypes_.clear();
+    for (const auto& stmt : program.statements) {
+        if (auto en = dynamic_cast<const EnumDeclaration*>(stmt.get())) {
+            enumNames_.insert(en->name);
+            if (!en->namespaceName.empty()) enumNames_.insert(en->namespaceName + "::" + en->name);
+        }
+    }
 
     for (const auto& stmt : program.statements) {
         // Only declarations (functions, classes, enums, includes) have a place at file scope. An
@@ -42,14 +50,30 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
             continue;
         }
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            requireKnownType(fn->returnType, "the return type of `" + fn->name + "`", fn->loc.line, fn->loc.column);
+            for (const auto& [ptype, pname] : fn->parameters) {
+                requireKnownType(ptype, "the type of parameter `" + pname + "`", fn->loc.line, fn->loc.column);
+            }
             checkBody(fn->body, fn->parameters, "");
         } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
             checkBody(mn->body, {}, "");
         } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
             for (const auto& member : cls->members) {
-                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
+                    requireKnownType(field->type, "the type of field `" + field->identifier + "`", field->loc.line, field->loc.column);
+                } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    // a primary generic method `<T> T as()` names its own type parameter: `T` is not an unknown type inside it
+                    typeParameter_ = method->typeParameter;
+                    requireKnownType(method->returnType, "the return type of `" + method->name + "`", method->loc.line, method->loc.column);
+                    for (const auto& [ptype, pname] : method->parameters) {
+                        requireKnownType(ptype, "the type of parameter `" + pname + "`", method->loc.line, method->loc.column);
+                    }
                     checkBody(method->body, method->parameters, cls->name);
+                    typeParameter_.clear();
                 } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    for (const auto& [ptype, pname] : ctor->parameters) {
+                        requireKnownType(ptype, "the type of parameter `" + pname + "`", ctor->loc.line, ctor->loc.column);
+                    }
                     checkBody(ctor->body, ctor->parameters, cls->name, /*isConstructor=*/true);
                 }
             }
@@ -293,7 +317,7 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         // before the CeeLing-own-class path below since a known-external type
         // never has a classMethods_ entry (nothing parses its declaration).
         if (!declaredType.empty() && isKnownExternalClassType(declaredType)) {
-            return isKnownBorrowingMethod(declaredType, member->member);
+            return isKnownBorrowingMethod(declaredType, member->member) || isKnownFreshMethod(declaredType, member->member);
         }
 
         const std::string objClass = resolveObjectType(member->object.get());
@@ -711,6 +735,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
         return;
     }
     if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
+        requireKnownType(neww->className, "`new " + neww->className + "`", expr->loc.line, expr->loc.column);
         for (const auto& arg : neww->arguments) {
             checkExpression(arg.get());
         }
@@ -743,12 +768,54 @@ void EscapeHatchChecker::rejectThisEscapeInConstructor(const Expression* expr, c
     errors_.push_back(e);
 }
 
+namespace {
+std::string trimType(const std::string& t) {
+    size_t a = t.find_first_not_of(" \t");
+    size_t b = t.find_last_not_of(" \t");
+    return a == std::string::npos ? std::string() : t.substr(a, b - a + 1);
+}
+}  // namespace
+
+bool EscapeHatchChecker::typeIsKnown(const std::string& rawType) const {
+    std::string type = trimType(rawType);
+    // A `ref` observer is written `ref T x`: the parser keeps `T` here. A trailing `&`/`*` never reaches this point (raw pointers
+    // and references are rejected elsewhere), so they are left to those checks.
+    if (type.empty() || type == "void") return true;
+    if (!typeParameter_.empty() && type == typeParameter_) return true;
+    if (isPrimitiveType(type) || isStringType(type) || isOstreamType(type)) return true;
+    if (classNames_.count(type) > 0 || enumNames_.count(type) > 0) return true;
+    if (isKnownExternalClassType(type)) return true;
+    if (isVectorType(type)) return typeIsKnown(vectorElementType(type));
+    if (isMapType(type)) return typeIsKnown(mapKeyType(type)) && typeIsKnown(mapValueType(type));
+    if (isChannelType(type)) return typeIsKnown(channelElementType(type));
+    return false;
+}
+
+void EscapeHatchChecker::requireKnownType(const std::string& type, const std::string& what, int line, int column) {
+    if (typeIsKnown(type)) return;
+    // one report per distinct name and line: a type used ten times on one line is one mistake
+    if (!reportedUnknownTypes_.insert(trimType(type) + "@" + std::to_string(line)).second) return;
+    EscapeHatchError e;
+    e.line = line;
+    e.column = column;
+    e.message = trimType(type) == "auto" ? "`auto` has no known type" : "unknown type `" + trimType(type) + "` for " + what;
+    e.help = trimType(type) == "auto"
+                 ? "CeeLing passes `auto` to C++ unchanged, so nothing could follow what the variable holds (an iterator, a view, a lazy "
+                   "expression): that is how a dangling reference gets past the checker. Write the type, e.g. `int`, `string` or a class name."
+                 : "CeeLing has no shape for `" + trimType(type) + "`, so every check would be blind to values of it. Declare it as a "
+                   "class/struct in CeeLing, or for a C++ library type add a fact pack that declares `class " + trimType(type) +
+                   "` and its methods (`cling --facts mylib.clfacts`, docs/internals/facts-format.md).";
+    errors_.push_back(e);
+}
+
 void EscapeHatchChecker::checkStatement(const Statement* stmt) {
     if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
+        requireKnownType(decl->type, "variable `" + decl->identifier + "`", stmt->loc.line, stmt->loc.column);
         rejectThisEscapeInConstructor(decl->expression.get(), stmt);
         checkExpression(decl->expression.get());
         localType_[decl->identifier] = decl->type;
     } else if (auto cdecl = dynamic_cast<const ContainerDeclaration*>(stmt)) {
+        requireKnownType(cdecl->type, "variable `" + cdecl->identifier + "`", stmt->loc.line, stmt->loc.column);
         localType_[cdecl->identifier] = cdecl->type;
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
         rejectThisEscapeInConstructor(assign->expression.get(), stmt);
@@ -795,6 +862,7 @@ void EscapeHatchChecker::checkStatement(const Statement* stmt) {
         }
     } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
         checkExpression(fors->container.get());
+        requireKnownType(fors->loopVarType, "the loop variable `" + fors->loopVarName + "`", stmt->loc.line, stmt->loc.column);
         localType_[fors->loopVarName] = fors->loopVarType;
         for (const auto& inner : fors->body) {
             checkStatement(inner.get());

@@ -1,0 +1,9 @@
+#include "grid.h"
+
+int main() {
+    Grid g = new Grid(3, 2);
+    Grid w = g.window(2, 1);          // w refers to g's storage
+    g = new Grid(5, 5);               // g's storage is replaced
+    std::cout << w.windowWidth() << std::endl;
+    return 0;
+}
