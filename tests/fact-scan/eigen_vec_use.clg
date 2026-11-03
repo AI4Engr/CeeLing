@@ -1,0 +1,13 @@
+#include <Eigen/Dense>
+
+int main() {
+    Eigen::VectorXd v = Eigen::VectorXd::Ones(4);
+    v.fill(2.0);                           // mutator: changes v, nothing else
+    double total = v.sum();                // fresh
+    int n = v.size();                      // fresh
+    double len = v.squaredNorm();          // fresh
+    Eigen::VectorXd head = v.head(2);      // no fact: assumed to refer to v
+    double part = head.sum();              // fresh: reading the view is fine while v is untouched
+    std::cout << total << " " << n << " " << len << " " << part << std::endl;
+    return 0;
+}

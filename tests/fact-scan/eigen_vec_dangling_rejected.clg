@@ -1,0 +1,9 @@
+#include <Eigen/Dense>
+
+int main() {
+    Eigen::VectorXd v = Eigen::VectorXd::Ones(4);
+    Eigen::VectorXd head = v.head(2);      // a block expression: refers to v's storage
+    v.fill(3.0);                           // fill is a proven mutator: the view's owner changed
+    std::cout << head.sum() << std::endl;
+    return 0;
+}

@@ -20,11 +20,11 @@ scan() { python -I "$SCAN" --clang "$CLANG" "$@"; }
 # 1. every method shape gets the verdict the signature proves, and nothing more
 scan --header "$HERE/shapes.h" --class Shapes --out "$TMP/shapes.clfacts" >/dev/null || bad "scanning shapes.h failed"
 got="$(grep -E '^(fresh|borrow|mutator|function|opaque)' "$TMP/shapes.clfacts" | sed 's/ source=.*//' | sort | tr '\n' ';')"
-want="borrow Shapes::at;borrow Shapes::raw;borrow Shapes::view;fresh Shapes::count;fresh Shapes::data;fresh Shapes::empty;fresh Shapes::name;function Shapes::version;mutator Shapes::clear;mutator Shapes::pop;opaque Shapes;"
+want="borrow Shapes::at;borrow Shapes::raw;borrow Shapes::view;fresh Shapes::count;fresh Shapes::data;fresh Shapes::empty;fresh Shapes::name;function Shapes::make;function Shapes::version;mutator Shapes::clear;mutator Shapes::pop;opaque Shapes;"
 if [ "$got" = "$want" ]; then ok "each method shape gets exactly the fact its signature proves"; else bad "shape verdicts differ:
   got:  $got
   want: $want"; fi
-for m in copy make over ref; do
+for m in copy over ref; do
     grep -q "^# $m: no fact" "$TMP/shapes.clfacts" && ok "$m: left to the opaque default, with the reason written down" || bad "$m: no explanation in the pack"
 done
 if grep -qE '^(fresh|borrow|mutator|function) Shapes::(hidden|as|operator)' "$TMP/shapes.clfacts"; then bad "a private method, a template or an operator got a fact"; else ok "private methods, member templates and operators get no fact"; fi
@@ -73,6 +73,26 @@ if [ -f "$JSONCPP_DIR/include/json/json.h" ]; then
     [ $? -ne 0 ] && echo "$out" | grep -q "dangling observer" && ok "jsoncpp: a method the scan could not prove fresh is assumed to borrow, so the dangling use is rejected" || bad "jsoncpp dangling not rejected: $out"
 else
     echo "SKIP: jsoncpp trial (no jsoncpp at $JSONCPP_DIR; set JSONCPP_DIR)"
+fi
+
+# 6. a TEMPLATE type from a real library: Eigen::VectorXd (Matrix<double,-1,1>), its public base classes read too
+EIGEN_DIR="${EIGEN_DIR:-/c/project/eigen}"
+if [ -f "$EIGEN_DIR/Eigen/Dense" ]; then
+    scan --header "$EIGEN_DIR/Eigen/Dense" --type Eigen::VectorXd -I "$EIGEN_DIR" --out "$TMP/vx.clfacts" >/dev/null && ok "eigen: Eigen::VectorXd scanned ($(grep -cE '^(fresh|borrow|mutator|function) ' "$TMP/vx.clfacts") facts, $(grep -c '^@header' "$TMP/vx.clfacts") headers bound)" || bad "eigen: scan failed"
+    for want in "fresh Eigen::VectorXd::sum" "fresh Eigen::VectorXd::size" "mutator Eigen::VectorXd::fill" "function Eigen::VectorXd::Ones"; do
+        grep -q "^$want " "$TMP/vx.clfacts" && ok "eigen: $want" || bad "eigen: missing $want"
+    done
+    grep -qE '^(fresh|borrow|mutator|function) Eigen::VectorXd::(head|transpose|block) ' "$TMP/vx.clfacts" && bad "eigen: a view-returning method got a fact" || ok "eigen: head, transpose, block (expression templates) are left conservative"
+    cd "$HERE"
+    if "$CLING" --facts "$TMP/vx.clfacts" eigen_vec_use.clg --cpp "$TMP/ev.cpp" >/dev/null 2>&1 &&
+       "$CXX" -std=c++17 -I"$EIGEN_DIR" "$TMP/ev.cpp" -o "$TMP/ev.exe" 2>"$TMP/ev.err" && [ "$("$TMP/ev.exe")" = "8 4 16 4" ]; then
+        ok "eigen: a CeeLing program using the scanned Eigen pack builds against the real Eigen headers and runs"
+    else bad "eigen: use program did not build/run: $(head -3 "$TMP/ev.err" 2>/dev/null)"; fi
+    out="$("$CLING" --facts "$TMP/vx.clfacts" eigen_vec_dangling_rejected.clg --cpp "$TMP/x.cpp" 2>&1)"
+    [ $? -ne 0 ] && echo "$out" | grep -q "dangling observer" && ok "eigen: the lazy view dies when its owner is changed by a proven mutator" || bad "eigen dangling not rejected: $out"
+    scan --check "$TMP/vx.clfacts" >/dev/null 2>&1; [ $? -eq 0 ] && ok "eigen: --check finds every bound header unchanged" || bad "eigen: --check failed"
+else
+    echo "SKIP: eigen template trial (no Eigen at $EIGEN_DIR; set EIGEN_DIR)"
 fi
 
 exit $fail

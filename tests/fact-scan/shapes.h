@@ -18,7 +18,7 @@ public:
     int pop() { return 0; }                                         // mutator: non-const, returns a number
     double& ref() { static double d; return d; }                    // no fact: non-const and returns a reference
     static int version() { return 1; }                              // function: static, returns a number
-    static Shapes make(int) { return Shapes(); }                    // no fact: a class by value may refer to its arguments
+    static Shapes make(int) { return Shapes(); }                    // function: static, takes only numbers: nothing for the result to refer to
     Shapes copy() const { return Shapes(); }                        // no fact: a class by value may be a view
     template <class T> T as() const { return T(); }                 // skipped: member template
     Shapes& operator+=(const Shapes&) { return *this; }             // skipped: operator
