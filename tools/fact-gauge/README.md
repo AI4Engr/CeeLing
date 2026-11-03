@@ -20,6 +20,24 @@ Run by CTest as `cling_fact_gauge` (about 2.5 s). Three independent checks, any 
 **Negative controls** (CTest, `WILL_FAIL`): `--pretend-mutator size` (the gauge believes `size` mutates, the compiler accepts the seed: must report false accepts) and `--pretend-nonmutator reserve` (a wrong fact:
 must report it against the standard). A gauge that cannot fail proves nothing.
 
+## Probing a SCANNED pack: `probe_pack.py` (the part that asks whether a fact is true of the library)
+
+The three checks above are about `std` and about the compiler following the facts. A fact a scanner wrote (`tools/cling-scan`) can also be wrong about the LIBRARY, so `probe_pack.py` runs, per fact,
+a CeeLing program through the compiler and the same probe as plain C++ against the real library under AddressSanitizer + UBSan (inside WSL: the MinGW toolchain has no AddressSanitizer). The recipe is a small
+conf file (`tests/fact-scan/probe/eigen_vectorxd.conf`): how to build an object, a call that makes a view of it, how to read the view.
+
+```
+python -I tools/fact-gauge/probe_pack.py --cling build/cling.exe --pack vx.clfacts --conf tests/fact-scan/probe/eigen_vectorxd.conf -I C:/project/eigen
+```
+
+* `fresh`/`borrow` (the pack says the call leaves the receiver alone): the compiler must accept the program, and in the C++ probe the **lazy** view (`auto view = obj.head(2)`; CeeLing no longer lets you write that,
+  and `T view = ...` would COPY) must stay readable after the call. A sanitiser report is a counterexample to the fact.
+* `mutator` (changes the receiver): the compiler must reject; whether the library really invalidates is reported, not required (a mutator that invalidates nothing is merely conservative).
+* **Result on `Eigen::VectorXd`** (CTest `cling_scan_probe`, 40 s): 56 facts, 0 contradictions: 54 `fresh`/`borrow` facts run clean, and the two mutators that really reallocate (`resize`, `conservativeResize`) are
+  confirmed by `heap-use-after-free`. **Negative control:** declare `resize` and `conservativeResize` `fresh` and the probe fails with `heap-use-after-free` from the real library.
+* Limits: one object, one view, one call, arguments chosen by a script; a clean run is evidence, not proof. It sees STORAGE going away or moving, not a value changing under the view (declaring `fill` fresh passes: `fill`
+  rewrites values in place). A method that cannot be called with synthesised arguments is `UNREACHABLE`; a library assertion fired by the synthesised arguments is `NOT EVIDENCE`, never a pass.
+
 ## What this does not show (read before quoting)
 
 * Checks 1 and 3 use the facts and a transcription by the same author as their reference; check 3's list is not an independent audit of the standard.

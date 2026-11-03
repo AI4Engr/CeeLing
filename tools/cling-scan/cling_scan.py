@@ -15,6 +15,7 @@ usage: cling_scan.py --clang <clang++> --header <header.h> (--class <Name> | --t
       fresh   Name::m                const method, returns nothing that can refer to the receiver (void, number, bool, string, vector of numbers)
       borrow  Name::m                const method returning a reference, pointer or view: it refers to the receiver
       mutator Name::m                non-const method returning nothing that can borrow (void, number, ...): changes the receiver, retains nothing
+      (fresh/borrow/mutator require every PARAMETER to be a plain value: that is what makes "retains none of its arguments" follow from the types)
       function Name::m               static method whose parameters are all plain values (numbers, bool, string): whatever it returns,
                                      it has no object to refer to
 
@@ -283,6 +284,8 @@ def shape(ret):
 
 def plain_param(p):
     """A parameter that is a number, bool, enum or string passed by value or const reference: it cannot be an object that something refers to."""
+    if p.strip().endswith('&') and not p.strip().endswith('&&') and not re.search(r'\bconst\b', p):
+        return False      # a non-const reference is an out-parameter: the callee gets the caller's variable itself and may keep it
     r = re.sub(r'\s+', ' ', re.sub(r'\bconst\b', ' ', p)).strip()
     if r.endswith('&&') or r.endswith('*'):
         return False
@@ -343,6 +346,13 @@ for name in sorted(methods):
             else:
                 verdicts.add(None)
                 why.append('static, takes an object or a reference: its result may refer to it')
+        elif not all(plain_param(p) for p in o['params']):
+            # `fresh`, `borrow` and `mutator` all assert that the method retains none of its arguments. That is only PROVABLE from the
+            # signature when every parameter is a plain value (a number, a bool, an enum, a string): a copy cannot be a reference to
+            # anything. A const reference or pointer to an object may be kept by the receiver; the type does not say.
+            verdicts.add(None)
+            why.append('takes an object, reference or pointer parameter (%s): it may keep it, and the signature does not say' %
+                       ', '.join(p for p in o['params'] if not plain_param(p))[:80])
         elif o['const'] and s in ('void', 'scalar', 'string', 'scalar-vector'):
             verdicts.add('fresh')
         elif o['const'] and s == 'borrowing':
@@ -400,6 +410,11 @@ for f in facts:
     out.append(f)
 for s in sorted(set(skipped)):
     out.append('# skipped: ' + s)
+# the signatures the verdicts were read from, one per overload, for the reviewer and for tools/fact-gauge/probe_pack.py
+for name in sorted(methods):
+    for o in methods[name]:
+        out.append('# sig %s %s (%s) -> %s' % (name, 'static' if o['static'] else ('const' if o['const'] else 'nonconst'),
+                                              '; '.join(resolve(p).rstrip('&').strip() if plain_param(p) else 'OBJECT' for p in o['params']), resolve(o['ret'])))
 text = '\n'.join(out) + '\n'
 if args.out:
     open(args.out, 'w', encoding='utf-8', newline='').write(text)

@@ -36,6 +36,14 @@ member templates, operators (write `operator` facts by hand). Every fact is `sou
   dump format; the tests pin the behaviour.
 * Nothing was run against the library to confirm a fact (no sanitiser probes yet).
 
+## Is a scanned fact true? `tools/fact-gauge/probe_pack.py`
+
+The scan reads signatures; the probe checks the facts against the real library: the compiler judges one seeded program per fact, and a plain-C++ twin with a lazy view is built with AddressSanitizer and run. On
+`Eigen::VectorXd` all 56 facts hold (54 clean, the 2 reallocating mutators confirmed), and declaring `resize` fresh is caught. See `tools/fact-gauge/README.md`.
+
+Each overload's signature is written into the pack as a `# sig` comment (what the verdict was read from; `probe_pack.py` uses them to synthesise arguments). `fresh`, `borrow` and `mutator` additionally require every
+PARAMETER to be a plain value (number, bool, enum, string; not an object, a pointer, or a non-const reference): "retains none of its arguments" only follows from the types then.
+
 ## Tested (CTest `cling_scan`)
 
 `tests/fact-scan/`: a class with one method of every shape (the exact verdict per shape), the private library of `tests/facts/private_lib` (the scanned pack gives the same accept/reject results as the hand-written one),

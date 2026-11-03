@@ -243,6 +243,9 @@ if(NOT EMSCRIPTEN)
         if(EXISTS "${CLING_CLANG}")
             add_test(NAME cling_scan
                 COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/fact-scan/run_scan_test.sh $<TARGET_FILE:cling> ${CLING_CLANG})
+            # is each scanned fact TRUE of the real library? (AddressSanitizer in WSL; skips itself without Eigen or WSL g++)
+            add_test(NAME cling_scan_probe
+                COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/fact-scan/run_probe_test.sh $<TARGET_FILE:cling> ${CLING_CLANG})
         endif()
     endif()
     # `cling --facts pack`: a project teaches the compiler about its own C++ library (tests/facts/private_lib), and what a project pack may not do
