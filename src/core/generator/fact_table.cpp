@@ -43,6 +43,7 @@ const std::map<std::string, KindSpec>& kindSpecs() {
         {"class", {{}, {}}},
         {"operator", {{}, {}}},
         {"borrow", {{}, {}}},
+        {"mutator", {{}, {}}},        // a method of an external class that changes the receiver but returns nothing that borrows and retains nothing
         {"opaque", {{}, {}}},         // an external class nobody wrote facts for: the conservative model (see library_summary.h)
         {"fresh", {{}, {}}},          // a method of an external class that returns a fresh value (a number, an owned object): borrows nothing
     };
@@ -67,6 +68,7 @@ std::string trimRight(std::string s) {
 std::string FactTable::addText(const std::string& text, const std::string& originName, bool projectPack) {
     std::vector<Fact> parsed;
     std::string pack, version, origin;
+    std::vector<std::string> headers;
     std::set<std::string> seen;
     auto fail = [&](size_t lineNo, const std::string& what) {
         return originName + ":" + std::to_string(lineNo) + ": " + what;
@@ -86,10 +88,19 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
             std::string value;
             for (size_t i = 1; i < words.size(); ++i) value += (i > 1 ? " " : "") + words[i];
             if (value.empty()) return fail(lineNo, "header line `" + words[0] + "` has no value");
+            if (words[0] == "@header") {
+                // @header <path> sha256=<64 hex digits>: the header a scan read, bound by content
+                if (words.size() != 3 || words[2].rfind("sha256=", 0) != 0 || words[2].size() != 7 + 64) {
+                    return fail(lineNo, "`@header` needs `<path> sha256=<64 hex digits>`");
+                }
+                headers.push_back(words[1] + " " + words[2]);
+                continue;
+            }
+            if (words[0] == "@scanner") continue;      // free text: who wrote the facts
             if (words[0] == "@pack") pack = value;
             else if (words[0] == "@version") version = value;
             else if (words[0] == "@origin") origin = value;
-            else return fail(lineNo, "unknown header line `" + words[0] + "` (expected @pack, @version or @origin)");
+            else return fail(lineNo, "unknown header line `" + words[0] + "` (expected @pack, @version, @origin, @header or @scanner)");
             continue;
         }
 
@@ -101,8 +112,8 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
         auto kindIt = kindSpecs().find(words[0]);
         if (kindIt == kindSpecs().end()) return fail(lineNo, "unknown fact kind `" + words[0] + "`");
 
-        if (projectPack && words[0] != "function" && words[0] != "class" && words[0] != "operator" && words[0] != "borrow" && words[0] != "fresh" && words[0] != "opaque") {
-            return fail(lineNo, "a project fact pack may only hold function, class, opaque, operator, borrow and fresh facts, not `" + words[0] + "` (it cannot change how std is judged)");
+        if (projectPack && words[0] != "function" && words[0] != "class" && words[0] != "operator" && words[0] != "borrow" && words[0] != "fresh" && words[0] != "mutator" && words[0] != "opaque") {
+            return fail(lineNo, "a project fact pack may only hold function, class, opaque, operator, borrow, fresh and mutator facts, not `" + words[0] + "` (it cannot change how std is judged)");
         }
         Fact f;
         f.kind = words[0];
@@ -155,6 +166,7 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
         facts_.push_back(std::move(f));
     }
     packs_.push_back(pack + "@" + version);
+    for (const auto& h : headers) headers_.push_back(pack + ": " + h);
     return "";
 }
 

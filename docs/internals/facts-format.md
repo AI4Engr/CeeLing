@@ -18,6 +18,7 @@ function std::stoi source=declared review=hand
 * **Header lines** `@pack`, `@version`, `@origin` come first and are all required. The pack is reported as `pack@version`.
 * **A fact** is one line: `<kind> <subject> [flag ...] source=<declared|inferred> [review=<state>]`. Words are separated by spaces, so a subject has none (`Eigen::MatrixXd|*` for an operator).
 * `#` starts a comment line; blank lines are ignored; CRLF is accepted.
+* Optional header lines: `@header <path> sha256=<64 hex digits>` (a header the facts were scanned from; repeatable; shown by `--report-facts`, checked by `cling-scan --check`; NOT yet enforced by the compiler) and `@scanner <text>`.
 * **`source`** is `declared` (a person wrote it) or `inferred` (a scanner wrote it). **`review`** is free text; the shipped packs use `hand`. Later versions add reviewer names and dates.
 
 ## Kinds and flags
@@ -32,6 +33,7 @@ function std::stoi source=declared review=hand
 | `operator` | `Type\|op` | none | the operator may be applied to that type; its result is always fresh |
 | `borrow` | `Class::method` | none | the method returns a view that borrows the receiver, with real dangling tracking |
 | `fresh` | `Class::method` | none | a method of an external class that returns a fresh value (a number, an owned object), borrows nothing, does not change the receiver and **does not retain its arguments** |
+| `mutator` | `Class::method` | none | a method of an external class that changes the receiver (its observers die) but returns nothing that borrows and retains none of its arguments |
 | `opaque` | type name | none | an external class nobody wrote method facts for: the conservative ("trusted") model, below |
 
 ## Signature facts (`*.sig`)
@@ -75,6 +77,11 @@ is a scanner's draft; a `declared` fact in a project pack is the project's own c
 A `fresh` or `borrow` fact for a method replaces the default for that method; both assert, besides what they say, that the method does not retain its arguments. Not covered, still refused or unmodelled: operators on the type
 (they need an `operator` fact), a borrow taken from a FIELD receiver (`Grid w = this_field.m();` is refused for every borrowing method, `opaque` or listed, because a field has no owner the analysis follows), and
 anything the library does behind the call: the class's internals are trusted, as for an `ext_fn`. `tests/facts/private_lib/opaque*.clg` and `tests/facts/eigen_trial/` (a real `Eigen::VectorXd` with a two-line pack) are the examples.
+
+## Writing a pack by scanning: `tools/cling-scan`
+
+`python tools/cling-scan/cling_scan.py --clang clang++ --header grid.h --class Grid --out grid.clfacts` writes `opaque Grid` plus the `fresh`, `borrow`, `mutator` and `function` facts the declared signatures prove, with a `#`
+comment for every method it could not decide. See `tools/cling-scan/README.md` for exactly what it proves and what it does not.
 
 ## What a pack cannot do
 

@@ -317,7 +317,8 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         // before the CeeLing-own-class path below since a known-external type
         // never has a classMethods_ entry (nothing parses its declaration).
         if (!declaredType.empty() && isKnownExternalClassType(declaredType)) {
-            return isKnownBorrowingMethod(declaredType, member->member) || isKnownFreshMethod(declaredType, member->member);
+            return isKnownBorrowingMethod(declaredType, member->member) || isKnownFreshMethod(declaredType, member->member) ||
+                   isKnownMutatorMethod(declaredType, member->member);
         }
 
         const std::string objClass = resolveObjectType(member->object.get());

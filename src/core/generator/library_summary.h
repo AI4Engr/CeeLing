@@ -264,6 +264,15 @@ bool isConservativeOpaqueCall(const std::string& className, const std::string& m
 // fact pack. Like a borrowing method it may be called; unlike one, nothing is tracked about its result.
 bool isKnownFreshMethod(const std::string& className, const std::string& methodName);
 
+// `mutator Class::method` in a fact pack: the method changes the receiver (so every observer of it dies) but returns nothing that
+// borrows from it (void, a number, a fresh value) and retains none of its arguments. What cling-scan writes for a non-const method
+// whose signature proves that much.
+bool isKnownMutatorMethod(const std::string& className, const std::string& methodName);
+
+// Does calling this method of an external class kill the observers of its receiver? True for a `mutator` fact and for an opaque
+// class's unlisted method.
+bool callKillsReceiverObservers(const std::string& className, const std::string& methodName);
+
 // Every external class type the fact packs declare (`class Name`), for the analyzers that must treat them as value types.
 std::vector<std::string> knownExternalClassTypes();
 

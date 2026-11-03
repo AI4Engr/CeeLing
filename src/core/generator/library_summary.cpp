@@ -312,6 +312,14 @@ bool isKnownFreshMethod(const std::string& className, const std::string& methodN
     return builtinFacts().has("fresh", className + "::" + methodName);
 }
 
+bool isKnownMutatorMethod(const std::string& className, const std::string& methodName) {
+    return builtinFacts().has("mutator", className + "::" + methodName);
+}
+
+bool callKillsReceiverObservers(const std::string& className, const std::string& methodName) {
+    return isConservativeOpaqueCall(className, methodName) || isKnownMutatorMethod(className, methodName);
+}
+
 std::vector<std::string> knownExternalClassTypes() {
     std::vector<std::string> out;
     for (const auto& f : builtinFacts().facts()) {

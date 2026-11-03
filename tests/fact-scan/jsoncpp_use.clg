@@ -1,0 +1,10 @@
+#include <json/json.h>
+
+int main() {
+    Json::Value n = new Json::Value(7);
+    int a = n.asInt();
+    bool b = n.isInt();
+    bool c = n.isString();
+    std::cout << a << " " << b << " " << c << " " << n.isNull() << std::endl;
+    return 0;
+}

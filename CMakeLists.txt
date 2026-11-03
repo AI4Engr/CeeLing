@@ -237,6 +237,14 @@ if(NOT EMSCRIPTEN)
     add_executable(fact_table_test tests/facts/fact_table_test.cpp)
     target_link_libraries(fact_table_test cling_core)
     add_test(NAME cling_fact_table COMMAND fact_table_test)
+    # cling-scan: a draft pack written from a class declaration (needs clang++; set CLING_CLANG or have it on the default path), then used
+    if(BASH_PROGRAM)
+        set(CLING_CLANG "C:/apps/emsdk/upstream/bin/clang++.exe" CACHE FILEPATH "clang++ used by cling-scan's test")
+        if(EXISTS "${CLING_CLANG}")
+            add_test(NAME cling_scan
+                COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/fact-scan/run_scan_test.sh $<TARGET_FILE:cling> ${CLING_CLANG})
+        endif()
+    endif()
     # `cling --facts pack`: a project teaches the compiler about its own C++ library (tests/facts/private_lib), and what a project pack may not do
     if(BASH_PROGRAM)
         add_test(NAME cling_project_facts

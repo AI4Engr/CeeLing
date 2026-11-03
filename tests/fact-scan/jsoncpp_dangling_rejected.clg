@@ -1,0 +1,9 @@
+#include <json/json.h>
+
+int main() {
+    Json::Value n = new Json::Value(7);
+    Json::Value g = n.removeMember("k");   // removeMember returns a Value by value: the type alone does not say it is a copy, so it is assumed to refer to n
+    n = new Json::Value(2);                // n's storage is replaced
+    std::cout << g.isNull() << std::endl;
+    return 0;
+}

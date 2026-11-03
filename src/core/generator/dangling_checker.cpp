@@ -897,10 +897,12 @@ void DanglingChecker::killObserversOfOpaqueCalls(const Expression* expr) {
         if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
             if (auto recv = dynamic_cast<const Identifier*>(member->object.get())) {
                 auto typeIt = localType_.find(recv->name);
-                if (typeIt != localType_.end() && isConservativeOpaqueCall(typeIt->second, member->member)) {
+                if (typeIt != localType_.end() && callKillsReceiverObservers(typeIt->second, member->member)) {
                     for (const auto& [obs, owner] : observerOf_) {
                         if (owner == recv->name) danglingObservers_.insert(obs);
                     }
+                }
+                if (typeIt != localType_.end() && isConservativeOpaqueCall(typeIt->second, member->member)) {
                     // An unlisted method may KEEP a reference to an object it is handed (`g.attach(h)`). CeeLing would then have to
                     // follow `h` for as long as `g` lives, which nothing models: refuse, and let the pack state that it does not retain.
                     for (const auto& arg : call->arguments) {

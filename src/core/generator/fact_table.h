@@ -23,7 +23,7 @@ class FactTable {
 public:
     // One loaded fact.
     struct Fact {
-        std::string kind;                 // "vector.sig", "string.sig", "map.sig", "vector.note", "vector.own", "function", "class", "opaque", "operator", "borrow", "fresh"
+        std::string kind;                 // "vector.sig", "string.sig", "map.sig", "vector.note", "vector.own", "function", "class", "opaque", "operator", "borrow", "fresh", "mutator"
         std::string subject;              // e.g. "push_back", "std::stoi", "Eigen::MatrixXd|*"
         std::set<std::string> flags;      // e.g. "shares-arg0"
         std::map<std::string, std::string> attrs;   // key=value words other than source= and review=, e.g. result=void
@@ -37,7 +37,7 @@ public:
     // On error nothing from this text is added.
     //
     // A PROJECT pack (`projectPack = true`, what `--facts` loads) may only hold facts about external classes and functions
-    // (function, class, opaque, operator, borrow, fresh). It cannot touch how `std` is judged (the *.sig, vector.note, vector.own kinds), so a
+    // (function, class, opaque, operator, borrow, fresh, mutator). It cannot touch how `std` is judged (the *.sig, vector.note, vector.own kinds), so a
     // project can add a library but never relax what the compiler assumes about the standard library.
     std::string addText(const std::string& text, const std::string& originName, bool projectPack = false);
 
@@ -58,11 +58,15 @@ public:
     const std::vector<Fact>& facts() const { return facts_; }
     // "pack@version" of every loaded pack, in load order (what `--report` will print).
     const std::vector<std::string>& packs() const { return packs_; }
+    // The `@header <path> sha256=<hex>` lines of every loaded pack (what a scan read), "pack: path sha256=hex". Recorded and printed by
+    // --report-facts; a pack is not yet REFUSED when the header on disk has changed (cling-scan --check does that comparison).
+    const std::vector<std::string>& headers() const { return headers_; }
 
 private:
     std::vector<Fact> facts_;
     std::map<std::string, size_t> index_;   // "kind|subject" -> position in facts_
     std::vector<std::string> packs_;
+    std::vector<std::string> headers_;
     mutable std::set<size_t> used_;
 };
 

@@ -525,6 +525,7 @@ int main(int argc, char* argv[]) {
             std::cout << "Facts relied on (" << used.size() << "), packs loaded:";
             for (const auto& p : table.packs()) std::cout << " " << p;
             std::cout << std::endl;
+            for (const auto& h : table.headers()) std::cout << "  scanned header  " << h << std::endl;
             for (const auto* f : used) {
                 std::cout << "  " << f->kind << " " << f->subject << "  [" << f->pack << ", " << f->source
                           << (f->review.empty() ? "" : ", review=" + f->review) << "]" << std::endl;
