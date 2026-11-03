@@ -849,8 +849,14 @@ void DanglingChecker::invalidateContainerObservers(const Expression* callExpr) {
     if (id == nullptr) return;
 
     auto typeIt = localType_.find(id->name);
-    if (typeIt == localType_.end() || !isVectorType(typeIt->second)) return;
-    if (!vectorMethodInvalidatesReferences(member->member)) return;
+    if (typeIt == localType_.end()) return;
+    if (isVectorType(typeIt->second)) {
+        if (!vectorMethodInvalidatesReferences(member->member)) return;
+    } else if (isStringType(typeIt->second)) {
+        if (!stringMethodInvalidatesReferences(member->member)) return;
+    } else {
+        return;
+    }
 
     // The container may have reallocated -- every existing observer of it (`ref
     // Node n = v[i];`) is now dangling, the same way endBlockScope kills observers

@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ reason: the C++ standard says a `reserve` that grows capacity invalidates every
+//@ reason: reference, pointer and iterator into the vector, so it is on the same
+//@ reason: invalidation list as `push_back` and `resize` (it used to be left off, on the
+//@ reason: argument that size() and the values do not change; an observer of an element
+//@ reason: notices the move). `r` observes `v`; the `reserve` kills it.
+//
+// Found by comparing the hand tables with a scan of std::vector
+// (tools/std-scan-experiment/REPORT.md).
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    ref std::vector<int> r = v;
+    v.reserve(100);
+    std::cout << r.size() << std::endl;   // ERROR: r observes a possibly-invalidated container
+    return 0;
+}

@@ -729,7 +729,8 @@ error[semantic/forbidden-construct]: `resize` on `std::vector<Node>`: element ty
   help: `resize` is only allowed on vectors of primitive elements (int, byte, char, ...). On a vector of objects it would fill the new slots with null smart pointers, or duplicate an owner for resize(n, x). Build the elements with push_back instead.
 ```
 
-`reserve` only grows capacity, so unlike `resize` and `push_back` it does not invalidate references into the vector: `size()` and every element are unchanged.
+`reserve` leaves `size()` and every element unchanged, but when it grows capacity it moves the buffer, so like `resize` and `push_back` it invalidates references into the vector (the C++
+standard says the same, and CeeLing treats it that way: an observer of the vector is dead after a `reserve`).
 
 `v.copyWithin(dst, src, len)` copies `len` elements within one vector, like Rust's `copy_within`, and handles overlapping ranges correctly. In C++ you would pick between `std::copy`,
 `std::copy_backward` and `std::memmove` yourself; the first is undefined if the destination starts inside the source:

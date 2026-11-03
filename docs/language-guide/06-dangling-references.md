@@ -1316,7 +1316,7 @@ error[semantic/forbidden-construct]: call to unknown function/method `clear`
   help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `clear` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
-### Why `reserve` and `copyWithin` do not invalidate
+### `reserve` and `copyWithin`
 
 Both exist only for vectors of primitives (`int`, `byte`, ...), and a vector of objects refuses them:
 
@@ -1359,10 +1359,29 @@ int main() {
 7 7 3
 ```
 
-The reason they are not on the invalidating list is not that `reserve` cannot reallocate; it can. It is that nothing in CeeLing can observe it. A primitive element has no owner and no
-`ref` can point at it (`v[i]` is a copy of the number), CeeLing has no iterators that survive a statement, and a container passed to a function is either copied or read through a `const&`
-that cannot outlive the call. `reserve` only grows capacity and never changes `size()` or a value; `copyWithin` moves values inside the vector and never creates or destroys an element.
-`push_back`, `pop_back` and `resize` change `size()`, so they stay on the list.
+`reserve` is on the invalidating list: when it grows capacity it moves the buffer, and the standard says every reference into the vector is then invalid. (Until 2026-11-02 it was left off,
+on the argument that `size()` and the values do not change; a scan of `std::vector` against the standard's list showed that argument covers an observer of the vector, not of an element. It
+was harmless only because a `ref` to a primitive element does not compile.) The program below is rejected:
+
+<!-- example: 06_reserve_invalidates.clg -->
+```cpp
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    ref std::vector<int> r = v;
+    v.reserve(100);
+    std::cout << r.size() << std::endl;
+    return 0;
+}
+```
+<!-- error: 06_reserve_invalidates.clg -->
+```
+error[semantic/use-after-move]: use of dangling observer `r` (its owner `v` is gone)
+  --> 06_reserve_invalidates.clg:6:18
+  help: `r` observes `v`, which no longer has a live owner
+```
+
+`copyWithin` is not on the list: it moves values inside the vector and never creates, destroys or reallocates anything.
 
 ### Iterators, and the range-`for`
 

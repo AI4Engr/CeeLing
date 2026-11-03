@@ -338,7 +338,7 @@ only through its `ext_fn` declarations (the head of each `.clg` file, with `shim
 
 Every call to something CeeLing did not compile itself must be on a list, or it is rejected. For `std` the list is a table inside the compiler, written by hand:
 
-- **`std::vector`:** `push_back`, `pop_back`, `size`, `begin`, `end`, `resize`, `reserve`, and CeeLing's own `copyWithin`. `push_back`, `pop_back` and `resize` invalidate every observer of the vector; `reserve` does not.
+- **`std::vector`:** `push_back`, `pop_back`, `size`, `begin`, `end`, `resize`, `reserve`, and CeeLing's own `copyWithin`. `push_back`, `pop_back`, `resize` and `reserve` invalidate every observer of the vector.
 - **`string`:** `length`, `size`, `empty`, `substr`, `find`, `append`, `clear`, `push_back`, `reserve`. **`std::map`** with primitive keys and values.
 - **free functions:** `std::stoi`, `std::stod`, `std::to_string`.
 - **runtime helpers** the compiler emits into your file: `cling::readFileToString`, `fileExists`, `readFileToBytes`, and the thread helpers of chapter 10.

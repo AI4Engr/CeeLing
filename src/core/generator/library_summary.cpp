@@ -96,7 +96,17 @@ bool vectorMethodInvalidatesReferences(const std::string& methodName) {
     // as push_back's whole-container invalidation, since this codebase's
     // model tracks invalidation at the container level, not per-element (see
     // Chapter 18 Step 14's design note on this granularity choice).
-    return methodName == "push_back" || methodName == "pop_back" || methodName == "resize";
+    // `reserve` too: the standard says a growing reserve invalidates element references (see
+    // the comment in library_summary.h; this was excluded until 2026-11-02).
+    return methodName == "push_back" || methodName == "pop_back" || methodName == "resize" ||
+           methodName == "reserve";
+}
+
+bool stringMethodInvalidatesReferences(const std::string& methodName) {
+    // Every admitted string method that changes the contents or the capacity. `size`, `length`,
+    // `empty`, `find` and `substr` (a fresh string) are read-only.
+    return methodName == "push_back" || methodName == "append" || methodName == "clear" ||
+           methodName == "reserve";
 }
 
 bool isStringType(const std::string& type) {

@@ -86,20 +86,26 @@ bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex);
 // shrinking `resize` destroy elements. `insert`/`erase` will extend this set
 // once they exist. `size`/`begin`/`end` are read-only and never invalidate.
 //
-// `reserve` is DELIBERATELY excluded, even though a call that actually grows
-// capacity can reallocate the same underlying buffer resize's own case does:
-// CeeLing has no way for anything to hold a reference/iterator into a
-// container across a statement boundary in the first place (no raw
-// pointers, no iterators escaping a loop, `ref` containers are always
-// `const&` and never independently invalidatable this way) -- the ONLY
-// thing threat #4 protects against here is "this call changes size()/the
-// element values out from under an existing observer", which reserve can
-// never do (size() and every element's value are unchanged; only capacity
-// grows). Treating it as invalidating would be over-conservative for no
-// safety benefit, and would incorrectly block reserve's own motivating use
-// (pre-sizing an output buffer before a decode loop) from being called
-// right before a loop that then reads the vector's `.size()`.
+// `reserve` IS in this set (changed 2026-11-02; it used to be excluded). The C++ standard
+// says a `reserve` that grows capacity invalidates every reference, pointer and iterator
+// into the vector, and the signature scan in tools/std-scan-experiment finds `reserve`
+// among the 13 non-const, no-const-twin members of `std::vector` (exactly the standard's
+// list). The old argument -- "size() and every element's value are unchanged, so no
+// observer can notice" -- was about an observer of the vector OBJECT; an observer of an
+// ELEMENT does notice, because the element moved. It stayed harmless only because `reserve`
+// is admitted on primitive-element vectors alone and a `ref` to a primitive element does
+// not compile. One rule for all mutators is simpler to defend than that coincidence.
 bool vectorMethodInvalidatesReferences(const std::string& methodName);
+
+// The same question for a `string`. The standard: `push_back`, `append`, `clear`, `reserve`
+// (all four admitted by isKnownStringMethod) may invalidate references, pointers and iterators
+// into the string. **It has no effect today**, and nothing tests it: a `string` is a value type
+// that never enters DanglingChecker's observer table (`ref string t = s; s.append("c"); use(t)`
+// is accepted, checked 2026-11-02), no `ref char` compiles, and `string_view` is not tracked.
+// DanglingChecker::invalidateContainerObservers already consults this function, so when string
+// observers or views are registered the admitted mutators are marked and the first fixture
+// that observes a string will reject; until then this only records the list.
+bool stringMethodInvalidatesReferences(const std::string& methodName);
 
 // Is `type` CeeLing's `string` primitive (bare keyword, or `std::string`/`string`
 // written explicitly)? `string` is a value type -- unlike `std::vector<T>`, it never
