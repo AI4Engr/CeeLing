@@ -243,6 +243,15 @@ if(NOT EMSCRIPTEN)
         add_test(NAME cling_facts_generated
             COMMAND ${PYTHON_FOR_FACTS} -I ${CMAKE_SOURCE_DIR}/tools/std-scan-experiment/gen_pack.py --check
                 ${CMAKE_SOURCE_DIR}/tools/std-scan-experiment ${CMAKE_SOURCE_DIR}/tools/std-scan-experiment/gcc ${CMAKE_SOURCE_DIR}/facts)
+        # The gauge (tools/fact-gauge/gauge.py): seeded dangling programs for every scanned vector method, the usage corpus compiled with g++,
+        # and the facts compared with the standard. False accepts must be 0. The two *_detects tests are negative controls: a gauge that cannot fail proves nothing.
+        add_test(NAME cling_fact_gauge
+            COMMAND ${PYTHON_FOR_FACTS} -I ${CMAKE_SOURCE_DIR}/tools/fact-gauge/gauge.py --cling $<TARGET_FILE:cling>)
+        add_test(NAME cling_fact_gauge_detects_false_accept
+            COMMAND ${PYTHON_FOR_FACTS} -I ${CMAKE_SOURCE_DIR}/tools/fact-gauge/gauge.py --cling $<TARGET_FILE:cling> --pretend-mutator size)
+        add_test(NAME cling_fact_gauge_detects_wrong_fact
+            COMMAND ${PYTHON_FOR_FACTS} -I ${CMAKE_SOURCE_DIR}/tools/fact-gauge/gauge.py --cling $<TARGET_FILE:cling> --pretend-nonmutator reserve)
+        set_tests_properties(cling_fact_gauge_detects_false_accept cling_fact_gauge_detects_wrong_fact PROPERTIES WILL_FAIL TRUE)
     endif()
 
     # Custom target for running tests
