@@ -341,23 +341,23 @@ So a call it has no fact about is an error:
 <!-- example: 14_unknown_call.clg -->
 ```cpp
 int main() {
-    std::vector<int> v;
-    v.push_back(2);
-    std::reverse(v.begin(), v.end());   // no fact about what reverse does with its arguments
+    int a = 1;
+    int b = 2;
+    std::swap(a, b);   // no fact about what swap does with its arguments
     return 0;
 }
 ```
 <!-- error: 14_unknown_call.clg -->
 ```
-error[semantic/forbidden-construct]: call to unknown function/method `std::reverse`
+error[semantic/forbidden-construct]: call to unknown function/method `std::swap`
   --> 14_unknown_call.clg:4:5
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `std::reverse` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `std::swap` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 This is **default-reject**. The alternative, default-allow, would make every unlisted library call a hole in the guarantee, and the list of holes would grow with the library. With default-reject
 the guarantee does not depend on how complete the list of facts is, only usefulness does.
 
-Facts come from two places. The compiler has a built-in allow-list for the standard pieces it supports (`std::vector`, `std::string`, `std::map`, a few functions, and eight Eigen view methods: [chapter 6](06-dangling-references.md)).
+Facts come from two places. The compiler ships fact packs for the standard pieces it supports: scanned signatures of `std::vector` and `std::string` (a rule decides what is admitted, [chapter 3](03-values-and-containers.md)), hand-written entries for a few functions and eight Eigen view methods ([chapter 6](06-dangling-references.md)).
 For a function of your own C++ you write the one fact yourself, in an `ext_fn` declaration ([chapter 11](11-talking-to-cpp.md)). The `borrows N` clause is exactly the summary of part A, written by hand because there is no body to read.
 
 <!-- example: 14_ext_fn_borrows.clg -->
@@ -707,7 +707,7 @@ and a driver repeats the compile until they stop changing. A demand can only mak
 * **Stage order matters for what is trusted.** The checks apply to the tree after stage 3. They are not a proof about the C++ compiler's own behaviour on the output.
 * **Unknown type names pass through.** The checks follow the types the compiler knows (its classes, `string`, vectors, maps, a short list of external classes). A declaration with another type name is
   emitted unchanged and no check sees it ([chapter 6](06-dangling-references.md) gives the consequences).
-* **The facts are trusted.** The built-in allow-list was written by hand, an `ext_fn` is believed, and a library's behaviour behind them is not checked.
+* **The facts are trusted.** The scanned facts are a scanner's draft that nobody has reviewed line by line (`review=unreviewed` in the pack), the hand-written ones are believed, an `ext_fn` is believed, and a library's behaviour behind them is not checked.
 * **Per-function.** The analysis does not follow an observer out of a function, which is why no observer can leave one.
 * **Granularity and conservatism.** A container is one owner; a condition is never evaluated. Both only ever refuse more.
 * **Wording.** The owner named in a message is the checker's record, not always the object that died last.

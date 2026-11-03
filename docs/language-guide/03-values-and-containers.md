@@ -412,8 +412,8 @@ int main() {
 
 **Why C++ does not stop it.** The pointer is a plain `const char*`; it carries no lifetime and g++ stays silent.
 
-**What CeeLing does.** `c_str` is not on the list of string methods, so it is an unknown call and is rejected. A raw pointer has nowhere legal to go in CeeLing, which is the same reason `.get()`
-is refused ([chapter 8](08-sealed-escape-hatches.md)).
+**What CeeLing does.** The scan of `std::string` finds that `c_str` returns a raw pointer, so the rule refuses it, and the message says so. A raw pointer has nowhere legal to go in CeeLing, which is the same
+reason `.get()` is refused ([chapter 8](08-sealed-escape-hatches.md)).
 
 <!-- example: 03_c_str.clg -->
 ```cpp
@@ -425,9 +425,9 @@ int main() {
 ```
 <!-- error: 03_c_str.clg -->
 ```
-error[semantic/forbidden-construct]: call to unknown function/method `c_str`
+error[semantic/forbidden-construct]: `c_str` is not available on `string`: it returns a raw pointer, and raw pointers have nowhere legal to go
   --> 03_c_str.clg:3:5
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `c_str` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing admits a method of the standard library only when the checker can follow what it hands back; the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.
 ```
 
 ### Passing a string
@@ -501,9 +501,15 @@ prose.
 | `cling::readFileToString`, `cling::fileExists`, `cling::readFileToBytes` | files (below) |
 | `cling::spawn` and the worker-pool functions | produced by `spawn` ([chapter 10](10-threads.md)) |
 
-(The table also holds a handful of names for a graphics-demo shim and one Eigen entry, `Eigen::MatrixXd::Identity`; those belong to [chapter 11](11-talking-to-cpp.md).) Methods have their own
-lists: for `string`, `length size empty substr find append clear push_back reserve`; for `std::vector`, `push_back pop_back size begin end resize reserve copyWithin`. The two functions that take or
-return only primitives need no borrow facts, which is why they could go on the list.
+(The table also holds a handful of names for a graphics-demo shim and one Eigen entry, `Eigen::MatrixXd::Identity`; those belong to [chapter 11](11-talking-to-cpp.md).) The methods of `std::vector` and `string` are **not on a list**. The compiler holds what a scan of the library's own declarations found for every method
+(`facts/std-vector.clfacts`, `facts/std-string.clfacts`, generated, from the MSVC STL and libstdc++), and a rule admits a method when everything it hands back is something the checker can follow: nothing
+(`void`), a number or `bool`, a fresh `string`, or the receiver itself (`append` returns `*this`). Today that admits, for `std::vector`, `assign capacity clear empty max_size pop_back push_back reserve resize shrink_to_fit size`
+(and CeeLing's own `copyWithin`), and for `string`, `append assign capacity clear compare empty find find_first_not_of find_first_of find_last_not_of find_last_of length max_size pop_back push_back reserve resize rfind
+shrink_to_fit size substr`. A method that changes the receiver also invalidates every observer of it; that comes from the scan too (a non-const member with no `const` twin), so `clear` and `assign` do
+what `push_back` does without anyone having listed them. The two functions that take or return only primitives need no borrow facts, which is why they could go on the list of free functions.
+
+What the rule refuses, and says why in the message: `begin end cbegin ...` and `insert erase` (an iterator comes back, and iterators are not tracked), `front back at emplace_back` (a reference to an element comes back; only
+`v[i]` is tracked), `data c_str` (a raw pointer), `swap` (the other operand would be moved out), `get_allocator`, and, for a string, `copy` and `replace` (an overload takes a pointer to writable memory). It is the same default-reject, now with a reason.
 
 <!-- example: 03_std_functions.clg -->
 ```cpp
@@ -537,11 +543,18 @@ int main() {
 error[semantic/forbidden-construct]: call to unknown function/method `std::sort`
   --> 03_unknown_call.clg:5:5
   help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `std::sort` in CeeLing source, or call an existing CeeLing function/method instead.
+error[semantic/forbidden-construct]: `begin` is not available on `std::vector<int>`: it returns an iterator, and iterators are not tracked yet, so nothing would stop one from dangling
+  --> 03_unknown_call.clg:5:15
+  help: CeeLing admits a method of the standard library only when the checker can follow what it hands back; the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.
+error[semantic/forbidden-construct]: `end` is not available on `std::vector<int>`: it returns an iterator, and iterators are not tracked yet, so nothing would stop one from dangling
+  --> 03_unknown_call.clg:5:26
+  help: CeeLing admits a method of the standard library only when the checker can follow what it hands back; the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.
 ```
 
 The message says what to do: write the function in CeeLing, or declare it as an `ext_fn` ([chapter 11](11-talking-to-cpp.md)), the explicit trust boundary. This is the "default-reject" rule of
 [chapter 13](13-contract-and-threats.md): the cost is that much of `<algorithm>` is not available; the gain is that there is no unknown call through which a dangling reference could get past
-the checker. `v.clear()`, `v.empty()`, `v.insert(...)` and `v.front()` are rejected the same way (checked by running them).
+the checker. (`v.clear()` and `v.empty()` used to be refused here too; they are admitted now. `v.insert(...)`, `v.front()` and `v.begin()` are refused with a reason, see above.) The two `begin()` calls in the
+program above are refused as well, which is why the message appears three times: `sort` takes iterators, and CeeLing admits no way to make one.
 
 **Where it stops.** `std::stoi` and `std::stod` report bad text by throwing a C++ exception that `catch (string e)` does not catch (the same exit as `substr`), so a program that parses
 untrusted text cannot recover from a bad number today:
@@ -1092,7 +1105,7 @@ exists=0 chars=0 bytes=0
 | casts | `(T)x` hides a `reinterpret_cast` | `int(x)` on primitives only | `03_cast_primitive`, `03_cast_string` |
 | string escapes | greedy `\x`, octal, `\u` | a whitelist, `\xHH` exactly two digits | `03_string_escapes`, `03_escape_hex` |
 | `s[i]`, `v[i]` | unchecked | checked, aborts with the line | `03_string_oob` |
-| `c_str()` | raw pointer into a string | not on the list | `03_c_str` |
+| `c_str()` | raw pointer into a string | refused: the scan finds it returns a raw pointer | `03_c_str` |
 | library calls | signatures hide borrows | only listed calls are accepted | `03_unknown_call` |
 | `resize`, `reserve`, `copyWithin` | null elements | primitives only | `03_resize_objects` |
 | vector parameters | copy or dangling reference | read-only ones by `const&`, others moved | `03_vector_param`, `03_vector_moved` |

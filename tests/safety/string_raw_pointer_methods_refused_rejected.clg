@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ error: `data` is not available on `string`
+//@ reason: the scan finds that data() returns a raw pointer; the rule seals every method whose result is one.
+//@ reason: (c_str() is the same, guide example 03_c_str.)
+
+int main() {
+    string s = "hello";
+    s.data();
+    return 0;
+}

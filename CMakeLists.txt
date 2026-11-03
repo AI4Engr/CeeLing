@@ -237,6 +237,13 @@ if(NOT EMSCRIPTEN)
     add_executable(fact_table_test tests/facts/fact_table_test.cpp)
     target_link_libraries(fact_table_test cling_core)
     add_test(NAME cling_fact_table COMMAND fact_table_test)
+    # facts/std-vector.clfacts and std-string.clfacts are generated: they must be exactly what gen_pack.py writes from the committed scans
+    find_program(PYTHON_FOR_FACTS NAMES python3 python)
+    if(PYTHON_FOR_FACTS)
+        add_test(NAME cling_facts_generated
+            COMMAND ${PYTHON_FOR_FACTS} -I ${CMAKE_SOURCE_DIR}/tools/std-scan-experiment/gen_pack.py --check
+                ${CMAKE_SOURCE_DIR}/tools/std-scan-experiment ${CMAKE_SOURCE_DIR}/tools/std-scan-experiment/gcc ${CMAKE_SOURCE_DIR}/facts)
+    endif()
 
     # Custom target for running tests
     add_custom_target(run_tests

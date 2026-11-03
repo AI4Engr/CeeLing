@@ -2402,24 +2402,24 @@ Error: Syntax error at line 1, column 1, node type 'ERROR', near: union Number {
 }; Suggestion: raw `union` is forbidden (hatch #17) -- it allows reading a different member than was written, which is undefined behavior C++ cannot catch. Use a class with distinct fields instead.
 ```
 
-**Library calls not on the allow-list**, such as `vector::clear`. Every call must be to something CeeLing compiled or knows. `clear` is not known (`pop_back` one by one, or build a new
-vector); the list of known calls is in chapter 3.
+**Library calls the compiler cannot follow**, such as `vector::front`. Every call must be to something CeeLing compiled, or to a library method whose facts say what it hands back in a shape the
+checker can track. `front()` returns a reference to an element, and only `v[i]` is tracked as an observer so far, so it is refused (write `v[0]`); chapter 3 says how the admitted methods are decided.
 
-<!-- example: 02_no_vector_clear.clg -->
+<!-- example: 02_no_vector_front.clg -->
 ```cpp
 int main() {
     std::vector<int> v;
     v.push_back(1);
-    v.clear();
-    std::cout << v.size() << std::endl;
+    int x = v.front();
+    std::cout << x << std::endl;
     return 0;
 }
 ```
-<!-- error: 02_no_vector_clear.clg -->
+<!-- error: 02_no_vector_front.clg -->
 ```
-error[semantic/forbidden-construct]: call to unknown function/method `clear`
-  --> 02_no_vector_clear.clg:4:5
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `clear` in CeeLing source, or call an existing CeeLing function/method instead.
+error[semantic/forbidden-construct]: `front` is not available on `std::vector<int>`: it returns a reference to an element, and only `v[i]` is tracked as an observer so far
+  --> 02_no_vector_front.clg:4:13
+  help: CeeLing admits a method of the standard library only when the checker can follow what it hands back; the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.
 ```
 
 Also: a call on a library call's result is rejected when the second call is not itself known. Your own functions chain freely (see "Classes"):

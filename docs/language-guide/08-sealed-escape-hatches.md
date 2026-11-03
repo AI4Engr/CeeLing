@@ -451,7 +451,7 @@ int main() {
 
 **Why C++ does not stop it.** `c_str()` returns a raw `const char*` into the string's buffer. It is the same raw pointer as `.get()`, from a string, and it is needed to call C interfaces.
 
-**What CeeLing does.** The string method allow-list does not contain it, so it falls under default-reject (below), for the same reason as `.get()`: a raw pointer has nowhere legal to go.
+**What CeeLing does.** The scan of `std::string` finds that `c_str` returns a raw pointer, so the admission rule refuses it, for the same reason as `.get()`: a raw pointer has nowhere legal to go.
 
 <!-- example: 08_c_str.clg -->
 ```cpp

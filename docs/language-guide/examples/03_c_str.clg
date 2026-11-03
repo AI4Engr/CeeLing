@@ -1,5 +1,5 @@
 //@ expect: reject
-//@ error: unknown function/method `c_str`
+//@ error: `c_str` is not available on `string`
 int main() {
     string s = "hello";
     s.c_str();

@@ -17,15 +17,32 @@ extern const unsigned long kBuiltinPackCount;
 
 namespace {
 
-// Which flags each kind accepts. A kind not in this map is a load error.
-const std::map<std::string, std::set<std::string>>& kindFlags() {
-    static const std::map<std::string, std::set<std::string>> m = {
-        {"vector.method", {"invalidates", "shares-arg0"}},
-        {"string.method", {"invalidates"}},
-        {"function", {}},
-        {"class", {}},
-        {"operator", {}},
-        {"borrow", {}},
+// What each kind accepts: bare flags, and key=value attributes with their allowed values (an empty set = any value).
+// A kind not in this map is a load error.
+struct KindSpec {
+    std::set<std::string> flags;
+    std::map<std::string, std::set<std::string>> keys;
+};
+
+const std::map<std::string, KindSpec>& kindSpecs() {
+    // A `*.sig` fact is what a scan found for one method name (split by const-ness): the shapes its overloads return
+    // (`result`, comma-separated), whether calling it may change the receiver (`mutates`), whether some overload takes a
+    // non-const reference parameter (`mparam`), whether only some of the scanned implementations resolved the result
+    // (`partial`), the implementations scanned (`impls`).
+    const KindSpec sig = {{}, {{"result", {}},
+                               {"mutates", {"yes", "no"}},
+                               {"mparam", {"yes", "no"}},
+                               {"partial", {"yes", "no"}},
+                               {"impls", {}}}};
+    static const std::map<std::string, KindSpec> m = {
+        {"vector.sig", sig},
+        {"string.sig", sig},
+        {"vector.note", {{"shares-arg0"}, {}}},   // a declared fact no signature can give (the argument is linked, not consumed)
+        {"vector.own", {{}, {}}},                // a method CeeLing itself defines (no std counterpart)
+        {"function", {{}, {}}},
+        {"class", {{}, {}}},
+        {"operator", {{}, {}}},
+        {"borrow", {{}, {}}},
     };
     return m;
 }
@@ -79,8 +96,8 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
         }
         if (words.size() < 3) return fail(lineNo, "a fact needs `<kind> <subject> source=<declared|inferred>`");
 
-        auto kindIt = kindFlags().find(words[0]);
-        if (kindIt == kindFlags().end()) return fail(lineNo, "unknown fact kind `" + words[0] + "`");
+        auto kindIt = kindSpecs().find(words[0]);
+        if (kindIt == kindSpecs().end()) return fail(lineNo, "unknown fact kind `" + words[0] + "`");
 
         Fact f;
         f.kind = words[0];
@@ -95,13 +112,28 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
                 }
             } else if (w.rfind("review=", 0) == 0) {
                 f.review = w.substr(7);
-            } else if (kindIt->second.count(w) > 0) {
+            } else if (kindIt->second.flags.count(w) > 0) {
                 f.flags.insert(w);
+            } else if (size_t eq = w.find('='); eq != std::string::npos && eq > 0) {
+                std::string key = w.substr(0, eq), value = w.substr(eq + 1);
+                auto keyIt = kindIt->second.keys.find(key);
+                if (keyIt == kindIt->second.keys.end()) {
+                    return fail(lineNo, "unknown attribute `" + key + "` for kind `" + f.kind + "`");
+                }
+                if (value.empty() || (!keyIt->second.empty() && keyIt->second.count(value) == 0)) {
+                    return fail(lineNo, "bad value `" + value + "` for attribute `" + key + "`");
+                }
+                if (!f.attrs.emplace(key, value).second) return fail(lineNo, "attribute `" + key + "` given twice");
             } else {
                 return fail(lineNo, "unknown flag `" + w + "` for kind `" + f.kind + "`");
             }
         }
         if (f.source.empty()) return fail(lineNo, "missing `source=`");
+        if (f.kind.size() > 4 && f.kind.compare(f.kind.size() - 4, 4, ".sig") == 0) {
+            for (const char* required : {"result", "mutates", "mparam"}) {
+                if (f.attrs.count(required) == 0) return fail(lineNo, std::string("a `") + f.kind + "` fact needs `" + required + "=`");
+            }
+        }
 
         std::string key = f.kind + "|" + f.subject;
         if (!seen.insert(key).second || index_.count(key) > 0) {
@@ -123,6 +155,11 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
 
 bool FactTable::has(const std::string& kind, const std::string& subject) const {
     return index_.count(kind + "|" + subject) > 0;
+}
+
+const FactTable::Fact* FactTable::find(const std::string& kind, const std::string& subject) const {
+    auto it = index_.find(kind + "|" + subject);
+    return it == index_.end() ? nullptr : &facts_[it->second];
 }
 
 bool FactTable::hasFlag(const std::string& kind, const std::string& subject, const std::string& flag) const {

@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ reason: `begin` returns an iterator and iterators are not tracked, so the classic
+//@ reason: `auto it = v.begin(); v.push_back(..); *it` is refused at the `begin`, with the reason in the message.
+//
+// This used to be ACCEPTED (it was a documented gap): begin/end were on the hand list of vector methods.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    auto it = v.begin();
+    v.push_back(2);
+    std::cout << *it << std::endl;
+    return 0;
+}

@@ -2,9 +2,8 @@
 #
 # MIGRATED 2026-11-02 from the hand tables in library_summary.cpp with NO change in behaviour
 # (tests/facts/ checks that every answer is the same). Everything here is hand-written, so
-# source=declared review=hand. The plan is to replace the name lists by facts generated from the
-# library's own declarations, with admission computed by rule (PLAN_third_party_inference.md,
-# TODO.md "Third-party library facts"); until then this file is the whole of what `std` allows.
+# source=declared review=hand. The vector and string method lists were replaced on 2026-11-02 by facts generated from the
+# library's own declarations, with admission computed by rule (PLAN_third_party_inference.md, TODO.md).
 #
 # Format (docs/internals/facts-format.md): one fact per line,
 #     <kind> <subject> [flag ...] source=<declared|inferred> [review=<state>]
@@ -13,33 +12,15 @@
 @version 1
 @origin hand-written, migrated from library_summary.cpp
 
-# std::vector<T>. A name here may be called on a vector; `invalidates` = the call may reallocate or destroy
-# elements, so every existing observer of the vector dies (CLAUDE.md threat #4); `shares-arg0` = the first
-# argument is linked into the container, not consumed. `reserve` is on the invalidating list since 2026-11-02
-# (the standard says a growing reserve invalidates references). `copyWithin` is CeeLing's own method, it has no
-# std counterpart; `resize`, `reserve` and `copyWithin` are further limited to primitive elements by a language
-# rule in escape_hatch_checker.cpp, which is policy, not a fact.
-vector.method push_back invalidates shares-arg0 source=declared review=hand
-vector.method pop_back invalidates source=declared review=hand
-vector.method size source=declared review=hand
-vector.method begin source=declared review=hand
-vector.method end source=declared review=hand
-vector.method resize invalidates source=declared review=hand
-vector.method reserve invalidates source=declared review=hand
-vector.method copyWithin source=declared review=hand
-
-# std::string. `c_str` and `data` are deliberately absent: they extract a raw `const char*`, the escape-hatch
-# shape CLAUDE.md's `.get()` ban closes. `invalidates` has no effect yet because a string observer is never
-# registered (see TODO.md, "Fixed 2026-11-02").
-string.method length source=declared review=hand
-string.method size source=declared review=hand
-string.method empty source=declared review=hand
-string.method substr source=declared review=hand
-string.method find source=declared review=hand
-string.method append invalidates source=declared review=hand
-string.method clear invalidates source=declared review=hand
-string.method push_back invalidates source=declared review=hand
-string.method reserve invalidates source=declared review=hand
+# std::vector and std::string: which methods may be called is NOT listed here. It is computed from the scan of the library's own
+# declarations (std-vector.clfacts, std-string.clfacts) by the rule in library_summary.cpp. Only what no signature can say is
+# declared by hand:
+#   * `shares-arg0`: push_back links its first argument into the container (like a field store), it does not consume it.
+#   * `vector.own`: methods CeeLing itself defines, with no std counterpart (copyWithin).
+# `resize`, `reserve`, `copyWithin` and `assign` are further limited to primitive elements by a language rule in
+# escape_hatch_checker.cpp; that is policy, not a fact.
+vector.note push_back shares-arg0 source=declared review=hand
+vector.own copyWithin source=declared review=hand
 
 # Free functions. `std::to_string`: number to text, returns a fresh string (nothing to borrow).
 function std::stoi source=declared review=hand

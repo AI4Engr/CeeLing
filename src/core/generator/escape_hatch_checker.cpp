@@ -269,10 +269,10 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         // `v.push_back(x)` where `v`'s declared type is `std::vector<T>`.
         const std::string declaredType = resolveDeclaredType(member->object.get());
         if (isVectorType(declaredType)) {
-            // resize/reserve/copyWithin only on primitive-element vectors --
-            // see isKnownVectorMethod's comment in library_summary.h.
+            // resize/reserve/assign/copyWithin only on primitive-element vectors --
+            // see isKnownVectorMethod's comment in library_summary.h. (`assign(n, x)` on an object vector would copy an owner.)
             if (member->member == "resize" || member->member == "reserve" ||
-                member->member == "copyWithin") {
+                member->member == "assign" || member->member == "copyWithin") {
                 return isPrimitiveType(vectorElementType(declaredType));
             }
             return isKnownVectorMethod(member->member);
@@ -510,6 +510,18 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                          "(or bool) value. A class, container or string cannot be cast to a "
                          "primitive -- that would be a type-confusion hatch (CLAUDE.md #13).";
             }
+            // A method of std::vector / string that exists but is not admitted: say why (the rule is in library_summary.cpp).
+            if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get())) {
+                const std::string recvType = resolveDeclaredType(calleeMember->object.get());
+                std::string why;
+                if (isVectorType(recvType)) why = vectorMethodRefusal(calleeMember->member);
+                else if (isStringType(recvType)) why = stringMethodRefusal(calleeMember->member);
+                if (!why.empty()) {
+                    e.message = "`" + calleeMember->member + "` is not available on `" + recvType + "`: " + why;
+                    e.help = "CeeLing admits a method of the standard library only when the checker can follow what it hands back; "
+                             "the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.";
+                }
+            }
             if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get());
                 calleeMember != nullptr && calleeMember->member == "resize") {
                 const std::string recvType = resolveDeclaredType(calleeMember->object.get());
@@ -520,6 +532,13 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                              "the new slots with null smart pointers, or duplicate an owner "
                              "for resize(n, x). Build the elements with push_back instead.";
                 }
+            }
+            if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get());
+                calleeMember != nullptr && (calleeMember->member == "assign") &&
+                isVectorType(resolveDeclaredType(calleeMember->object.get()))) {
+                e.message = "`assign` on `" + resolveDeclaredType(calleeMember->object.get()) + "`: element type is not primitive";
+                e.help = "`assign` is only allowed on vectors of primitive elements (int, byte, char, ...), matching `resize`: "
+                         "assign(n, x) on a vector of objects would duplicate an owner.";
             }
             if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get());
                 calleeMember != nullptr && calleeMember->member == "reserve") {

@@ -1212,10 +1212,10 @@ that:
 
 | Call | Effect on observers of the vector |
 |---|---|
-| `push_back`, `pop_back`, `resize` | they die |
-| `reserve`, `copyWithin` | nothing |
-| `size`, `begin`, `end` | nothing (and `begin`/`end` produce no tracked iterator, see below) |
-| `clear`, `erase`, `insert`, anything else | not accepted: the call is an error |
+| `push_back`, `pop_back`, `resize`, `reserve`, `assign`, `clear`, `shrink_to_fit` (every method the scan finds changes the receiver) | they die |
+| `copyWithin` | nothing |
+| `size`, `empty`, `capacity`, `max_size` | nothing |
+| `begin`, `end`, `insert`, `erase`, `front`, `back`, `at`, `emplace_back`, `data`, `swap`, anything else | not accepted: the call is an error, with the reason |
 
 <!-- example: 06_element_ok.clg -->
 ```cpp
@@ -1297,23 +1297,44 @@ For `push_back` the rule is stricter than the generated code needs. CeeLing keep
 object, not to the slot, so a reallocation moves pointers and leaves the objects where they are. The checker tracks invalidation for the container as a whole, not per element, and takes the
 simple rule. The cost is a refused program that would have been fine; the gain is that the rule does not depend on how the element happens to be stored.
 
-Methods that are not on the table are not "unknown, therefore allowed". Every call to a library function or method the compiler has no fact about is refused (this is the default-reject rule of
-[chapter 14](14-how-it-works.md)), so a mutator cannot slip past the table by being missing from it:
+Which methods invalidate is not written down by hand for `std::vector`: the scan of the library's declarations marks every method that changes the receiver (a non-const member with no `const` twin),
+so `clear`, `assign` and `shrink_to_fit` invalidate like `push_back` without being on any list:
 
-<!-- example: 06_vector_clear.clg -->
+<!-- example: 06_vector_clear_invalidates.clg -->
 ```cpp
 int main() {
     std::vector<int> v;
     v.push_back(1);
-    v.clear();              // not on the list of vector methods CeeLing knows
+    ref std::vector<int> r = v;
+    v.clear();              // admitted now, and it invalidates like every other mutator
+    std::cout << r.size() << std::endl;
     return 0;
 }
 ```
-<!-- error: 06_vector_clear.clg -->
+<!-- error: 06_vector_clear_invalidates.clg -->
 ```
-error[semantic/forbidden-construct]: call to unknown function/method `clear`
-  --> 06_vector_clear.clg:4:5
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `clear` in CeeLing source, or call an existing CeeLing function/method instead.
+error[semantic/use-after-move]: use of dangling observer `r` (its owner `v` is gone)
+  --> 06_vector_clear_invalidates.clg:6:18
+  help: `r` observes `v`, which no longer has a live owner
+```
+
+A method the compiler has no usable fact about is not "unknown, therefore allowed". It is refused (this is the default-reject rule of [chapter 14](14-how-it-works.md)), and when the scan found the method but it
+hands back something the checker cannot follow, the message says what. `emplace_back` is a mutator that returns a reference to the new element:
+
+<!-- example: 06_vector_emplace_back.clg -->
+```cpp
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.emplace_back(2);      // a mutator, but it hands back a reference to the new element: not admitted
+    return 0;
+}
+```
+<!-- error: 06_vector_emplace_back.clg -->
+```
+error[semantic/forbidden-construct]: `emplace_back` is not available on `std::vector<int>`: it returns a reference to an element, and only `v[i]` is tracked as an observer so far
+  --> 06_vector_emplace_back.clg:4:5
+  help: CeeLing admits a method of the standard library only when the checker can follow what it hands back; the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.
 ```
 
 ### `reserve` and `copyWithin`
@@ -1385,8 +1406,9 @@ error[semantic/use-after-move]: use of dangling observer `r` (its owner `v` is g
 
 ### Iterators, and the range-`for`
 
-CeeLing does not track iterators. `begin()` and `end()` are accepted as calls, and a `for (int x : v)` loop over a vector or a map works, but the checker has no notion of an iterator
-object that depends on a container, so a loop that grows the vector it walks is not caught. The C++ shape, and the CeeLing program that is accepted although it should not be:
+CeeLing does not track iterators, so it does not let you hold one: `begin()`, `end()` and the other iterator-returning methods are refused (since 2026-11-02; until then they were on a hand-written list). A
+`for (int x : v)` loop over a vector or a map works, but the checker has no notion of an iterator object that depends on a container, so a loop that grows the vector it walks is not caught. The C++ shape, and
+the CeeLing program that is accepted although it should not be:
 
 <!-- example: 06_iterator.cpp -->
 ```cpp
@@ -1437,12 +1459,11 @@ int main() {
 ```
 
 This is a gap, not a design. The second program is undefined behaviour in C++ and CeeLing accepts it. (The same program with `ref Node` elements is also accepted. A loop variable is treated as
-a fresh owner of each element.) The only protection today is that the standard vector mutators outside the table are refused, and that the common mistake with a *stored* iterator is hard
-to write:
+a fresh owner of each element.) The only protection today is that the standard vector mutators the checker cannot follow are refused, and that the common mistake with a *stored* iterator can no longer be written:
 
 * A variable of type `std::vector<int>::iterator` does not parse.
-* `auto it = v.begin();` does parse, because CeeLing passes a type name it does not recognise through to C++ unchanged. It is accepted, and an iterator held that way is **not** tracked. A
-  program that does `auto it = v.begin(); v.push_back(2); *it` is accepted:
+* `auto it = v.begin();` parses (CeeLing passes a type name it does not recognise through to C++ unchanged), but the `begin()` call is refused, because the scan of `std::vector` finds that it returns
+  an iterator and iterators are not tracked. So `auto it = v.begin(); v.push_back(2); *it` is rejected, at the `begin`. This was an accepted gap before the admission rule replaced the hand list:
 
 <!-- example: 06_gap_auto_iterator.clg -->
 ```cpp
@@ -1454,22 +1475,20 @@ std::vector<int> make() {
 
 int main() {
     std::vector<int> v = make();
-    auto it = v.begin();            // CeeLing does not know the type "auto": it is passed through
-    v.push_back(2);                 // may reallocate; it now dangles
-    std::cout << *it << std::endl;  // accepted -- and undefined behaviour
-    return 0;
-}
-```
-<!-- generated: 06_gap_auto_iterator.clg "int main()" -->
-```cpp
-int main() {
-    std::vector<int> v = make();
-    auto it = v.begin();
+    auto it = v.begin();            // refused here: begin() returns an iterator, and iterators are not tracked
     v.push_back(2);
     std::cout << *it << std::endl;
     return 0;
 }
 ```
+<!-- error: 06_gap_auto_iterator.clg -->
+```
+error[semantic/forbidden-construct]: `begin` is not available on `std::vector<int>`: it returns an iterator, and iterators are not tracked yet, so nothing would stop one from dangling
+  --> 06_gap_auto_iterator.clg:9:15
+  help: CeeLing admits a method of the standard library only when the checker can follow what it hands back; the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.
+```
+
+What stays open is an iterator that does not come from a refused call, and the range-`for` shape above.
 
 An iterator class written in CeeLing itself is a different case and is safe in this respect: a class with `operator*`, `operator++` and `operator!=` is treated as a value type, has no `ref`
 field in which to hold the container, and works with range-`for`:
@@ -1707,7 +1726,8 @@ does not: lazy expressions, any other view type, `string_view` and `span`.
 The static half of the safety contract rests on the checks above, and each of these is a place where a dangling reference can still be built. They are listed in plain words, so that "it
 compiled" is not read as more than it means.
 
-* **Iterators.** An iterator held in a variable, and a range-`for` over a container that its own body changes, are not tracked.
+* **Iterators.** A range-`for` over a container that its own body changes is not tracked. An iterator held in a variable is refused where it comes from a `vector` or `string` method (`begin()`, `end()`, `insert`, `erase`); one
+  that comes from anything else the compiler does not know is refused as an unknown call.
 * **Views.** `string_view`, `span` and similar types, and Eigen's lazy expressions held through `auto` (or any other type name the compiler does not know), are not tracked.
 * **Types the compiler does not know pass through.** A declaration whose type name is not one of CeeLing's is emitted unchanged. A hazard named by such a type is invisible to every check
   in this chapter.

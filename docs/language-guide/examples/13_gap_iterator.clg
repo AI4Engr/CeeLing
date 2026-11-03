@@ -1,9 +1,10 @@
-//@ expect: accept
+//@ expect: reject
+//@ error: `begin` is not available on `std::vector<int>`
 int main() {
     std::vector<int> v;
     v.push_back(1);
-    auto it = v.begin();               // an iterator into v
-    v.push_back(2);                    // may move the storage: it now dangles
-    std::cout << *it << std::endl;     // accepted today: iterators are not tracked
+    auto it = v.begin();               // an iterator into v: refused, the checker cannot follow it
+    v.push_back(2);
+    std::cout << *it << std::endl;
     return 0;
 }

@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ reason: `clear` is admitted because the scan of std::vector finds it returns void, and it is on the
+//@ reason: invalidating list because the scan finds it changes the receiver (a non-const member with no
+//@ reason: const twin). The observer `r` of `v` dies at the `clear`.
+//
+// Admission and invalidation of vector methods are computed from facts/std-vector.clfacts, not listed.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    ref std::vector<int> r = v;
+    v.clear();
+    std::cout << r.size() << std::endl;   // ERROR: r observes a possibly-invalidated container
+    return 0;
+}

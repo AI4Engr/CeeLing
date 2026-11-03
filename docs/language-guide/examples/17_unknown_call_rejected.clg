@@ -1,9 +1,8 @@
 //@ expect: reject
-//@ error: unknown function/method `std::partial_sum`
+//@ error: unknown function/method `std::max`
 int main() {
-    std::vector<int> v;
-    v.push_back(1);
-    v.push_back(2);
-    std::partial_sum(v.begin(), v.end(), v.begin());   // no entry in the library facts: not trusted
+    int a = 1;
+    int m = std::max(a, 3);   // returns a reference to one of its arguments; no entry in the library facts: not trusted
+    std::cout << m << std::endl;
     return 0;
 }

@@ -1,5 +1,5 @@
-//@ expect: accept
-//@ generated: auto it = v.begin();
+//@ expect: reject
+//@ error: `begin` is not available on `std::vector<int>`
 std::vector<int> make() {
     std::vector<int> v;
     v.push_back(1);
@@ -8,8 +8,8 @@ std::vector<int> make() {
 
 int main() {
     std::vector<int> v = make();
-    auto it = v.begin();            // CeeLing does not know the type "auto": it is passed through
-    v.push_back(2);                 // may reallocate; it now dangles
-    std::cout << *it << std::endl;  // accepted -- and undefined behaviour
+    auto it = v.begin();            // refused here: begin() returns an iterator, and iterators are not tracked
+    v.push_back(2);
+    std::cout << *it << std::endl;
     return 0;
 }

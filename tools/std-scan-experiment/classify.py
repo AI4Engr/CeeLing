@@ -87,6 +87,11 @@ def resolve(t, al):
 
 def classify_return(ret, al, cls):
     r = resolve(ret, al).replace('const ', '').strip()
+    # libstdc++ spells its string_view-convertible overloads `_If_sv<_Tp, X>`, an enable_if alias: the result is X when the
+    # overload is enabled. Unwrap it (a documented, library-specific rule; anything else dependent stays UNRESOLVED).
+    m = re.fullmatch(r'_If_sv<_Tp,\s*(.*)>', r)
+    if m:
+        r = m.group(1).strip()
     if r == 'void':
         return 'void', 'none'
     if r.endswith('*'):

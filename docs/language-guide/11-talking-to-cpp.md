@@ -5,7 +5,7 @@ CeeLing is useful only if it can use the C++ you already have, and if C++ can us
 | Door | Direction | What the compiler knows about what is behind it |
 |---|---|---|
 | `ext_fn` | CeeLing calls C++ you wrote | only the signature you declared, and it believes it |
-| the library allow-list | CeeLing calls `std` (and a little of Eigen) | a table inside the compiler of which calls borrow, move and invalidate |
+| the library allow-list | CeeLing calls `std` (and a little of Eigen) | facts shipped with the compiler (`facts/*.clfacts`): which calls borrow, move and invalidate |
 | the generated C++ | C++ calls CeeLing | nothing: it is ordinary C++17, and the caller is not checked |
 
 The chapter ends with the list of what the guarantee does not cover once C++ is involved. [Chapter 8](08-sealed-escape-hatches.md) shows `ext_fn` as an escape hatch in a few lines; this chapter is the whole story.
@@ -336,10 +336,12 @@ only through its `ext_fn` declarations (the head of each `.clg` file, with `shim
 
 ## What the compiler knows about `std`, and about Eigen
 
-Every call to something CeeLing did not compile itself must be on a list, or it is rejected. For `std` the list is a table inside the compiler, written by hand:
+Every call to something CeeLing did not compile itself needs a fact, or it is rejected. The facts ship inside the compiler as plain-text packs (`facts/*.clfacts`, format in `docs/internals/facts-format.md`):
 
-- **`std::vector`:** `push_back`, `pop_back`, `size`, `begin`, `end`, `resize`, `reserve`, and CeeLing's own `copyWithin`. `push_back`, `pop_back`, `resize` and `reserve` invalidate every observer of the vector.
-- **`string`:** `length`, `size`, `empty`, `substr`, `find`, `append`, `clear`, `push_back`, `reserve`. **`std::map`** with primitive keys and values.
+- **`std::vector` and `string`:** no list of names. The packs hold what a scan of the library's own declarations found for each method, and a rule admits a method when what it hands back is something the checker can
+  follow (chapter 3 has the rule and today's result). A method that changes the receiver invalidates every observer of it; that is read from the scan too. Hand-written: `push_back` links its argument instead of consuming
+  it, and CeeLing's own `copyWithin`.
+- **`std::map`** with primitive keys and values.
 - **free functions:** `std::stoi`, `std::stod`, `std::to_string`.
 - **runtime helpers** the compiler emits into your file: `cling::readFileToString`, `fileExists`, `readFileToBytes`, and the thread helpers of chapter 10.
 

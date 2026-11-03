@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: `front` is not available on `std::vector<int>`
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    int x = v.front();
+    std::cout << x << std::endl;
+    return 0;
+}

@@ -78,17 +78,97 @@ std::string vectorElementType(const std::string& type) {
     return type.substr(prefixLen, type.size() - prefixLen - 1);
 }
 
-// The name lists below used to be hard-coded sets; they are facts now (facts/std.clfacts, loaded by fact_table.cpp).
-// The comments that explain WHY each entry is there live next to the entries.
+namespace {
+
+// ADMISSION BY RULE (2026-11-02). There is no list of admitted std::vector / std::string method names any more. The scan of
+// the library's own declarations (facts/std-vector.clfacts, std-string.clfacts) says what every method returns and whether
+// it changes the receiver; a name is admitted when every overload's result is a shape the checkers can honour. "Honour"
+// means: after the call, the analysis still knows what the result may alias, so admitting it does not open a hole.
+//   void, scalar      nothing to alias.
+//   string            a fresh std::string (a value type).
+//   self-reference    `append` & co return *this; CeeLing binds no observer to a call result, so it is used as a statement
+//                     or a temporary.
+// Everything else stays out until the checker can follow it, and the reason is reported with the rejected call:
+//   raw-pointer       sealed: a raw pointer has nowhere legal to go (data(), c_str()).
+//   iterator-view     an iterator dangles when the container grows; iterators are not tracked.
+//   element-reference at()/front()/back(): only `v[i]` is tracked as an observer of the container.
+//   view              string_view conversion: views are not tracked.
+//   value             a type CeeLing has no shape for (std::allocator).
+//   unresolved        the scan could not determine the result.
+// A method with a non-const reference parameter (swap) is also out: CeeLing moves a container argument by default, which
+// would empty the other operand.
+bool shapeHonoured(const std::string& shape) {
+    return shape == "void" || shape == "scalar" || shape == "string" || shape == "self-reference";
+}
+
+std::string shapeRefusal(const std::string& shape) {
+    if (shape == "raw-pointer") return "it returns a raw pointer, and raw pointers have nowhere legal to go";
+    if (shape == "iterator-view") return "it returns an iterator, and iterators are not tracked yet, so nothing would stop one from dangling";
+    if (shape == "element-reference") return "it returns a reference to an element, and only `v[i]` is tracked as an observer so far";
+    if (shape == "view") return "it returns a view (string_view), and views are not tracked yet";
+    if (shape == "value") return "it returns a type CeeLing has no shape for";
+    return "the scan of the standard library could not determine what it returns";
+}
+
+struct MethodVerdict {
+    bool admitted = false;
+    std::string reason;   // why not, when !admitted
+};
+
+MethodVerdict methodVerdict(const std::string& cls, const std::string& name) {
+    const FactTable& facts = builtinFacts();
+    if (facts.has(cls + ".own", name)) return {true, ""};   // a method CeeLing itself defines (copyWithin)
+    bool any = false;
+    for (const char* constness : {"nonconst", "const"}) {
+        const FactTable::Fact* f = facts.find(cls + ".sig", name + "/" + constness);
+        if (f == nullptr) continue;
+        any = true;
+        if (f->attrs.at("mparam") == "yes") {
+            return {false, "an overload takes a non-const reference parameter, and CeeLing would move the argument out"};
+        }
+        std::string results = f->attrs.at("result");
+        size_t start = 0;
+        while (start <= results.size()) {
+            size_t comma = results.find(',', start);
+            std::string shape = results.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+            if (!shapeHonoured(shape)) return {false, shapeRefusal(shape)};
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+    }
+    if (!any) return {false, "the standard library has no such member"};
+    return {true, ""};
+}
+
+// Does any overload of `name` change the receiver (so every observer of the container dies)?
+bool methodMutates(const std::string& cls, const std::string& name) {
+    const FactTable& facts = builtinFacts();
+    for (const char* constness : {"nonconst", "const"}) {
+        const FactTable::Fact* f = facts.find(cls + ".sig", name + "/" + constness);
+        if (f != nullptr && f->attrs.at("mutates") == "yes") return true;
+    }
+    return false;
+}
+
+}  // namespace
+
 bool isKnownVectorMethod(const std::string& methodName) {
-    return builtinFacts().has("vector.method", methodName);
+    return methodVerdict("vector", methodName).admitted;
+}
+
+std::string vectorMethodRefusal(const std::string& methodName) {
+    return methodVerdict("vector", methodName).reason;
+}
+
+std::string stringMethodRefusal(const std::string& methodName) {
+    return methodVerdict("string", methodName).reason;
 }
 
 bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex) {
     // push_back(x) links x into the container (like a field store), the same way
     // `a.b = obj;` does not consume `obj` -- see dangling_checker.cpp's member-
     // target-assignment handling for the precedent this follows.
-    return argIndex == 0 && builtinFacts().hasFlag("vector.method", methodName, "shares-arg0");
+    return argIndex == 0 && builtinFacts().hasFlag("vector.note", methodName, "shares-arg0");
 }
 
 bool vectorMethodInvalidatesReferences(const std::string& methodName) {
@@ -98,12 +178,14 @@ bool vectorMethodInvalidatesReferences(const std::string& methodName) {
     // as push_back's whole-container invalidation, since this codebase's
     // model tracks invalidation at the container level, not per-element (see
     // Chapter 18 Step 14's design note on this granularity choice).
-    // The list itself is the `invalidates` flag in facts/std.clfacts.
-    return builtinFacts().hasFlag("vector.method", methodName, "invalidates");
+    // Derived, not listed: a method that may change the receiver (a non-const member with no const twin, found by the scan,
+    // `mutates=yes` in facts/std-vector.clfacts) invalidates. That is push_back, pop_back, resize, reserve, assign, clear,
+    // shrink_to_fit, ... and nothing a name list could forget.
+    return methodMutates("vector", methodName);
 }
 
 bool stringMethodInvalidatesReferences(const std::string& methodName) {
-    return builtinFacts().hasFlag("string.method", methodName, "invalidates");
+    return methodMutates("string", methodName);
 }
 
 bool isStringType(const std::string& type) {
@@ -111,7 +193,7 @@ bool isStringType(const std::string& type) {
 }
 
 bool isKnownStringMethod(const std::string& methodName) {
-    return builtinFacts().has("string.method", methodName);
+    return methodVerdict("string", methodName).admitted;
 }
 
 bool isOstreamType(const std::string& type) {

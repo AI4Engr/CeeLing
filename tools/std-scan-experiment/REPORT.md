@@ -65,6 +65,16 @@ Method (all in this directory; rerun with the commands at the end):
    (`request for member 'get' ... of non-class type 'int'`). TODO.md lists it under "Accepted by CeeLing, rejected by g++ afterwards" (`ref` on a
    primitive or a vector). It matters here only because it is what keeps the `reserve` hole in item 3 closed.
 
+## Addendum 2026-11-02: what happened next
+
+* The shipped scans are redone at **C++17**, the standard the generated code is compiled with (a first scan at C++20 admitted `starts_with`/`ends_with`, which g++ -std=c++17 rejects). The numbers in the tables above are the C++20 scan.
+* Unwrapping libstdc++'s `_If_sv<_Tp, X>` alias (its string_view-convertible overloads; X is the result when the overload is enabled) in `classify.py` resolves the 13 string names that came out UNRESOLVED: **all 46 string
+  names and all 30 vector names are now identical across the two implementations.**
+* `gen_pack.py` turns the two scans into `facts/std-vector.clfacts` and `std-string.clfacts`, and the compiler now computes which `vector`/`string` methods are admitted from them (no hand list). Result: `vector` admits
+  11 callable names (was 8, of which `begin` and `end` are now refused), `string` 23 (was 9). The classic `auto it = v.begin(); v.push_back(2); *it` is rejected where it used to be accepted. Details: CLAUDE.md, TODO.md.
+* The raw-pointer count in the table above (33/35 overloads "sealed by rule") overstated what is sealed: a `const char *` PARAMETER is how a string literal arrives and is harmless; only a raw-pointer RESULT (`data`,
+  `c_str`) is sealed, plus a parameter that points to writable memory (`copy`, one `replace` overload), which keeps those methods out.
+
 ## What the scan does not give (signature level)
 
 * **Retention** ("the callee keeps the argument"): `push_back(const int&)` copies, `push_back(Node&&)` moves; whether a *class-typed* argument is

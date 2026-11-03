@@ -133,7 +133,7 @@ The 19 threats CeeLing was designed against, each with what happens today. "Stat
 | 1 | An observer outlives its object | **Static.** Provenance table, death events (move, reassignment, scope exit), use-site check, branch merges. A `ref` may only observe a local, an element `v[i]` of a local container, another `ref` or `nullptr`; one bound to a call result or a field is rejected. | [6](06-dangling-references.md) |
 | 2 | Return a reference to a local | **By construction.** There is no reference return type, so a return is always owning; returning a `ref` observer is rejected. | [6](06-dangling-references.md) |
 | 3 | A reference stored in a longer-lived field | **By construction.** The grammar has no `ref` field, and `ref` parameters are rejected, so an observer has no place to be stored. | [6](06-dangling-references.md), [8](08-sealed-escape-hatches.md) |
-| 4 | Iterator invalidation | **Partly.** A `ref` into a vector element dies at `push_back`, `resize` and `pop_back`. An iterator held in a variable (`auto it = v.begin();`) and mutation inside a range-for body are **open**, see below. | [6](06-dangling-references.md) |
+| 4 | Iterator invalidation | **Partly.** A `ref` into a vector element dies at every method that changes the vector (`push_back`, `resize`, `pop_back`, `reserve`, `clear`, `assign`, ...). An iterator cannot be held: `v.begin()` and the other iterator-returning methods are refused. Mutation inside a range-for body is **open**, see below. | [6](06-dangling-references.md) |
 | 5 | `string_view` / `span` of a temporary | **Open.** A type name the compiler does not know is passed to C++ unchanged, so views are accepted and invisible to every check. | [6](06-dangling-references.md), below |
 | 6 | Expression-template dangle (Eigen `auto e = A + B`) | **Open, narrow exception.** The old claim that CeeLing has no `auto`, so the danger cannot be written, is stale: `auto` is accepted and not tracked. A short hand-written list of Eigen view methods (`block`, `row`, `col`, `transpose`, `segment`, `head`, `tail`, `diagonal`) is tracked; its fixtures live outside `tests/safety`, in a separate Eigen spike. | below |
 | 7 | A lambda captures `[&]` and escapes | **By construction.** Closures capture by value only; there is no `&` to write. | [9](09-closures.md) |
@@ -228,16 +228,16 @@ and every check in the compiler follows the types it knows (its own classes, `st
 These are the places where a program with the problem is accepted today. Each one is something I ran against the compiler; none is a proof that the program is wrong in every build, only that CeeLing
 does not stop it.
 
-**Iterators and range-for (row 4).** A `ref` into a vector is tracked. An iterator is not.
+**Iterators and range-for (row 4).** A `ref` into a vector is tracked. An iterator is not tracked, so none is admitted: the call that would produce one is refused (this example was *accepted* until 2026-11-02):
 
 <!-- example: 13_gap_iterator.clg -->
 ```cpp
 int main() {
     std::vector<int> v;
     v.push_back(1);
-    auto it = v.begin();               // an iterator into v
-    v.push_back(2);                    // may move the storage: it now dangles
-    std::cout << *it << std::endl;     // accepted today: iterators are not tracked
+    auto it = v.begin();               // an iterator into v: refused, the checker cannot follow it
+    v.push_back(2);
+    std::cout << *it << std::endl;
     return 0;
 }
 ```

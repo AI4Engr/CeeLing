@@ -97,6 +97,12 @@ bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex);
 // not compile. One rule for all mutators is simpler to defend than that coincidence.
 bool vectorMethodInvalidatesReferences(const std::string& methodName);
 
+// Why a `std::vector` / `string` method is NOT admitted, as one sentence for the error message ("it returns an iterator, and
+// iterators are not tracked yet ..."). Empty when the method is admitted. Admission is computed from the scan of the standard
+// library (facts/std-vector.clfacts, std-string.clfacts) by a rule in library_summary.cpp; there is no list of names.
+std::string vectorMethodRefusal(const std::string& methodName);
+std::string stringMethodRefusal(const std::string& methodName);
+
 // The same question for a `string`. The standard: `push_back`, `append`, `clear`, `reserve`
 // (all four admitted by isKnownStringMethod) may invalidate references, pointers and iterators
 // into the string. **It has no effect today**, and nothing tests it: a `string` is a value type

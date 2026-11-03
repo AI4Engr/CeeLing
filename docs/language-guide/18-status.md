@@ -54,7 +54,7 @@ percent on decompression and 11.3 percent on compression.
 
 Grouped; each is described where it belongs and listed in [chapter 13](13-contract-and-threats.md). None of them is a plan to be quiet about.
 
-**Dangling analysis does not see:** an iterator held in a variable, a loop that grows the container it walks, `string_view` and `span`, Eigen's lazy `auto` expressions and every Eigen view method beyond eight on one type.
+**Dangling analysis does not see:** a loop that grows the container it walks (a stored iterator is refused at `begin()`, not tracked), `string_view` and `span`, Eigen's lazy `auto` expressions and every Eigen view method beyond eight on one type.
 The common cause is that a type name the compiler does not know passes through unchanged, `auto` included. An older note in the repository, that CeeLing has no `auto`, is wrong. Also: `ref` observers are raw pointers in the
 generated C++, so a miss in the analysis is not caught by a run-time check (making them self-checking is an open item); an observer of a container element depends on the whole container, which refuses more than necessary.
 

@@ -37,16 +37,15 @@ int main() {
     {   // a valid pack
         FactTable t;
         std::string err = t.addText(std::string(kHeader) +
-                                    "# a comment\n\nvector.method push_back invalidates shares-arg0 source=declared review=hand\n"
+                                    "# a comment\n\nvector.note push_back shares-arg0 source=declared review=hand\n"
                                     "function std::stoi source=inferred\r\n",
                                     "t.clfacts");
         check(err.empty(), "valid pack should load: " + err);
-        check(t.has("vector.method", "push_back"), "push_back present");
-        check(t.hasFlag("vector.method", "push_back", "invalidates"), "invalidates flag");
-        check(t.hasFlag("vector.method", "push_back", "shares-arg0"), "shares-arg0 flag");
-        check(!t.hasFlag("vector.method", "push_back", "nothing"), "absent flag");
-        check(!t.has("vector.method", "pop_back"), "absent fact");
-        check(!t.has("string.method", "push_back"), "kind is part of the key");
+        check(t.has("vector.note", "push_back"), "push_back present");
+        check(t.hasFlag("vector.note", "push_back", "shares-arg0"), "shares-arg0 flag");
+        check(!t.hasFlag("vector.note", "push_back", "nothing"), "absent flag");
+        check(!t.has("vector.note", "pop_back"), "absent fact");
+        check(!t.has("vector.own", "push_back"), "kind is part of the key");
         check(t.has("function", "std::stoi"), "CRLF line handled");
         check(t.facts().size() == 2, "two facts");
         check(t.facts()[1].source == "inferred", "source kept");
@@ -54,10 +53,25 @@ int main() {
         check(t.packs().size() == 1 && t.packs()[0] == "t@1", "pack list");
     }
 
+    {   // a scanned signature fact
+        FactTable t;
+        std::string err = t.addText(std::string(kHeader) +
+                                    "vector.sig f/const result=void,scalar mutates=no mparam=no partial=no impls=a,b source=inferred review=unreviewed\n",
+                                    "t.clfacts");
+        check(err.empty(), "sig fact should load: " + err);
+        const FactTable::Fact* f = t.find("vector.sig", "f/const");
+        check(f != nullptr && f->attrs.at("result") == "void,scalar" && f->attrs.at("mutates") == "no", "sig attributes kept");
+        check(t.find("vector.sig", "g/const") == nullptr, "find of an absent fact");
+    }
+
     // everything the loader does not understand is an error
     rejects("frob x source=declared\n", "unknown fact kind");
-    rejects("vector.method push_back wobbles source=declared\n", "unknown flag");
-    rejects("string.method clear shares-arg0 source=declared\n", "unknown flag");          // a flag of another kind
+    rejects("vector.note push_back wobbles source=declared\n", "unknown flag");
+    rejects("vector.own copyWithin shares-arg0 source=declared\n", "unknown flag");          // a flag of another kind
+    rejects("vector.sig f/const result=void mutates=no mparam=no colour=red source=inferred\n", "unknown attribute");
+    rejects("vector.sig f/const result=void mutates=maybe mparam=no source=inferred\n", "bad value");
+    rejects("vector.sig f/const result=void mutates=no source=inferred\n", "needs `mparam=`");   // a .sig fact needs all three
+    rejects("vector.sig f/const result=void result=scalar mutates=no mparam=no source=inferred\n", "given twice");
     rejects("function f\n", "needs");                                                         // too few words
     rejects("function f review=hand\n", "missing `source=`");
     rejects("function f source=guessed\n", "source must be");
@@ -80,18 +94,33 @@ int main() {
         check(t.facts().size() == 1, "first pack intact");
     }
 
-    {   // the shipped packs: they loaded (otherwise builtinFacts() would have aborted) and carry what the old tables had
+    {   // the shipped packs: they loaded (otherwise builtinFacts() would have aborted)
         const FactTable& b = cling::builtinFacts();
-        check(b.packs().size() == 3, "three shipped packs, got " + std::to_string(b.packs().size()));
+        check(b.packs().size() == 5, "five shipped packs, got " + std::to_string(b.packs().size()));
         for (const auto& f : b.facts()) {
-            check(f.source == "declared" && f.review == "hand", "shipped fact is declared+hand until a scan replaces it: " + f.subject);
+            bool scanned = f.kind == "vector.sig" || f.kind == "string.sig";
+            check(scanned ? (f.source == "inferred" && f.review == "unreviewed") : (f.source == "declared" && f.review == "hand"),
+                  "provenance of a shipped fact: " + f.kind + " " + f.subject);
         }
-        check(cling::isKnownVectorMethod("push_back") && cling::isKnownVectorMethod("copyWithin"), "vector names");
-        check(!cling::isKnownVectorMethod("insert"), "insert is not admitted (yet)");
-        check(cling::vectorMethodInvalidatesReferences("reserve"), "reserve invalidates");
-        check(!cling::vectorMethodInvalidatesReferences("size"), "size does not");
+        // admission is computed from the scanned signatures, not listed
+        for (const char* ok : {"push_back", "pop_back", "size", "resize", "reserve", "clear", "empty", "capacity", "assign", "shrink_to_fit", "copyWithin"}) {
+            check(cling::isKnownVectorMethod(ok), std::string("vector method admitted by rule: ") + ok);
+        }
+        for (const char* no : {"begin", "end", "data", "insert", "erase", "emplace_back", "at", "front", "back", "swap", "get_allocator", "frobnicate"}) {
+            check(!cling::isKnownVectorMethod(no), std::string("vector method refused by rule: ") + no);
+            check(!cling::vectorMethodRefusal(no).empty(), std::string("a refusal reason is given: ") + no);
+        }
+        check(cling::vectorMethodRefusal("push_back").empty(), "no refusal reason for an admitted method");
+        for (const char* ok : {"length", "size", "empty", "substr", "find", "append", "clear", "push_back", "reserve", "compare", "assign", "resize"}) {
+            check(cling::isKnownStringMethod(ok), std::string("string method admitted by rule: ") + ok);
+        }
+        for (const char* no : {"c_str", "data", "begin", "insert", "erase", "swap", "copy_not_there"}) {
+            check(!cling::isKnownStringMethod(no), std::string("string method refused by rule: ") + no);
+        }
+        check(cling::vectorMethodInvalidatesReferences("reserve") && cling::vectorMethodInvalidatesReferences("clear") &&
+                  cling::vectorMethodInvalidatesReferences("assign"), "derived mutators invalidate");
+        check(!cling::vectorMethodInvalidatesReferences("size") && !cling::vectorMethodInvalidatesReferences("empty"), "readers do not");
         check(cling::vectorMethodSharesArg("push_back", 0) && !cling::vectorMethodSharesArg("push_back", 1), "push_back shares arg 0");
-        check(!cling::isKnownStringMethod("c_str") && !cling::isKnownStringMethod("data"), "raw-pointer string methods stay out");
         check(cling::isKnownBorrowingMethod("Eigen::MatrixXd", "block") && !cling::isKnownBorrowingMethod("Eigen::MatrixXd", "Unit"), "eigen borrow");
     }
 

@@ -24,12 +24,22 @@ function std::stoi source=declared review=hand
 
 | kind | subject | flags | meaning |
 |---|---|---|---|
-| `vector.method` | method name | `invalidates`, `shares-arg0` | the method may be called on a `std::vector`; `invalidates`: it may reallocate or destroy elements, so every observer of the vector dies; `shares-arg0`: the first argument is linked into the container, not consumed |
-| `string.method` | method name | `invalidates` | the method may be called on a `string`; `invalidates` has no effect yet (no string observer is ever registered) |
+| `vector.sig`, `string.sig` | `name/const` or `name/nonconst` | attributes `result`, `mutates`, `mparam`, `partial`, `impls` | what a scan found for one method name and const-ness (below); written by `gen_pack.py`, `source=inferred review=unreviewed` |
+| `vector.note` | method name | `shares-arg0` | a declared fact no signature can give: the first argument is linked into the container, not consumed |
+| `vector.own` | method name | none | a method CeeLing itself defines (`copyWithin`); admitted without a scan fact |
 | `function` | called name | none | a free function the program may call; matched on the bare name, with or without a namespace qualifier |
 | `class` | type name | none | an external class type that may be declared (`Eigen::MatrixXd`) |
 | `operator` | `Type\|op` | none | the operator may be applied to that type; its result is always fresh |
 | `borrow` | `Class::method` | none | the method returns a view that borrows the receiver, with real dangling tracking |
+
+## Signature facts (`*.sig`)
+
+`result` is a comma-separated set of the shapes the overloads return: `void`, `scalar`, `string` (a fresh std::string), `self-reference` (`*this`), `element-reference`, `iterator-view`, `view`, `raw-pointer`, `value` (a type
+CeeLing has no shape for), `unresolved`. `mutates=yes`: some overload may change the receiver (a non-const member with no const twin), so every observer of the container dies. `mparam=yes`: some overload takes a non-const
+reference or a pointer to writable memory. `partial=yes`: a scanned implementation could not resolve an overload that another resolved. `impls`: the implementations scanned. All three of `result`, `mutates`, `mparam` are required.
+
+**Admission is computed from these, not listed** (`library_summary.cpp`, `methodVerdict`): a name is admitted when, for every overload, `mparam=no` and every shape in `result` is one of `void scalar string self-reference`; the
+refusal reason for the first shape that is not is part of the error message. A name with no fact is not admitted.
 
 ## What the loader refuses
 
@@ -49,5 +59,5 @@ re-runs the generator at the next build. `tests/facts/fact_table_test.cpp` (CTes
 
 ## Not in version 1 yet (planned, see the TODO)
 
-Per-overload keys; the library version and header SHA-256 a pack was scanned from; the scanner and implementation versions; `--facts <file>`; result-shape and parameter-mode facts; `sealed`
+Per-overload keys (a `*.sig` fact is per name and const-ness today); the library version and header SHA-256 a pack was scanned from; the scanner and implementation versions; `--facts <file>`; result-shape and parameter-mode facts; `sealed`
 and `not yet` admission states; `trusted include`.

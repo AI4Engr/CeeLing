@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 0 ab 2 less
+//@ reason: string methods admitted by the rule: compare (scalar), assign and append (return *this, used as
+//@ reason: statements), substr (a fresh string), clear (void).
+
+int main() {
+    string a = "ab";
+    string b = "ab";
+    std::cout << a.compare(b) << " ";
+    string c = "x";
+    c.assign("ab");
+    c.append("");
+    std::cout << c.substr(0, 2) << " " << c.size() << " ";
+    c.clear();
+    if (c.compare(b) < 0) {
+        std::cout << "less" << std::endl;
+    } else {
+        std::cout << "not less" << std::endl;
+    }
+    return 0;
+}

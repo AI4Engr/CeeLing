@@ -47,9 +47,6 @@ data		char *	raw-pointer	SEALED (borrows self)			accessor
 empty	const	bool	scalar	fresh			
 end		iterator	iterator-view	borrows self			accessor
 end	const	const_iterator	iterator-view	borrows self			
-ends_with	const	bool	scalar	fresh	const basic_string_view<char, std::char_traits<char>>	by value	
-ends_with	const	bool	scalar	fresh	const char	by value	
-ends_with	const	bool	scalar	fresh	const char *const	raw-pointer (SEALED)	
 erase		iterator	iterator-view	borrows self	const const_iterator	iterator	yes
 erase		iterator	iterator-view	borrows self	const const_iterator; const const_iterator	iterator; iterator	yes
 erase		basic_string<char> &	self-reference	borrows self (returns *this)	const size_type	by value	yes
@@ -128,7 +125,6 @@ replace		basic_string<char> &	self-reference	borrows self (returns *this)	const 
 replace		basic_string<char> &	self-reference	borrows self (returns *this)	const size_type; size_type; const basic_string<char> &; const size_type; size_type	by value; by value; read-only ref; by value; by value	yes
 replace		basic_string<char> &	self-reference	borrows self (returns *this)	const size_type; size_type; const char *const; const size_type	by value; by value; raw-pointer (SEALED); by value	yes
 replace		basic_string<char> &	self-reference	borrows self (returns *this)	const size_type; size_type; const size_type; const char	by value; by value; by value; by value	yes
-reserve		void	void	none			yes
 reserve		void	void	none	const size_type	by value	yes
 resize		void	void	none	const size_type; const char	by value; by value	yes
 rfind	const	size_type	scalar	fresh	const _StringViewIsh &; const size_type	template-param (needs witness); by value	
@@ -138,8 +134,5 @@ rfind	const	size_type	scalar	fresh	const char *const; const size_type	raw-pointe
 rfind	const	size_type	scalar	fresh	const char *const; const size_type; const size_type	raw-pointer (SEALED); by value; by value	
 shrink_to_fit		void	void	none			yes
 size	const	size_type	scalar	fresh			
-starts_with	const	bool	scalar	fresh	const basic_string_view<char, std::char_traits<char>>	by value	
-starts_with	const	bool	scalar	fresh	const char	by value	
-starts_with	const	bool	scalar	fresh	const char *const	raw-pointer (SEALED)	
 substr	const	basic_string<char>	value	fresh (owner)	const size_type; const size_type	by value; by value	
 swap		void	void	none	basic_string<char> &	mutated (non-const ref)	yes

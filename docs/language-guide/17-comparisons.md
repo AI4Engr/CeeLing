@@ -147,18 +147,17 @@ CeeLing reuses `std` and other C++ libraries, which are full of interfaces that 
 <!-- example: 17_unknown_call_rejected.clg -->
 ```cpp
 int main() {
-    std::vector<int> v;
-    v.push_back(1);
-    v.push_back(2);
-    std::partial_sum(v.begin(), v.end(), v.begin());   // no entry in the library facts: not trusted
+    int a = 1;
+    int m = std::max(a, 3);   // returns a reference to one of its arguments; no entry in the library facts: not trusted
+    std::cout << m << std::endl;
     return 0;
 }
 ```
 <!-- error: 17_unknown_call_rejected.clg -->
 ```
-error[semantic/forbidden-construct]: call to unknown function/method `std::partial_sum`
-  --> 17_unknown_call_rejected.clg:5:5
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `std::partial_sum` in CeeLing source, or call an existing CeeLing function/method instead.
+error[semantic/forbidden-construct]: call to unknown function/method `std::max`
+  --> 17_unknown_call_rejected.clg:3:13
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `std::max` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 Rust's crates are safe by default; CeeLing's reach is safe by curation, and what is covered today is `std` containers and strings, a few Eigen calls, and primitive-only `ext_fn` shims.
