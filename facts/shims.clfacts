@@ -1,0 +1,26 @@
+# CeeLing fact pack: project-specific shim functions that still live INSIDE the compiler.
+# Migrated 2026-11-02 from library_summary.cpp's isKnownQualifiedFreeFunction, no change in behaviour.
+#
+# These belong to imgui-cling (a hand-written, UNCHECKED C++ glue shim, imgui-cling/shim/gfx_shim.{h,cpp}, wrapping
+# GLFW + OpenGL behind plain-primitives-only free functions: no pointers, no callbacks, no object types cross the
+# boundary, so no ownership or borrow question reaches CeeLing's analysis). They should move into that project as
+# its own pack (or `ext_fn` declarations) so the compiler carries no project names: TODO.md, third-party facts.
+# The check is a bare string match on the called name, whether or not a namespace qualifier is present.
+# `gfx_get_mouse_pos` is NOT here: it takes float* out-params, so it stays C++-internal.
+@pack shims-imgui-cling
+@version 1
+@origin hand-written, migrated from library_summary.cpp
+
+function gfx_init source=declared review=hand
+function gfx_should_close source=declared review=hand
+function gfx_begin_frame source=declared review=hand
+function gfx_draw_triangle source=declared review=hand
+function gfx_end_frame source=declared review=hand
+function gfx_shutdown source=declared review=hand
+function gfx_draw_rect source=declared review=hand
+function gfx_mouse_x source=declared review=hand
+function gfx_mouse_y source=declared review=hand
+function gfx_mouse_down source=declared review=hand
+function gfx_draw_text source=declared review=hand
+function gfx_text_width source=declared review=hand
+function gfx_float_to_string source=declared review=hand

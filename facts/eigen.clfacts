@@ -1,0 +1,25 @@
+# CeeLing fact pack: the Eigen subset the compiler admits today (EXPLORATORY spike, see
+# library_summary.h's isKnownExternalClassType). Migrated 2026-11-02 from the hand tables, no change in behaviour.
+@pack eigen
+@version 1
+@origin hand-written, migrated from library_summary.cpp
+
+class Eigen::MatrixXd source=declared review=hand
+
+# operator*: the result is always a fresh matrix (never a view), so it needs no borrow summary.
+operator Eigen::MatrixXd|* source=declared review=hand
+
+# A static factory returning a fresh, non-aliasing matrix.
+function Eigen::MatrixXd::Identity source=declared review=hand
+
+# Methods whose result is a view borrowing the receiver (Block / Transpose / Diagonal ... expression
+# templates). Each gets real dangling tracking (DanglingChecker::resolveBorrowingMethodReceiver).
+# Not exhaustive: extend from Eigen's own declarations, never by guessing.
+borrow Eigen::MatrixXd::block source=declared review=hand
+borrow Eigen::MatrixXd::row source=declared review=hand
+borrow Eigen::MatrixXd::col source=declared review=hand
+borrow Eigen::MatrixXd::transpose source=declared review=hand
+borrow Eigen::MatrixXd::segment source=declared review=hand
+borrow Eigen::MatrixXd::head source=declared review=hand
+borrow Eigen::MatrixXd::tail source=declared review=hand
+borrow Eigen::MatrixXd::diagonal source=declared review=hand

@@ -2,6 +2,8 @@
 
 #include <set>
 
+#include "fact_table.h"
+
 namespace cling {
 
 namespace {
@@ -76,17 +78,17 @@ std::string vectorElementType(const std::string& type) {
     return type.substr(prefixLen, type.size() - prefixLen - 1);
 }
 
+// The name lists below used to be hard-coded sets; they are facts now (facts/std.clfacts, loaded by fact_table.cpp).
+// The comments that explain WHY each entry is there live next to the entries.
 bool isKnownVectorMethod(const std::string& methodName) {
-    static const std::set<std::string> kKnown = {"push_back", "pop_back", "size", "begin", "end", "resize",
-                                                   "reserve", "copyWithin"};
-    return kKnown.count(methodName) > 0;
+    return builtinFacts().has("vector.method", methodName);
 }
 
 bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex) {
     // push_back(x) links x into the container (like a field store), the same way
     // `a.b = obj;` does not consume `obj` -- see dangling_checker.cpp's member-
     // target-assignment handling for the precedent this follows.
-    return methodName == "push_back" && argIndex == 0;
+    return argIndex == 0 && builtinFacts().hasFlag("vector.method", methodName, "shares-arg0");
 }
 
 bool vectorMethodInvalidatesReferences(const std::string& methodName) {
@@ -96,17 +98,12 @@ bool vectorMethodInvalidatesReferences(const std::string& methodName) {
     // as push_back's whole-container invalidation, since this codebase's
     // model tracks invalidation at the container level, not per-element (see
     // Chapter 18 Step 14's design note on this granularity choice).
-    // `reserve` too: the standard says a growing reserve invalidates element references (see
-    // the comment in library_summary.h; this was excluded until 2026-11-02).
-    return methodName == "push_back" || methodName == "pop_back" || methodName == "resize" ||
-           methodName == "reserve";
+    // The list itself is the `invalidates` flag in facts/std.clfacts.
+    return builtinFacts().hasFlag("vector.method", methodName, "invalidates");
 }
 
 bool stringMethodInvalidatesReferences(const std::string& methodName) {
-    // Every admitted string method that changes the contents or the capacity. `size`, `length`,
-    // `empty`, `find` and `substr` (a fresh string) are read-only.
-    return methodName == "push_back" || methodName == "append" || methodName == "clear" ||
-           methodName == "reserve";
+    return builtinFacts().hasFlag("string.method", methodName, "invalidates");
 }
 
 bool isStringType(const std::string& type) {
@@ -114,9 +111,7 @@ bool isStringType(const std::string& type) {
 }
 
 bool isKnownStringMethod(const std::string& methodName) {
-    static const std::set<std::string> kKnown = {
-        "length", "size", "empty", "substr", "find", "append", "clear", "push_back", "reserve"};
-    return kKnown.count(methodName) > 0;
+    return builtinFacts().has("string.method", methodName);
 }
 
 bool isOstreamType(const std::string& type) {
@@ -152,72 +147,24 @@ bool isCharType(const std::string& type) {
 }
 
 bool isKnownQualifiedFreeFunction(const std::string& qualifiedName) {
-    static const std::set<std::string> kKnown = {
-        "std::stoi", "std::stod",
-        // number -> text: takes a primitive, returns a fresh std::string (nothing to borrow). Struct decoders use it for `list[3]` in messages.
-        "std::to_string",
-        // imgui-cling Phase 0 feasibility spike (see imgui-cling/CLAUDE.md's
-        // "On Third-Party Library Calls" section): a hand-written, UNCHECKED
-        // C++ glue shim (imgui-cling/shim/gfx_shim.{h,cpp}) wraps GLFW+OpenGL
-        // behind a handful of plain-primitives-only free functions (no
-        // pointers, no callbacks, no object types cross the boundary), so no
-        // ownership/borrow question ever reaches CeeLing's safety analysis.
-        // Despite the name "isKnownQualifiedFreeFunction", the check here is
-        // a bare string match on call.function_name regardless of whether a
-        // namespace qualifier is present (confirmed by reading
-        // EscapeHatchChecker::isKnownCallable's call site) -- these are
-        // called bare (`gfx_init(...)`, not `something::gfx_init(...)`), and
-        // that already works correctly through this same allow-list.
-        "gfx_init", "gfx_should_close", "gfx_begin_frame",
-        "gfx_draw_triangle", "gfx_end_frame", "gfx_shutdown",
-        // Phase 1: rectangle drawing + mouse input, for the first clickable-
-        // widget spike. gfx_get_mouse_pos itself is NOT here -- it still
-        // takes float* out-params, so it stays C++-internal only; CeeLing
-        // calls the two single-return wrappers instead.
-        "gfx_draw_rect", "gfx_mouse_x", "gfx_mouse_y", "gfx_mouse_down",
-        // Phase 1: bitmap-font text rendering (see gfx_shim.h -- deliberately
-        // not real TTF rendering). Both take/return only primitives
-        // (std::string by const&, like gfx_init's title parameter).
-        "gfx_draw_text", "gfx_text_width",
-        // Phase 3: DragFloat's value-as-text label needs float->string, which
-        // CeeLing has no other way to express (std::to_string itself is not
-        // on any allow-list -- confirmed via probe: it's rejected as an
-        // unknown call). Same plain-primitives-only shape as every other
-        // gfx_* entry (float in, std::string out), so it needs no borrow
-        // summary either.
-        "gfx_float_to_string",
-        // EXPLORATORY Eigen spike (see isKnownExternalClassType's doc comment):
-        // Eigen::MatrixXd::Identity(rows, cols) is a static factory returning a
-        // fresh, non-aliasing matrix -- unlike this allow-list's other entries,
-        // its return is NOT a primitive, but it needs no borrow summary for the
-        // same reason `operator*` doesn't (see isKnownExternalOperator): the
-        // result is always fresh/owned, never a view into anything.
-        "Eigen::MatrixXd::Identity"};
-    return kKnown.count(qualifiedName) > 0;
+    // std::stoi / stod / to_string, the project shims (facts/shims.clfacts) and Eigen's static factory (facts/eigen.clfacts).
+    // The check is a bare string match on the called name, whether or not a namespace qualifier is present.
+    return builtinFacts().has("function", qualifiedName);
 }
 
 bool isKnownExternalClassType(const std::string& type) {
-    static const std::set<std::string> kKnown = {"Eigen::MatrixXd"};
-    return kKnown.count(type) > 0;
+    return builtinFacts().has("class", type);
 }
 
 bool isKnownExternalOperator(const std::string& type, const std::string& operatorStr) {
-    static const std::set<std::string> kKnown = {"Eigen::MatrixXd|*"};
-    return kKnown.count(type + "|" + operatorStr) > 0;
+    return builtinFacts().has("operator", type + "|" + operatorStr);
 }
 
 bool isKnownBorrowingMethod(const std::string& className, const std::string& methodName) {
-    // Not exhaustive -- extend by consulting Eigen's own Block/Transpose/Ref/
-    // Map/Diagonal/Reverse expression-template family (see this function's
-    // header doc comment), never by guessing. Each entry here gets REAL
-    // dangling tracking (DanglingChecker::resolveBorrowingMethodReceiver),
-    // unlike isKnownExternalOperator's set above.
-    static const std::set<std::string> kKnown = {
-        "Eigen::MatrixXd::block",    "Eigen::MatrixXd::row",
-        "Eigen::MatrixXd::col",      "Eigen::MatrixXd::transpose",
-        "Eigen::MatrixXd::segment",  "Eigen::MatrixXd::head",
-        "Eigen::MatrixXd::tail",     "Eigen::MatrixXd::diagonal"};
-    return kKnown.count(className + "::" + methodName) > 0;
+    // Not exhaustive -- extend by consulting Eigen's own Block/Transpose/Ref/Map/Diagonal/Reverse expression-template
+    // family (see this function's header doc comment), never by guessing. Each entry gets REAL dangling tracking
+    // (DanglingChecker::resolveBorrowingMethodReceiver), unlike isKnownExternalOperator's set.
+    return builtinFacts().has("borrow", className + "::" + methodName);
 }
 
 bool isKnownRuntimeHelper(const std::string& qualifiedName) {

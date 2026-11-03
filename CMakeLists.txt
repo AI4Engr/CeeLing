@@ -35,6 +35,11 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/tree-sitter-ceeling/src
 )
 
+# Built-in fact packs (facts/*.clfacts) become a generated source file, so cling stays a single executable
+include(${CMAKE_SOURCE_DIR}/cmake/embed_facts.cmake)
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated)
+cling_embed_facts(${CMAKE_BINARY_DIR}/generated/builtin_facts_data.cpp ${CMAKE_SOURCE_DIR}/facts)
+
 # Source files
 set(CORE_SOURCES
     src/core/generator/cpp_generator.cpp
@@ -45,6 +50,8 @@ set(CORE_SOURCES
     src/core/generator/closure_desugar.cpp
     src/core/generator/ast_emitter.cpp
     src/core/generator/library_summary.cpp
+    src/core/generator/fact_table.cpp
+    ${CMAKE_BINARY_DIR}/generated/builtin_facts_data.cpp
     src/core/generator/class_hierarchy.cpp
 )
 
@@ -225,6 +232,11 @@ if(NOT EMSCRIPTEN)
                 COMMAND ${PYTHON_PROGRAM} -I ${CMAKE_SOURCE_DIR}/docs/language-guide/examples/check.py check --cling $<TARGET_FILE:cling>)
         endif()
     endif()
+
+    # Fact packs: the loader rejects everything it does not understand, and the shipped packs say what the old hand tables said
+    add_executable(fact_table_test tests/facts/fact_table_test.cpp)
+    target_link_libraries(fact_table_test cling_core)
+    add_test(NAME cling_fact_table COMMAND fact_table_test)
 
     # Custom target for running tests
     add_custom_target(run_tests
