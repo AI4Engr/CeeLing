@@ -62,10 +62,13 @@ for ln in open(args.conf, encoding='utf-8'):
             kk, vv = kv.split('=', 1)
             v = v.replace('@%s@' % kk, vv)
         conf[k.strip()] = v
-for k in ('type', 'include', 'make', 'view', 'touch'):
+for k in ('type', 'include', 'make'):
     if k not in conf:
         sys.exit('conf is missing `%s`' % k)
+extra_packs = [os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(args.conf)), x.strip())) for x in conf.get('extra_packs', '').split(',') if x.strip()]
 T = conf['type']
+if not conf.get('view') and not conf.get('cxx_view'):
+    sys.exit('conf needs `view` (a CeeLing-writable view maker) and/or `cxx_view`')
 
 # ---- the pack: facts and the signatures the scanner wrote as comments ------------------------------------------------------------
 verdict, sigs = {}, {}
@@ -83,30 +86,42 @@ for n in args.pretend_fresh:
         pack_text = pack_text.replace('mutator %s::%s ' % (T, n), 'fresh %s::%s ' % (T, n))
 
 
-def arg_for(p):
+LONG = '"' + 'x' * 300 + '"'     # longer than any small-string buffer: forces the callee to allocate
+
+
+def arg_for(p, large=False):
     p = p.strip()
     if p == 'OBJECT':
         return None
-    if re.fullmatch(r'(unsigned |signed )?(char|short|int|long|long long|size_t|ptrdiff_t|int\d+_t|uint\d+_t)', p):
-        return '1'
+    if re.fullmatch(r'(std::)?(unsigned |signed )?(char|short|int|long|long long|size_t|ptrdiff_t|int\d+_t|uint\d+_t)', p):
+        return '2' if large else '1'
     if p in ('char *', 'const char *'):
-        return '"a"'
+        return LONG if large else '"a"'
     if p in ('float', 'double'):
-        return '1.0'
+        return '2.5' if large else '1.0'
     if p == 'bool':
-        return 'true'
+        return 'false' if large else 'true'
     if re.fullmatch(r'(std::)?(basic_)?string(<char>)?', p) or p == 'std::basic_string<char>':
-        return '"a"'
+        return LONG if large else '"a"'
     return None
 
 
-def call_args(name):
+def call_args(name, large=False):
     best = None
     for kind, params, ret in sigs.get(name, []):
-        a = [arg_for(p) for p in params]
+        a = [arg_for(p, large) for p in params]
         if all(x is not None for x in a) and (best is None or len(a) < len(best)):
             best = a
     return None if best is None else ', '.join(best)
+
+
+def call_variants(name):
+    """The argument lists to call `name` with: a small one and, if it differs, one that forces allocation (long strings, other numbers)."""
+    small = call_args(name)
+    if small is None:
+        return None
+    large = call_args(name, large=True)
+    return [small] if large in (None, small) else [small, large]
 
 
 pack_file = args.pack
@@ -124,7 +139,7 @@ def program(name, a):
         '',
         'int main() {',
         '    %s obj = %s;' % (T, conf.get('clg_make', conf['make'])),
-        '    %s view = %s;' % (T, conf['view'].replace('{obj}', 'obj')),
+        '    %s view = %s;' % (conf.get('view_type', T), conf['view'].replace('{obj}', 'obj')),
         '    obj.%s(%s);' % (name, a),
         '    std::cout << %s << std::endl;' % conf['touch'].replace('{view}', 'view').replace('{obj}', 'obj'),
         '    return 0;',
@@ -133,7 +148,7 @@ def program(name, a):
     return '\n'.join(body)
 
 
-def cxx_program(name, a):
+def cxx_program(name, variants):
     """The same probe as plain C++ with a LAZY view (`auto`, or a reference): what CeeLing's rule is meant to protect against."""
     lines = ['#include <iostream>',
              '#include %s' % conf['include'],
@@ -143,8 +158,9 @@ def cxx_program(name, a):
     if conf.get('cxx_setup'):
         lines.append('    ' + conf['cxx_setup'].replace('{obj}', 'obj'))
     lines += ['    %s view = %s;' % (conf.get('cxx_view_decl', 'auto'), conf.get('cxx_view', conf['view']).replace('{obj}', 'obj')),
-              '    obj.%s(%s);' % (name, a),
-              '    std::cout << %s << std::endl;' % conf.get('cxx_touch', conf['touch']).replace('{view}', 'view').replace('{obj}', 'obj'),
+              ] + sum([['    obj.%s(%s);' % (name, a),
+                        '    std::cout << %s << std::endl;' % conf.get('cxx_touch', conf['touch']).replace('{view}', 'view').replace('{obj}', 'obj')]
+                       for a in variants], []) + [
               '    return 0;',
               '}',
               '']
@@ -154,7 +170,7 @@ def cxx_program(name, a):
 def cling(src, keep_cpp=None):
     with tempfile.TemporaryDirectory() as d:
         open(os.path.join(d, 'p.clg'), 'w', encoding='utf-8', newline='').write(src)
-        r = subprocess.run([args.cling, '--facts', os.path.abspath(pack_file), 'p.clg', '--cpp', 'p.cpp'], cwd=d, capture_output=True, text=True)
+        r = subprocess.run([args.cling, '--facts', os.path.abspath(pack_file)] + [x for ep in extra_packs for x in ('--facts', ep)] + ['p.clg', '--cpp', 'p.cpp'], cwd=d, capture_output=True, text=True)
         out = (r.stdout or '') + (r.stderr or '')
         cpp = open(os.path.join(d, 'p.cpp'), encoding='utf-8').read() if r.returncode == 0 else None
     return r.returncode, out, cpp
@@ -162,19 +178,23 @@ def cling(src, keep_cpp=None):
 
 def judge(item):
     name, v = item
-    a = call_args(name)
-    if a is None:
+    variants = call_variants(name)
+    if variants is None:
         return (name, v, 'UNREACHABLE', 'no overload can be called with synthesised arguments', None)
+    a = variants[0]
+    if not conf.get('view'):
+        # no CeeLing-writable way to make a view of this type: the compiler half has nothing to observe (said in the report, never hidden)
+        return (name, v, 'COMPILER OK', 'compiler half skipped: no view maker in CeeLing', cxx_program(name, variants))
     code, out, cpp = cling(program(name, a))
     rejected_for_dangling = code != 0 and 'dangling observer' in out
     if v == 'mutator':
         if code == 0:
-            return (name, v, 'FALSE ACCEPT', 'the pack says it changes the receiver, the compiler let the view live', cxx_program(name, a))
-        return (name, v, 'COMPILER OK' if rejected_for_dangling else 'UNUSABLE', '' if rejected_for_dangling else out.strip().split('\n')[0][:140], cxx_program(name, a))
+            return (name, v, 'FALSE ACCEPT', 'the pack says it changes the receiver, the compiler let the view live', cxx_program(name, variants))
+        return (name, v, 'COMPILER OK' if rejected_for_dangling else 'UNUSABLE', '' if rejected_for_dangling else out.strip().split('\n')[0][:140], cxx_program(name, variants))
     if code != 0:
         first = out.strip().split('\n')[0][:140]
         return (name, v, 'FALSE REJECT' if rejected_for_dangling else 'UNUSABLE', first, None)
-    return (name, v, 'COMPILER OK', a, cxx_program(name, a))
+    return (name, v, 'COMPILER OK', a, cxx_program(name, variants))
 
 
 items = sorted((n, v) for n, v in verdict.items() if v in ('mutator', 'fresh', 'borrow'))
@@ -194,7 +214,12 @@ def wsl_path(p):
 lib_objects = []
 if conf.get('sources'):
     incs0 = ' '.join('-I' + wsl_path(os.path.abspath(i)) for i in args.includes)
-    for k, srcfile in enumerate(x.strip() for x in conf['sources'].split(',') if x.strip()):
+    import glob as _glob
+    src_list = [x.strip() for x in conf['sources'].split(',') if x.strip()]
+    expanded = []
+    for x in src_list:
+        expanded += sorted(_glob.glob(x)) if any(ch in x for ch in '*?') else [x]
+    for k, srcfile in enumerate(expanded):
         obj = '/tmp/probe_lib_%d.o' % k
         r = subprocess.run(['wsl', '-d', args.wsl, '--', 'bash', '-c',
                             'g++ -std=c++17 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined %s %s -c %s -o %s 2>&1 | grep -m3 error' %

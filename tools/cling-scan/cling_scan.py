@@ -220,7 +220,7 @@ else:
         sys.exit('no definition of a class or struct named `%s` found in %s (for a template instantiation use --type)' % (want, args.header))
     nodes.append(start)
 
-ARITH = r'(?:unsigned |signed )?(?:char|short|int|long|long long|float|double|bool|wchar_t|char8_t|char16_t|char32_t|size_t|ptrdiff_t|int8_t|int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|uint64_t)'
+ARITH = r'(?:std::)?(?:unsigned |signed )?(?:char|short|int|long|long long|float|double|bool|wchar_t|char8_t|char16_t|char32_t|size_t|ptrdiff_t|int8_t|int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|uint64_t)'
 ARITH_RE = re.compile('^' + ARITH + '$')
 
 

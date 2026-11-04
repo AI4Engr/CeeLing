@@ -1,5 +1,6 @@
 // A class with one method of every shape cling-scan has to decide on. See run_scan_test.sh for the expected verdicts.
 #pragma once
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -8,6 +9,7 @@ class Shapes {
 public:
     Shapes() {}
     int count() const { return 0; }                                 // fresh: const, returns a number
+    std::size_t big() const { return 0; }                           // fresh: std::size_t is a number too (yaml-cpp found this)
     bool empty() const { return true; }                             // fresh
     std::string name() const { return ""; }                         // fresh: a string by value
     std::vector<double> data() const { return {}; }                 // fresh: a vector of numbers by value

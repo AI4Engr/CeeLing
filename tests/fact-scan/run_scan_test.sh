@@ -20,7 +20,7 @@ scan() { python -I "$SCAN" --clang "$CLANG" "$@"; }
 # 1. every method shape gets the verdict the signature proves, and nothing more
 scan --header "$HERE/shapes.h" --class Shapes --out "$TMP/shapes.clfacts" >/dev/null || bad "scanning shapes.h failed"
 got="$(grep -E '^(fresh|borrow|mutator|function|opaque)' "$TMP/shapes.clfacts" | sed 's/ source=.*//' | sort | tr '\n' ';')"
-want="borrow Shapes::at;borrow Shapes::raw;borrow Shapes::view;fresh Shapes::count;fresh Shapes::data;fresh Shapes::empty;fresh Shapes::name;function Shapes::make;function Shapes::version;mutator Shapes::clear;mutator Shapes::pop;opaque Shapes;"
+want="borrow Shapes::at;borrow Shapes::raw;borrow Shapes::view;fresh Shapes::big;fresh Shapes::count;fresh Shapes::data;fresh Shapes::empty;fresh Shapes::name;function Shapes::make;function Shapes::version;mutator Shapes::clear;mutator Shapes::pop;opaque Shapes;"
 if [ "$got" = "$want" ]; then ok "each method shape gets exactly the fact its signature proves"; else bad "shape verdicts differ:
   got:  $got
   want: $want"; fi
@@ -113,6 +113,23 @@ if [ -f "$EIGEN_DIR/Eigen/Dense" ]; then
     scan --check "$TMP/vx.clfacts" >/dev/null 2>&1; [ $? -eq 0 ] && ok "eigen: --check finds every bound header unchanged" || bad "eigen: --check failed"
 else
     echo "SKIP: eigen template trial (no Eigen at $EIGEN_DIR; set EIGEN_DIR)"
+fi
+
+# 7. yaml-cpp's YAML::Node (a handle to shared memory) and the comparison of template instantiations
+YAML_DIR="${YAML_DIR:-/c/project/yaml-cpp}"
+if [ -f "$YAML_DIR/include/yaml-cpp/yaml.h" ]; then
+    scan --header "$YAML_DIR/include/yaml-cpp/yaml.h" --class YAML::Node -I "$YAML_DIR/include" --out "$TMP/yn.clfacts" >/dev/null && ok "yaml-cpp: YAML::Node scanned ($(grep -cE '^(fresh|borrow|mutator|function) ' "$TMP/yn.clfacts") facts)" || bad "yaml-cpp: scan failed"
+    grep -q "^fresh YAML::Node::size " "$TMP/yn.clfacts" && ok "yaml-cpp: std::size_t is recognised as a number (size() is fresh)" || bad "yaml-cpp: size() has no fact (std::size_t not recognised)"
+    grep -q "^borrow YAML::Node::Scalar " "$TMP/yn.clfacts" && ok "yaml-cpp: Scalar() returns a reference: borrow" || bad "yaml-cpp: Scalar() is not a borrow"
+    grep -qE "^(fresh|borrow|mutator) YAML::Node::(reset|push_back|remove) " "$TMP/yn.clfacts" && bad "yaml-cpp: a method taking a Node got a fact" || ok "yaml-cpp: methods that take a Node (reset, push_back, remove) stay conservative"
+fi
+if [ -f "$EIGEN_DIR/Eigen/Dense" ]; then
+    COMPARE="python -I $ROOT/tools/cling-scan/compare_packs.py"
+    scan --header "$EIGEN_DIR/Eigen/Dense" --type Eigen::MatrixXd -I "$EIGEN_DIR" --out "$TMP/mx.clfacts" >/dev/null
+    scan --header "$EIGEN_DIR/Eigen/Dense" --type Eigen::Matrix3f -I "$EIGEN_DIR" --out "$TMP/m3.clfacts" >/dev/null
+    $COMPARE "$TMP/mx.clfacts" "$TMP/m3.clfacts" >/dev/null && ok "compare_packs: MatrixXd and Matrix3f have the same verdict for every method" || bad "compare_packs: MatrixXd and Matrix3f differ"
+    out="$($COMPARE "$TMP/vx.clfacts" "$TMP/mx.clfacts")"; code=$?
+    [ $code -eq 1 ] && echo "$out" | grep -q "DIFFER cbegin" && ok "compare_packs: VectorXd and MatrixXd DIFFER (cbegin/cend): a pack for one instantiation is not a pack for another" || bad "compare_packs did not find the VectorXd/MatrixXd difference: $out"
 fi
 
 exit $fail

@@ -48,6 +48,9 @@ PARAMETER to be a plain value (number, bool, enum, string; not an object, a poin
 `const char *` parameters count as plain: in CeeLing the only source of one is a string literal (`c_str()` and `data()` are refused), which has static storage and cannot dangle. The same probe on **jsoncpp `Json::Value`** (a different
 shape: a tree) holds for all 41 facts, and it caught a bug in this scanner (methods of a later class whose name contains the scanned one's leaked into the pack; fixed, regression-tested).
 
+`std::size_t` and the other `std::`-qualified integer names count as numbers (found by yaml-cpp: `Node::size()` had no fact). `compare_packs.py a.clfacts b.clfacts` lists the methods whose verdict differs between two scans: on Eigen,
+`VectorXd` and `MatrixXd` differ for `cbegin`/`cend` (borrow vs fresh) while `MatrixXd` and `Matrix3f` agree on all 68. A pack is for the type it was scanned from; scan the types you use, or compare first.
+
 ## Tested (CTest `cling_scan`)
 
 `tests/fact-scan/`: a class with one method of every shape (the exact verdict per shape), the private library of `tests/facts/private_lib` (the scanned pack gives the same accept/reject results as the hand-written one),

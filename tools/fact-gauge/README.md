@@ -38,9 +38,13 @@ python -I tools/fact-gauge/probe_pack.py --cling build/cling.exe --pack vx.clfac
 * **Second library, different shape: jsoncpp `Json::Value`** (a tree of deep-copied nodes; the library is compiled once under the sanitisers from its `.cpp` files, `sources =` in the conf): 41 facts, 0 contradictions
   (36 clean; `clear` really frees the node a reference points into, `heap-use-after-free`; 4 `UNREACHABLE`: their parameters are enums). Negative control: `clear` declared fresh is caught. The C++ twin holds a real
   reference into the object (`auto& view = obj["a"]`, the conf's `cxx_view_decl`/`cxx_view`), because `operator[]` is the way jsoncpp hands out views and the scanner does not write facts for operators.
+* **Third library, a handle type: yaml-cpp `YAML::Node`** (shared memory behind copyable handles; the library's 25-odd `.cpp` files are built once under the sanitisers, `sources = @YAML@/src/*.cpp`): 13 facts, 0 contradictions, `SetTag`
+  confirmed to free the buffer a raw pointer into the tag points at, and declaring it `fresh` is caught. `Node` has no view maker CeeLing can write (its views come from `operator[]`), so the conf leaves `view` empty and the report says the
+  compiler half was skipped; the sanitiser half still runs. **Two argument sets per method:** a small one and one that forces allocation (a 300-character string, other numbers). With only the small one the `SetTag` control passed silently:
+  assigning a shorter string reuses the old buffer, so nothing was freed. Same lesson as the lazy view: a probe that cannot fail is not a probe.
 * **What the probe found about the scanner itself:** the first jsoncpp run failed to compile `obj.index()`: `Json::Value` had no such method. The scanner had read PAST the end of the class into the next node of clang's filtered
   dump (`Json::Value::CZString`, whose name also contains `Value`) and attributed its methods to `Json::Value`. The pack committed one step earlier contained those bogus facts. Fixed, with a regression test.
-* Limits: one object, one view, one call, arguments chosen by a script; a clean run is evidence, not proof. It sees STORAGE going away or moving, not a value changing under the view (declaring `fill` fresh passes: `fill`
+* Limits: one object, one view, one call per argument set, arguments chosen by a script; a clean run is evidence, not proof. It sees STORAGE going away or moving, not a value changing under the view (declaring `fill` fresh passes: `fill`
   rewrites values in place). A method that cannot be called with synthesised arguments is `UNREACHABLE`; a library assertion fired by the synthesised arguments is `NOT EVIDENCE`, never a pass.
 
 ## What this does not show (read before quoting)

@@ -49,5 +49,20 @@ else
     echo "SKIP: jsoncpp probe (no jsoncpp at $JSONCPP_DIR; set JSONCPP_DIR)"
 fi
 
+# --- a third shape: yaml-cpp's YAML::Node, a handle to memory other handles share; the view is a raw pointer into its tag buffer --------------------
+YAML_DIR="${YAML_DIR:-/c/project/yaml-cpp}"
+if [ -f "$YAML_DIR/include/yaml-cpp/yaml.h" ]; then
+    python -I "$ROOT/tools/cling-scan/cling_scan.py" --clang "$CLANG" --header "$YAML_DIR/include/yaml-cpp/yaml.h" --class YAML::Node -I "$YAML_DIR/include" --out "$TMP/yn.clfacts" >/dev/null || bad "yaml-cpp scan failed"
+    yprobe() { python -I "$ROOT/tools/fact-gauge/probe_pack.py" --cling "$CLING" --pack "$TMP/yn.clfacts" --conf "$HERE/probe/yamlcpp_node.conf" -I "$YAML_DIR/include" -I "$YAML_DIR/src" --var "YAML=$YAML_DIR" "$@" 2>&1; }
+    out="$(yprobe)"; code=$?
+    if [ $code -eq 0 ] && echo "$out" | grep -q "OK (sanitiser clean)="; then ok "the scanned yaml-cpp pack agrees with the real library: $(echo "$out" | head -1)"
+    else bad "yaml-cpp probe failed (exit $code): $out"; fi
+    out="$(yprobe --pretend-fresh SetTag)"; code=$?
+    if [ $code -ne 0 ] && echo "$out" | grep -q "BEHAVIOUR CONTRADICTS FACT: YAML::Node::SetTag (fresh) -- heap-use-after-free"; then ok "negative control: YAML::Node::SetTag declared fresh is caught (it frees the tag buffer)"
+    else bad "yaml-cpp negative control did not fail as it must (exit $code): $out"; fi
+else
+    echo "SKIP: yaml-cpp probe (no yaml-cpp at $YAML_DIR; set YAML_DIR)"
+fi
+
 exit $fail
 
