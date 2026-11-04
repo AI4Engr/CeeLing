@@ -23,7 +23,7 @@ class FactTable {
 public:
     // One loaded fact.
     struct Fact {
-        std::string kind;                 // "vector.sig", "string.sig", "map.sig", "vector.note", "vector.own", "function", "class", "opaque", "operator", "borrow", "fresh", "mutator"
+        std::string kind;                 // "vector.sig", "string.sig", "string_view.sig", "map.sig", "vector.note", "vector.own", "function", "class", "opaque", "operator", "borrow", "fresh", "mutator"
         std::string subject;              // e.g. "push_back", "std::stoi", "Eigen::MatrixXd|*"
         std::set<std::string> flags;      // e.g. "shares-arg0"
         std::map<std::string, std::string> attrs;   // key=value words other than source= and review=, e.g. result=void

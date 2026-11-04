@@ -98,7 +98,15 @@ private:
 
     // Owners declared at the end of a block die: mark their observers dangling and drop
     // them from the live set. `ownersBefore` is the object-local set captured on entry.
-    void endBlockScope(const std::set<std::string>& ownersBefore);
+    void endBlockScope(const std::set<std::string>& ownersBefore, const std::set<std::string>* stringsBefore = nullptr);
+
+    // `string_view` (a non-owning view of a string). A view is an observer of the string local or parameter it was made from, registered in
+    // observerOf_ like any observer: reassigning the string, a mutating method on it (stringMethodInvalidatesReferences) or the end of its scope
+    // kills the view, and any later use of the view is rejected. A view of a literal or of a view parameter has no owner here (static storage /
+    // the caller's, alive for the whole call). Anything else a view could be made from (a call result, a field, a concatenation) is refused:
+    // nothing could say what it refers to.
+    std::set<std::string> stringOwners_;   // string locals and parameters currently in scope
+    void bindStringView(const std::string& name, const Expression* init, const Statement* at);
 
     // Snapshot of every piece of state a branch body can mutate that must NOT leak
     // into a sibling branch that didn't run (only one branch of an `if`/`else` ever

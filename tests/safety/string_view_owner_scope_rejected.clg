@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ error: use of dangling observer `v`
+//@ reason: the view is rebound to a string that dies at the end of the block.
+
+int main() {
+    string_view v = "outer";
+    int k = 1;
+    if (k == 1) {
+        string s = "inner";
+        v = s;
+    }
+    std::cout << v.size() << std::endl;
+    return 0;
+}

@@ -1602,7 +1602,47 @@ int main() {
 }
 ```
 
-**What CeeLing does.** It does not let you write one. There is no tracking of a view that depends on a string or a vector, so the type is refused as an unknown type (since 2026-11-02; before that the name passed through to C++ and the program was accepted):
+**What CeeLing does.** `string_view` is a type CeeLing follows (since 2026-11-03; it was refused as an unknown type from 2026-11-02, and accepted unchecked before that). A view is an observer of the string it was made from, with the same
+death events as any observer: reassigning the string, calling a method that changes it (`append`, `clear`, ...: the table that decides this is the one scanned from `std::string`), or the end of the string's scope. It can be made from a string
+variable, a string literal (static storage), another view, or `substr` of a view. It may only be a local variable or a parameter, never a field, a return value, a container element or a closure capture.
+
+<!-- example: 06_string_view_ok.clg -->
+```cpp
+int count(string_view v) {
+    return v.size();
+}
+
+int main() {
+    string s = "hello";
+    string_view v = s;                    // a view of the local string s
+    string_view w = v.substr(1, 3);       // a view of the same string
+    std::cout << v.size() << " " << w.size() << " " << count(s) + count("lit") << std::endl;
+    return 0;
+}
+```
+<!-- output: 06_string_view_ok.clg -->
+```
+5 3 8
+```
+
+<!-- example: 06_string_view_dies.clg -->
+```cpp
+int main() {
+    string s = "hello";
+    string_view v = s;
+    s.append(", world");                  // may reallocate: the view of s is dead
+    std::cout << v.size() << std::endl;
+    return 0;
+}
+```
+<!-- error: 06_string_view_dies.clg -->
+```
+error[semantic/use-after-move]: use of dangling observer `v` (its owner `s` is gone)
+  --> 06_string_view_dies.clg:5:18
+  help: `v` observes `s`, which no longer has a live owner
+```
+
+The trap above, a view of a temporary, is refused because a view cannot be made from the result of a call, nor from a concatenation, nor from a field (a field has no owner the checker follows):
 
 <!-- example: 06_gap_string_view.clg -->
 ```cpp
@@ -1618,14 +1658,14 @@ int main() {
 ```
 <!-- error: 06_gap_string_view.clg -->
 ```
-error[semantic/forbidden-construct]: unknown type `std::string_view` for variable `sv`
+error[semantic/use-after-move]: cannot tell what the `string_view` `sv` would refer to: it would be made from the result of a call
   --> 06_gap_string_view.clg:6:5
-  help: CeeLing has no shape for `std::string_view`, so every check would be blind to values of it. Declare it as a class/struct in CeeLing, or for a C++ library type add a fact pack that declares `class std::string_view` and its methods (`cling --facts mylib.clfacts`, docs/internals/facts-format.md).
+  help: A call that returns a `string` returns a temporary, and a view of a temporary dangles at the end of the statement. Store the result in a `string` variable and make the view from that.
 ```
 
-The same holds for `std::span`, `auto` and any made-up name: **a type name the compiler has no shape for is an error.** The checks follow the types CeeLing knows (its classes, structs and enums, the primitives, `string`,
-vectors, maps, `Channel`, and the classes a loaded fact pack declares); a value of any other type would be invisible to them, so it cannot be declared. Use a `string` or a `std::vector` (an owner) where you would use a
-view. For a C++ library type, declare it in a fact pack and pass the pack with `--facts` ([chapter 11](11-talking-to-cpp.md)).
+What is still not there: converting a view back into a `string` (`std::string(v)` is not a CeeLing expression yet), `std::span`, and a view of a vector. `std::span`, `auto` and any made-up name are **unknown types, and a type name the
+compiler has no shape for is an error.** The checks follow the types CeeLing knows (its classes, structs and enums, the primitives, `string`, `string_view`, vectors, maps, `Channel`, and the classes a loaded fact pack declares); a value of any
+other type would be invisible to them, so it cannot be declared. For a C++ library type, declare it in a fact pack and pass the pack with `--facts` ([chapter 11](11-talking-to-cpp.md)).
 
 ### Eigen
 

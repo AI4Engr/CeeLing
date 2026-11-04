@@ -60,7 +60,7 @@ python -I tools/fact-gauge/probe_pack.py --cling build/cling.exe --pack vx.clfac
 
 * Checks 1 and 3 use the facts and a transcription by the same author as their reference; check 3's list is not an independent audit of the standard.
 * The seeds cover a local vector with a whole-vector observer and an element observer. An observer of a FIELD container is refused outright by the checker ("whose owner cannot be tracked"), which says nothing about
-  the facts. `std::string` has no seeds: no observer of its contents can be written yet, so its `mutates` facts are untested.
+  the facts. `std::string` is seeded through a `string_view` since 2026-11-03 (an observer of its characters): all 41 names, every mutator kills the view, every reader leaves it.
 * "0 false accepts" is a statement about these programs, one per method and context. It is not a proof, and no program shows that an inferred fact is true of the library's behaviour: that needs the sanitiser probes
   of phase 3 (TODO.md).
 * Methods needing an iterator or initializer_list argument (`insert`, `erase`, `emplace`) cannot be written in CeeLing at all, so they are `UNREACHABLE`, not tested.

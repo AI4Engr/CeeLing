@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: use of dangling observer `w`
+//@ reason: a copy of a view follows the same string, and substr is a view of the same string too.
+
+int main() {
+    string s = "hello";
+    string_view v = s;
+    string_view w = v.substr(1, 3);
+    s.clear();
+    std::cout << w.size() << std::endl;
+    return 0;
+}

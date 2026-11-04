@@ -1,0 +1,54 @@
+name	const	return	shape	result-borrow	params	param-classes	mutates-receiver	param-kinds
+at	const	const_reference	element-reference	borrows self	const size_type	by value		value
+back	const	const_reference	element-reference	borrows self				-
+begin	const	const_iterator	iterator-view	borrows self				-
+cbegin	const	const_iterator	iterator-view	borrows self				-
+cend	const	const_iterator	iterator-view	borrows self				-
+compare	const	int	scalar	fresh	const basic_string_view<char>	by value		value
+compare	const	int	scalar	fresh	const char *const	raw-pointer (SEALED)		cstr
+compare	const	int	scalar	fresh	const size_type; const size_type; const basic_string_view<char>	by value; by value; by value		value,value,value
+compare	const	int	scalar	fresh	const size_type; const size_type; const basic_string_view<char>; const size_type; const size_type	by value; by value; by value; by value; by value		value,value,value,value,value
+compare	const	int	scalar	fresh	const size_type; const size_type; const char *const	by value; by value; raw-pointer (SEALED)		value,value,cstr
+compare	const	int	scalar	fresh	const size_type; const size_type; const char *const; const size_type	by value; by value; raw-pointer (SEALED); by value		value,value,cstr,value
+copy	const	size_type	scalar	fresh	char *const; size_type; const size_type	raw-pointer (SEALED); by value; by value		ptr-w,value,value
+crbegin	const	const_reverse_iterator	iterator-view	borrows self				-
+crend	const	const_reverse_iterator	iterator-view	borrows self				-
+data	const	const_pointer	raw-pointer	SEALED (borrows self)				-
+empty	const	bool	scalar	fresh				-
+end	const	const_iterator	iterator-view	borrows self				-
+find	const	size_type	scalar	fresh	const basic_string_view<char>; const size_type	by value; by value		value,value
+find	const	size_type	scalar	fresh	const char; const size_type	by value; by value		value,value
+find	const	size_type	scalar	fresh	const char *const; const size_type	raw-pointer (SEALED); by value		cstr,value
+find	const	size_type	scalar	fresh	const char *const; const size_type; const size_type	raw-pointer (SEALED); by value; by value		cstr,value,value
+find_first_not_of	const	size_type	scalar	fresh	const basic_string_view<char>; const size_type	by value; by value		value,value
+find_first_not_of	const	size_type	scalar	fresh	const char; const size_type	by value; by value		value,value
+find_first_not_of	const	size_type	scalar	fresh	const char *const; const size_type	raw-pointer (SEALED); by value		cstr,value
+find_first_not_of	const	size_type	scalar	fresh	const char *const; const size_type; const size_type	raw-pointer (SEALED); by value; by value		cstr,value,value
+find_first_of	const	size_type	scalar	fresh	const basic_string_view<char>; const size_type	by value; by value		value,value
+find_first_of	const	size_type	scalar	fresh	const char; const size_type	by value; by value		value,value
+find_first_of	const	size_type	scalar	fresh	const char *const; const size_type	raw-pointer (SEALED); by value		cstr,value
+find_first_of	const	size_type	scalar	fresh	const char *const; const size_type; const size_type	raw-pointer (SEALED); by value; by value		cstr,value,value
+find_last_not_of	const	size_type	scalar	fresh	const basic_string_view<char>; const size_type	by value; by value		value,value
+find_last_not_of	const	size_type	scalar	fresh	const char; const size_type	by value; by value		value,value
+find_last_not_of	const	size_type	scalar	fresh	const char *const; const size_type	raw-pointer (SEALED); by value		cstr,value
+find_last_not_of	const	size_type	scalar	fresh	const char *const; const size_type; const size_type	raw-pointer (SEALED); by value; by value		cstr,value,value
+find_last_of	const	size_type	scalar	fresh	const basic_string_view<char>; const size_type	by value; by value		value,value
+find_last_of	const	size_type	scalar	fresh	const char; const size_type	by value; by value		value,value
+find_last_of	const	size_type	scalar	fresh	const char *const; const size_type	raw-pointer (SEALED); by value		cstr,value
+find_last_of	const	size_type	scalar	fresh	const char *const; const size_type; const size_type	raw-pointer (SEALED); by value; by value		cstr,value,value
+front	const	const_reference	element-reference	borrows self				-
+length	const	size_type	scalar	fresh				-
+max_size	const	size_type	scalar	fresh				-
+operator=		basic_string_view<char> &	view	borrows self	const basic_string_view<char> &	read-only ref	yes	value
+operator[]	const	const_reference	element-reference	borrows self	const size_type	by value		value
+rbegin	const	const_reverse_iterator	iterator-view	borrows self				-
+remove_prefix		void	void	none	const size_type	by value	yes	value
+remove_suffix		void	void	none	const size_type	by value	yes	value
+rend	const	const_reverse_iterator	iterator-view	borrows self				-
+rfind	const	size_type	scalar	fresh	const basic_string_view<char>; const size_type	by value; by value		value,value
+rfind	const	size_type	scalar	fresh	const char; const size_type	by value; by value		value,value
+rfind	const	size_type	scalar	fresh	const char *const; const size_type	raw-pointer (SEALED); by value		cstr,value
+rfind	const	size_type	scalar	fresh	const char *const; const size_type; const size_type	raw-pointer (SEALED); by value; by value		cstr,value,value
+size	const	size_type	scalar	fresh				-
+substr	const	basic_string_view<char>	view	borrows self	const size_type; size_type	by value; by value		value,value
+swap		void	void	none	basic_string_view<char> &	mutated (non-const ref)	yes	mref

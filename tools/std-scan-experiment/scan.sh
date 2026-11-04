@@ -30,8 +30,8 @@ for impl in msvc gcc; do
     if [ $impl = msvc ]; then run=msvc; out="$here"; else run=gcc_; out="$here/gcc"; fi
     $run "$here/probe.cc" "$WORK/vs_$impl.txt"
     $run "$here/probe_map.cc" "$WORK/map_$impl.txt"
-    v=$(spec "$WORK/vs_$impl.txt" vector); s=$(spec "$WORK/vs_$impl.txt" basic_string)
-    python -I "$here/classify.py" "$WORK/vs_$impl.txt" "$out" "vector=vector@$v" "string=basic_string@$s"
+    v=$(spec "$WORK/vs_$impl.txt" vector); s=$(spec "$WORK/vs_$impl.txt" basic_string); sv=$(spec "$WORK/vs_$impl.txt" basic_string_view)
+    python -I "$here/classify.py" "$WORK/vs_$impl.txt" "$out" "vector=vector@$v" "string=basic_string@$s" "string_view=basic_string_view@$sv"
     m1=$(spec "$WORK/map_$impl.txt" map 1); m2=$(spec "$WORK/map_$impl.txt" map 2)
     if [ $impl = msvc ]; then
         t1=$(base "$WORK/map_$impl.txt" _Tree 1); t2=$(base "$WORK/map_$impl.txt" _Tree 2)

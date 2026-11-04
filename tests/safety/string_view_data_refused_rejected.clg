@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ error: `data` is not available on `string_view`
+//@ reason: data() returns a raw pointer (sealed), found by the scan of std::basic_string_view.
+
+int main() {
+    string s = "hello";
+    string_view v = s;
+    v.data();
+    return 0;
+}

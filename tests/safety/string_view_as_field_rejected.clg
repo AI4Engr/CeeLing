@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: `string_view` cannot be used for the type of field
+//@ reason: a view in a field outlives the function that made it, and nothing follows it there.
+
+class Holder {
+public:
+    string_view v;
+    Holder() { }
+};
+
+int main() {
+    return 0;
+}

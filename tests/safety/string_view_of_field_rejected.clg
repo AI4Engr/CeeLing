@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ error: cannot tell what the `string_view` `v` would refer to
+//@ reason: a field has no owner the checker follows: it could be reassigned while the view lives.
+
+class Person {
+public:
+    string name;
+    Person() { name = "n"; }
+    int length() {
+        string_view v = name;
+        return v.size();
+    }
+};
+
+int main() {
+    Person p = new Person();
+    std::cout << p.length() << std::endl;
+    return 0;
+}

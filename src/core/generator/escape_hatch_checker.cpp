@@ -52,7 +52,7 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             requireKnownType(fn->returnType, "the return type of `" + fn->name + "`", fn->loc.line, fn->loc.column);
             for (const auto& [ptype, pname] : fn->parameters) {
-                requireKnownType(ptype, "the type of parameter `" + pname + "`", fn->loc.line, fn->loc.column);
+                requireKnownType(ptype, "the type of parameter `" + pname + "`", fn->loc.line, fn->loc.column, /*allowView=*/true);
             }
             checkBody(fn->body, fn->parameters, "");
         } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
@@ -66,13 +66,13 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
                     typeParameter_ = method->typeParameter;
                     requireKnownType(method->returnType, "the return type of `" + method->name + "`", method->loc.line, method->loc.column);
                     for (const auto& [ptype, pname] : method->parameters) {
-                        requireKnownType(ptype, "the type of parameter `" + pname + "`", method->loc.line, method->loc.column);
+                        requireKnownType(ptype, "the type of parameter `" + pname + "`", method->loc.line, method->loc.column, /*allowView=*/true);
                     }
                     checkBody(method->body, method->parameters, cls->name);
                     typeParameter_.clear();
                 } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
                     for (const auto& [ptype, pname] : ctor->parameters) {
-                        requireKnownType(ptype, "the type of parameter `" + pname + "`", ctor->loc.line, ctor->loc.column);
+                        requireKnownType(ptype, "the type of parameter `" + pname + "`", ctor->loc.line, ctor->loc.column, /*allowView=*/true);
                     }
                     checkBody(ctor->body, ctor->parameters, cls->name, /*isConstructor=*/true);
                 }
@@ -307,6 +307,9 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         }
         if (isStringType(declaredType)) {
             return isKnownStringMethod(member->member);
+        }
+        if (isStringViewType(declaredType)) {
+            return isKnownStringViewMethod(member->member);
         }
         if (isMapType(declaredType)) {
             return isKnownMapMethod(member->member);
@@ -544,6 +547,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                 std::string why;
                 if (isVectorType(recvType)) why = vectorMethodRefusal(calleeMember->member);
                 else if (isStringType(recvType)) why = stringMethodRefusal(calleeMember->member);
+                else if (isStringViewType(recvType)) why = stringViewMethodRefusal(calleeMember->member);
                 else if (isMapType(recvType)) why = mapMethodRefusal(calleeMember->member);
                 if (!why.empty()) {
                     e.message = "`" + calleeMember->member + "` is not available on `" + recvType + "`: " + why;
@@ -792,7 +796,20 @@ bool EscapeHatchChecker::typeIsKnown(const std::string& rawType) const {
     return false;
 }
 
-void EscapeHatchChecker::requireKnownType(const std::string& type, const std::string& what, int line, int column) {
+void EscapeHatchChecker::requireKnownType(const std::string& type, const std::string& what, int line, int column, bool allowView) {
+    if (isStringViewType(trimType(type))) {
+        if (allowView) return;
+        if (!reportedUnknownTypes_.insert(trimType(type) + "@" + std::to_string(line)).second) return;
+        EscapeHatchError e;
+        e.line = line;
+        e.column = column;
+        e.message = "`string_view` cannot be used for " + what;
+        e.help = "A `string_view` does not own its characters, and the checker follows one only as a local variable or a parameter, back to the string it "
+                 "was made from. As a field, a return value or a container element it could outlive that string where nothing follows it. Use a `string` "
+                 "(an owner) here.";
+        errors_.push_back(e);
+        return;
+    }
     if (typeIsKnown(type)) return;
     // one report per distinct name and line: a type used ten times on one line is one mistake
     if (!reportedUnknownTypes_.insert(trimType(type) + "@" + std::to_string(line)).second) return;
@@ -811,7 +828,15 @@ void EscapeHatchChecker::requireKnownType(const std::string& type, const std::st
 
 void EscapeHatchChecker::checkStatement(const Statement* stmt) {
     if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
-        requireKnownType(decl->type, "variable `" + decl->identifier + "`", stmt->loc.line, stmt->loc.column);
+        requireKnownType(decl->type, "variable `" + decl->identifier + "`", stmt->loc.line, stmt->loc.column, /*allowView=*/true);
+        if (decl->isObserver && isStringViewType(trimType(decl->type))) {
+            EscapeHatchError e;
+            e.line = stmt->loc.line;
+            e.column = stmt->loc.column;
+            e.message = "`ref string_view` is not allowed";
+            e.help = "A `string_view` is already a non-owning view; declare it without `ref`: `string_view " + decl->identifier + " = ...;`.";
+            errors_.push_back(e);
+        }
         rejectThisEscapeInConstructor(decl->expression.get(), stmt);
         checkExpression(decl->expression.get());
         localType_[decl->identifier] = decl->type;

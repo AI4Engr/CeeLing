@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: use of dangling observer `v`
+int main() {
+    string s = "hello";
+    string_view v = s;
+    s.append(", world");                  // may reallocate: the view of s is dead
+    std::cout << v.size() << std::endl;
+    return 0;
+}

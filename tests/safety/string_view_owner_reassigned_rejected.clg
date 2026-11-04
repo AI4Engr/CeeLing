@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: use of dangling observer `v`
+//@ reason: assigning to the string replaces its characters.
+
+int main() {
+    string s = "hello";
+    string_view v = s;
+    s = "another, longer text than the first one";
+    std::cout << v.size() << std::endl;
+    return 0;
+}

@@ -1093,6 +1093,63 @@ void DanglingChecker::checkExpressionUses(const Expression* expr) {
     // Identifier/Number leaves and unmodeled nodes: nothing to check.
 }
 
+void DanglingChecker::bindStringView(const std::string& name, const Expression* init, const Statement* at) {
+    auto fail = [&](const std::string& what, const std::string& help) {
+        DanglingError e;
+        e.line = at->loc.line;
+        e.column = at->loc.column;
+        e.message = "cannot tell what the `string_view` `" + name + "` would refer to: " + what;
+        e.help = help;
+        errors_.push_back(e);
+    };
+    std::string owner;
+    if (init == nullptr) {
+        fail("it has no initializer", "Initialize the view from a string variable or a string literal.");
+        return;
+    }
+    if (dynamic_cast<const StringLiteral*>(init) != nullptr) {
+        // a literal has static storage: the view cannot dangle
+    } else if (auto id = dynamic_cast<const Identifier*>(init)) {
+        auto typeIt = localType_.find(id->name);
+        if (typeIt != localType_.end() && isStringType(typeIt->second) && stringOwners_.count(id->name) > 0) {
+            owner = id->name;
+        } else if (typeIt != localType_.end() && isStringViewType(typeIt->second)) {
+            auto o = observerOf_.find(id->name);          // a copy of a view follows the same string
+            if (o != observerOf_.end()) owner = o->second;
+        } else {
+            fail("`" + id->name + "` is not a string local or parameter",
+                 "A view can be made from a string variable of this function, a string literal, or another view. A field has no owner the checker follows, "
+                 "so the field could be reassigned while the view lives: copy it into a local `string` first.");
+            return;
+        }
+    } else if (auto viewCall = dynamic_cast<const FunctionCall*>(init);
+               viewCall != nullptr && viewCall->callee != nullptr &&
+               dynamic_cast<const MemberAccess*>(viewCall->callee.get()) != nullptr &&
+               dynamic_cast<const Identifier*>(static_cast<const MemberAccess*>(viewCall->callee.get())->object.get()) != nullptr &&
+               localType_.count(static_cast<const Identifier*>(static_cast<const MemberAccess*>(viewCall->callee.get())->object.get())->name) > 0 &&
+               isStringViewType(localType_.at(static_cast<const Identifier*>(static_cast<const MemberAccess*>(viewCall->callee.get())->object.get())->name)) &&
+               stringViewMethodReturnsView(static_cast<const MemberAccess*>(viewCall->callee.get())->member)) {
+        // `v.substr(a, b)` on a view: another view of the SAME string (the scan says substr returns a view)
+        const std::string recv = static_cast<const Identifier*>(static_cast<const MemberAccess*>(viewCall->callee.get())->object.get())->name;
+        auto o = observerOf_.find(recv);
+        if (o != observerOf_.end()) owner = o->second;
+    } else if (dynamic_cast<const FunctionCall*>(init) != nullptr) {
+        fail("it would be made from the result of a call",
+             "A call that returns a `string` returns a temporary, and a view of a temporary dangles at the end of the statement. Store the result in a "
+             "`string` variable and make the view from that.");
+        return;
+    } else {
+        fail("the expression is not a string variable or a string literal",
+             "A view can be made from a string variable of this function, a string literal, or another view. Anything built on the way (a concatenation) "
+             "is a temporary.");
+        return;
+    }
+    if (owner.empty()) observerOf_.erase(name);
+    else observerOf_[name] = owner;
+    observerNames_.insert(name);
+    danglingObservers_.erase(name);
+}
+
 void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
                                  const std::vector<std::pair<std::string, std::string>>& params,
                                  const std::string& ownerClass, const std::string& scope) {
@@ -1103,6 +1160,7 @@ void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
     observerOf_.clear();
     danglingObservers_.clear();
     aliasObservers_.clear();
+    stringOwners_.clear();
     loopStack_.clear();
     currentClass_ = ownerClass;
     currentScope_ = scope;
@@ -1121,6 +1179,9 @@ void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
             // Same reasoning as the VariableDeclaration string case: not move-
             // tracked, but its type must be recorded for ThrowStatement's check.
             localType_[name] = type;
+            if (isStringType(type)) stringOwners_.insert(name);
+        } else if (isStringViewType(type)) {
+            localType_[name] = type;     // a view parameter: the caller's string outlives the call, so it has no owner here
         }
     }
 
@@ -1129,12 +1190,25 @@ void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
     }
 }
 
-void DanglingChecker::endBlockScope(const std::set<std::string>& ownersBefore) {
+void DanglingChecker::endBlockScope(const std::set<std::string>& ownersBefore, const std::set<std::string>* stringsBefore) {
     // Owners that appeared during the block are local to it and die at block end.
     std::set<std::string> died;
     for (const auto& owner : objectLocals_) {
         if (ownersBefore.find(owner) == ownersBefore.end()) {
             died.insert(owner);
+        }
+    }
+    if (stringsBefore != nullptr) {
+        // string locals that appeared in the block die with it; a `string_view` of one that outlives the block now dangles
+        std::set<std::string> diedStrings;
+        for (const auto& name : stringOwners_) {
+            if (stringsBefore->find(name) == stringsBefore->end()) diedStrings.insert(name);
+        }
+        for (const auto& name : diedStrings) {
+            for (const auto& [obs, watched] : observerOf_) {
+                if (watched == name) danglingObservers_.insert(obs);
+            }
+            stringOwners_.erase(name);
         }
     }
     for (const auto& owner : died) {
@@ -1168,6 +1242,7 @@ void DanglingChecker::processLoop(const Expression* condition, const ForStatemen
                                   const std::vector<StatementPtr>& body) {
     const BranchState before = snapshotBranchState();
     const std::set<std::string> ownersBefore = objectLocals_;
+    const std::set<std::string> stringsBefore = stringOwners_;
     const size_t firstError = errors_.size();
     BranchState head = before;  // state at the top of the iteration being analysed
     BranchState post = before;  // state after the loop; zero iterations leaves `before`
@@ -1191,7 +1266,7 @@ void DanglingChecker::processLoop(const Expression* condition, const ForStatemen
         for (const auto& inner : body) {
             processStatement(inner.get());
         }
-        endBlockScope(ownersBefore);
+        endBlockScope(ownersBefore, &stringsBefore);
         const BranchState end = snapshotBranchState();
         LoopContext ctx = std::move(loopStack_.back());
         loopStack_.pop_back();
@@ -1301,7 +1376,13 @@ void DanglingChecker::mergeBranchStates(const BranchState& before, const BranchS
         auto elseIt = elseState.observerOf.find(name);
         const std::string elseOwner = elseIt != elseState.observerOf.end() ? elseIt->second : beforeOwner;
 
-        if (thenOwner == elseOwner) {
+        // A string_view that is bound to a string on one path and to nothing with an owner (a literal, a view parameter: storage that outlives the
+        // function) on the other is dangling after the merge exactly when that one string dies. The two paths do not conflict.
+        auto lt = localType_.find(name);
+        const bool isView = lt != localType_.end() && isStringViewType(lt->second);
+        if (isView && thenOwner != elseOwner && (thenOwner.empty() || elseOwner.empty())) {
+            observerOf_[name] = !thenOwner.empty() ? thenOwner : elseOwner;
+        } else if (thenOwner == elseOwner) {
             if (thenOwner.empty()) {
                 observerOf_.erase(name);
             } else {
@@ -1326,6 +1407,19 @@ void DanglingChecker::processStatement(const Statement* stmt) {
     if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
         // First: uses on the RHS are evaluated before the declaration completes.
         checkExpressionUses(decl->expression.get());
+
+        if (isStringViewType(decl->type)) {
+            localType_[decl->identifier] = decl->type;
+            bindStringView(decl->identifier, decl->expression.get(), decl);
+            return;
+        }
+        if (isStringType(decl->type) && !decl->isObserver) {
+            stringOwners_.insert(decl->identifier);
+            // a fresh string: a view of an earlier string of the same name no longer follows it (the name is a new object)
+            for (const auto& [obs, watched] : observerOf_) {
+                if (watched == decl->identifier) danglingObservers_.insert(obs);
+            }
+        }
 
         if (decl->isObserver) {
             // `ref Node b = ...;` — b observes its RHS (if an object local); it does
@@ -1452,6 +1546,20 @@ void DanglingChecker::processStatement(const Statement* stmt) {
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
         checkExpressionUses(assign->expression.get());
 
+        if (!assign->target) {
+            auto vt = localType_.find(assign->variable);
+            if (vt != localType_.end() && isStringViewType(vt->second)) {
+                bindStringView(assign->variable, assign->expression.get(), assign);    // a view rebinds, like an observer
+                return;
+            }
+            if (vt != localType_.end() && isStringType(vt->second) && stringOwners_.count(assign->variable) > 0) {
+                // reassigning a string replaces its characters: every view of it is dead
+                for (const auto& [obs, watched] : observerOf_) {
+                    if (watched == assign->variable) danglingObservers_.insert(obs);
+                }
+            }
+        }
+
         const bool isBareFieldStore = !assign->target && !currentClass_.empty() &&
             objectLocals_.find(assign->variable) == objectLocals_.end() &&
             observerNames_.find(assign->variable) == observerNames_.end() &&
@@ -1569,20 +1677,22 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         BranchState thenState = before;
         {
             const std::set<std::string> ownersBefore = objectLocals_;
+            const std::set<std::string> stringsBefore = stringOwners_;
             for (const auto& inner : ifs->body) {
                 processStatement(inner.get());
             }
-            endBlockScope(ownersBefore);
+            endBlockScope(ownersBefore, &stringsBefore);
             thenState = snapshotBranchState();
         }
         restoreBranchState(before);
         BranchState elseState = before;
         if (!ifs->elseBody.empty()) {
             const std::set<std::string> ownersBefore = objectLocals_;
+            const std::set<std::string> stringsBefore = stringOwners_;
             for (const auto& inner : ifs->elseBody) {
                 processStatement(inner.get());
             }
-            endBlockScope(ownersBefore);
+            endBlockScope(ownersBefore, &stringsBefore);
             elseState = snapshotBranchState();
         }
         // A branch that unconditionally exits (return/throw, or an if/else

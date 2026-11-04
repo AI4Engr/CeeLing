@@ -95,7 +95,8 @@ private:
     // `typeIsKnown` is true for a primitive, `string`, a class/struct/enum of this program, a type some loaded fact pack declares
     // (`class X`), and `std::vector<T>` / `std::map<K,V>` / `Channel<T>` of known types.
     bool typeIsKnown(const std::string& type) const;
-    void requireKnownType(const std::string& type, const std::string& what, int line, int column);
+    // allowView: a `string_view` is acceptable here (a local variable or a parameter); everywhere else it is refused with its own reason.
+    void requireKnownType(const std::string& type, const std::string& what, int line, int column, bool allowView = false);
     std::set<std::string> reportedUnknownTypes_;
     std::string typeParameter_;   // the generic method being checked (`<T> T as()`), whose `T` is not an unknown type
     // className -> (fieldName -> declared type)

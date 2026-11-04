@@ -1,0 +1,18 @@
+//@ expect: accept
+//@ run: 5 3 5 8 3
+//@ reason: (n + f + 1 = 5 + 2 + 1.) a string_view as a local and as a parameter, made from a string variable, a literal and another view (substr); read-only calls on the
+//@ reason: owner (size, find) do not disturb it.
+
+int count(string_view v) {
+    return v.size();
+}
+
+int main() {
+    string s = "hello";
+    string_view v = s;
+    string_view w = v.substr(1, 3);
+    int n = s.size();
+    int f = s.find("l");
+    std::cout << v.size() << " " << w.size() << " " << count(s) << " " << (n + f + 1) << " " << count("lit") << std::endl;
+    return 0;
+}

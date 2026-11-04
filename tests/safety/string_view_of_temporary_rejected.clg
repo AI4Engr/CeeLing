@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: cannot tell what the `string_view` `v` would refer to
+//@ reason: a call that returns a string returns a temporary; a view of it dangles at the end of the statement (the classic C++ trap).
+
+string make() {
+    return "a string long enough to live on the heap, not in the string object";
+}
+
+int main() {
+    string_view v = make();
+    std::cout << v << std::endl;
+    return 0;
+}

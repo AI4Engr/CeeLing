@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: cannot tell what the `string_view` `v` would refer to
+//@ reason: `a + b` builds a temporary.
+
+int main() {
+    string a = "x";
+    string_view v = a + "y";
+    return 0;
+}

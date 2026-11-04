@@ -34,7 +34,7 @@ Two more checks run in the same pass:
 --pretend-mutator / --pretend-nonmutator NAME make the gauge believe a wrong fact: it must then report it. That is the negative
 control (CTest `cling_fact_gauge_detects_*`): a detector that cannot fail proves nothing.
 
-Limits: std::string has no seeds (a string observer is never registered, so nothing can be seeded); an observer of a FIELD
+std::string is seeded through a `string_view` (the observer of a string): s.M(args) must kill the view. An observer of a FIELD
 container is refused outright by the checker (`whose owner cannot be tracked`), which says nothing about the facts.
 """
 import argparse
@@ -69,6 +69,8 @@ scan_dir = args.scan or os.path.join(root, 'tools', 'std-scan-experiment')
 STANDARD_INVALIDATING = {
     'vector': {'push_back', 'emplace_back', 'insert', 'emplace', 'erase', 'pop_back', 'clear', 'resize', 'reserve', 'shrink_to_fit', 'assign', 'swap'},
     'map': {'erase', 'clear', 'extract', 'merge', 'swap'},
+    # [string.modifiers], [string.capacity]: every call that may reallocate or overwrite the characters a view points into
+    'string': {'push_back', 'pop_back', 'append', 'insert', 'erase', 'clear', 'resize', 'reserve', 'shrink_to_fit', 'assign', 'replace', 'swap'},
 }
 
 CLASSES = {
@@ -215,13 +217,58 @@ def verdict_of(src):
     return 'UNUSABLE', first
 
 
+def string_args(name):
+    best = None
+    for params, kinds in overloads('string', name):
+        if len(params) != len(kinds):
+            continue
+        a = []
+        for q, k in zip(params, kinds):
+            qq = re.sub(r'\s+', ' ', re.sub(r'\bconst\b', ' ', q)).strip()
+            if k == 'cstr':
+                a.append('"b"')
+            elif qq == 'size_type':
+                a.append('0')
+            elif qq == 'char':
+                a.append("'a'")
+            elif k == 'value' and qq.startswith(('basic_string', 'std::basic_string')):
+                a.append('t')
+            elif k == 'args' or (k == 'value' and re.fullmatch(r'_\w+ ?&?', qq)):
+                a.append('"b"')
+            else:
+                a = None
+                break
+        if a is not None and (best is None or len(a) < len(best)):
+            best = a
+    return None if best is None else ', '.join(best)
+
+
 rows = []   # (class, name, context, mutates, verdict, detail)
 all_facts = {cls: load_facts(cls) for cls in CLASSES}
+all_facts['string'] = load_facts('string')       # strings have no `ref` observer, but a string_view is one (seeded separately below)
+
+
+def seed_string_view(name, call_args):
+    return '''int main() {
+    string s = "abc";
+    string t = "b";
+    string_view v = s;
+    s.%s(%s);
+    std::cout << v.size() << std::endl;
+    return 0;
+}
+''' % (name, call_args)
 
 
 def work(item):
     cls, name = item
     mutates = all_facts[cls][name]
+    if cls == 'string':
+        call_args = string_args(name)
+        if call_args is None:
+            return [(cls, name, 'both', mutates, 'UNREACHABLE', 'every callable overload needs an argument CeeLing cannot write')]
+        verdict, detail = verdict_of(seed_string_view(name, call_args))
+        return [(cls, name, 'string_view observer', mutates, verdict, detail)]
     call_args = args_for(cls, name)
     if call_args is None:
         return [(cls, name, 'both', mutates, 'UNREACHABLE', 'every callable overload needs an argument CeeLing cannot write')]
@@ -238,7 +285,7 @@ def work(item):
     return out
 
 
-items = [(cls, n) for cls in CLASSES for n in sorted(all_facts[cls]) if not n.startswith(('_', 'operator'))]
+items = [(cls, n) for cls in list(CLASSES) + ['string'] for n in sorted(all_facts[cls]) if not n.startswith(('_', 'operator'))]
 with ThreadPoolExecutor(args.j) as ex:
     for res in ex.map(work, items):
         rows.extend(res)
@@ -246,13 +293,13 @@ with ThreadPoolExecutor(args.j) as ex:
 false_accepts = [r for r in rows if r[3] and r[4] == 'ACCEPTED']
 false_rejects = [r for r in rows if not r[3] and r[4] == 'INVALIDATED']
 unusable = [r for r in rows if r[4] == 'UNUSABLE']
-vs_standard = sorted('%s.%s' % (cls, n) for cls in CLASSES for n in STANDARD_INVALIDATING[cls]
+vs_standard = sorted('%s.%s' % (cls, n) for cls in list(CLASSES) + ['string'] for n in STANDARD_INVALIDATING[cls]
                      if n in all_facts[cls] and not all_facts[cls][n])
 count = {}
 for r in rows:
     count[r[4]] = count.get(r[4], 0) + 1
 
-lines = ['# Gauge: facts vs checker (%s; %d seeded programs)' % (', '.join('%s %d names' % (c, sum(1 for i in items if i[0] == c)) for c in CLASSES), len(rows)), '']
+lines = ['# Gauge: facts vs checker (%s; %d seeded programs)' % (', '.join('%s %d names' % (c, sum(1 for i in items if i[0] == c)) for c in list(CLASSES) + ['string']), len(rows)), '']
 lines.append('Verdicts: ' + ', '.join('%s=%d' % kv for kv in sorted(count.items())))
 lines.append('FALSE ACCEPTS (fact says mutates, program accepted): %d' % len(false_accepts))
 lines.append('FALSE REJECTS (fact says no mutation, observer invalidated): %d' % len(false_rejects))
@@ -290,32 +337,6 @@ def string_methods():
         if m and not m.group(1).startswith(('_', 'operator')) and m.group(1) not in out:
             out.append(m.group(1))
     return out
-
-
-def string_args(name):
-    best = None
-    for params, kinds in overloads('string', name):
-        if len(params) != len(kinds):
-            continue
-        a = []
-        for q, k in zip(params, kinds):
-            qq = re.sub(r'\s+', ' ', re.sub(r'\bconst\b', ' ', q)).strip()
-            if k == 'cstr':
-                a.append('"b"')
-            elif qq == 'size_type':
-                a.append('0')
-            elif qq == 'char':
-                a.append("'a'")
-            elif k == 'value' and qq.startswith(('basic_string', 'std::basic_string')):
-                a.append('t')
-            elif k == 'args' or (k == 'value' and re.fullmatch(r'_\w+ ?&?', qq)):
-                a.append('"b"')
-            else:
-                a = None
-                break
-        if a is not None and (best is None or len(a) < len(best)):
-            best = a
-    return None if best is None else ', '.join(best)
 
 
 def usage_work(item):

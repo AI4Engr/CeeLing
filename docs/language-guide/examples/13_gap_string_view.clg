@@ -1,5 +1,5 @@
 //@ expect: reject
-//@ error: unknown type `std::string_view`
+//@ error: cannot tell what the `string_view`
 std::string make() { return "abc"; }
 
 int main() {

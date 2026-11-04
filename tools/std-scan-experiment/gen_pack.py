@@ -33,6 +33,8 @@ PACKS = (
      (('msvc-stl', msvc_dir, 'vector'), ('libstdc++', gcc_dir, 'vector'))),
     ('string', 'std-string', 'std::basic_string<char>',
      (('msvc-stl', msvc_dir, 'string'), ('libstdc++', gcc_dir, 'string'))),
+    ('string_view', 'std-string_view', 'std::basic_string_view<char>',
+     (('msvc-stl', msvc_dir, 'string_view'), ('libstdc++', gcc_dir, 'string_view'))),
     ('map', 'std-map', 'std::map<int,int> and std::map<std::string,int> (two key types as witnesses)',
      (('msvc-stl/int', msvc_dir, 'map'), ('msvc-stl/string', msvc_dir, 'map_si'),
       ('libstdc++/int', gcc_dir, 'map'), ('libstdc++/string', gcc_dir, 'map_si'))),

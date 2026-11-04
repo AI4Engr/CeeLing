@@ -268,7 +268,9 @@ if(NOT EMSCRIPTEN)
             COMMAND ${PYTHON_FOR_FACTS} -I ${CMAKE_SOURCE_DIR}/tools/fact-gauge/gauge.py --cling $<TARGET_FILE:cling> --pretend-mutator size)
         add_test(NAME cling_fact_gauge_detects_wrong_fact
             COMMAND ${PYTHON_FOR_FACTS} -I ${CMAKE_SOURCE_DIR}/tools/fact-gauge/gauge.py --cling $<TARGET_FILE:cling> --pretend-nonmutator reserve)
-        set_tests_properties(cling_fact_gauge_detects_false_accept cling_fact_gauge_detects_wrong_fact PROPERTIES WILL_FAIL TRUE)
+        add_test(NAME cling_fact_gauge_detects_string_fact
+            COMMAND ${PYTHON_FOR_FACTS} -I ${CMAKE_SOURCE_DIR}/tools/fact-gauge/gauge.py --cling $<TARGET_FILE:cling> --pretend-mutator compare)
+        set_tests_properties(cling_fact_gauge_detects_false_accept cling_fact_gauge_detects_wrong_fact cling_fact_gauge_detects_string_fact PROPERTIES WILL_FAIL TRUE)
     endif()
 
     # Custom target for running tests

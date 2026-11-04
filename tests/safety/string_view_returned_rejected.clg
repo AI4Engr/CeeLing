@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: `string_view` cannot be used for the return type
+//@ reason: a returned view would outlive the local string it refers to.
+
+string_view first(string s) {
+    return s;
+}
+
+int main() {
+    return 0;
+}

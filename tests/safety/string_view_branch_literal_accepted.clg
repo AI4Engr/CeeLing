@@ -1,0 +1,14 @@
+//@ expect: accept
+//@ run: 5
+//@ reason: a view bound to a literal on one path and to a live string on the other is fine while the string lives.
+
+int main() {
+    string s = "hello";
+    string_view v = "x";
+    int k = 1;
+    if (k == 1) {
+        v = s;
+    }
+    std::cout << v.size() << std::endl;
+    return 0;
+}

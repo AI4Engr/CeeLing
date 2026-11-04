@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: use of dangling observer `v`
+//@ reason: append may reallocate the string's buffer, so a view of it dies (the string invalidation table, inert until a view existed).
+
+int main() {
+    string s = "hello";
+    string_view v = s;
+    s.append("x");
+    std::cout << v.size() << std::endl;
+    return 0;
+}

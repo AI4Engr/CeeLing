@@ -103,7 +103,9 @@ namespace {
 // `string::insert(pos, text)` in while `erase(iterator)` stays out. A parameter pack (`emplace_back(args...)`) is callable.
 // A callable signature with a non-const reference parameter (`swap(other)`, `merge(other)`) is out: CeeLing moves a container
 // argument by default, which would empty the other operand.
-bool shapeHonoured(const std::string& shape) {
+bool shapeHonoured(const std::string& shape, const std::string& cls = "") {
+    // A `view` result (std::string_view::substr) is a view of the SAME owner as the receiver: the checker follows it, but only for a string_view receiver.
+    if (shape == "view" && cls == "string_view") return true;
     return shape == "void" || shape == "scalar" || shape == "string" || shape == "self-reference";
 }
 
@@ -163,7 +165,7 @@ MethodVerdict methodVerdict(const std::string& cls, const std::string& name) {
         while (start <= results.size()) {
             size_t comma = results.find(',', start);
             std::string shape = results.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
-            if (!shapeHonoured(shape)) return {false, shapeRefusal(shape)};
+            if (!shapeHonoured(shape, cls)) return {false, shapeRefusal(shape)};
             if (comma == std::string::npos) break;
             start = comma + 1;
         }
@@ -222,6 +224,27 @@ bool stringMethodInvalidatesReferences(const std::string& methodName) {
 
 bool isStringType(const std::string& type) {
     return type == "string" || type == "std::string";
+}
+
+bool isStringViewType(const std::string& type) {
+    return type == "string_view" || type == "std::string_view";
+}
+
+bool isKnownStringViewMethod(const std::string& methodName) {
+    return methodVerdict("string_view", methodName).admitted;
+}
+
+std::string stringViewMethodRefusal(const std::string& methodName) {
+    return methodVerdict("string_view", methodName).reason;
+}
+
+// Does this method of a string_view return another view of the SAME owner (substr)? Read from the scan, not listed.
+bool stringViewMethodReturnsView(const std::string& methodName) {
+    for (const FactTable::Fact* f : builtinFacts().withPrefix("string_view.sig", methodName + "/")) {
+        const std::string& r = f->attrs.at("result");
+        if (r == "view" || r.find("view,") == 0 || r.find(",view") != std::string::npos) return true;
+    }
+    return false;
 }
 
 bool isKnownMapMethod(const std::string& methodName) {

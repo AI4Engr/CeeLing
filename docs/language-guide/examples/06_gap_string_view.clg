@@ -1,5 +1,5 @@
 //@ expect: reject
-//@ error: unknown type `std::string_view`
+//@ error: cannot tell what the `string_view`
 //@ generated: std::string_view sv = make();
 string make() {
     return "a string long enough to live on the heap, not in the string object";

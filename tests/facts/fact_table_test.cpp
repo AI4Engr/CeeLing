@@ -129,9 +129,9 @@ int main() {
 
     {   // the shipped packs: they loaded (otherwise builtinFacts() would have aborted)
         const FactTable& b = cling::builtinFacts();
-        check(b.packs().size() == 6, "six shipped packs, got " + std::to_string(b.packs().size()));
+        check(b.packs().size() == 7, "seven shipped packs, got " + std::to_string(b.packs().size()));
         for (const auto& f : b.facts()) {
-            bool scanned = f.kind == "vector.sig" || f.kind == "string.sig" || f.kind == "map.sig";
+            bool scanned = f.kind == "vector.sig" || f.kind == "string.sig" || f.kind == "string_view.sig" || f.kind == "map.sig";
             check(scanned ? (f.source == "inferred" && f.review == "unreviewed") : (f.source == "declared" && f.review == "hand"),
                   "provenance of a shipped fact: " + f.kind + " " + f.subject);
         }
@@ -153,6 +153,15 @@ int main() {
         check(cling::vectorMethodInvalidatesReferences("reserve") && cling::vectorMethodInvalidatesReferences("clear") &&
                   cling::vectorMethodInvalidatesReferences("assign"), "derived mutators invalidate");
         check(!cling::vectorMethodInvalidatesReferences("size") && !cling::vectorMethodInvalidatesReferences("empty"), "readers do not");
+        // std::string_view: readers are admitted, substr (a view of the same string) is admitted and known to return a view, data() is sealed
+        for (const char* ok : {"size", "length", "empty", "find", "rfind", "compare", "substr", "remove_prefix"}) {
+            check(cling::isKnownStringViewMethod(ok), std::string("string_view method admitted by rule: ") + ok);
+        }
+        for (const char* no : {"data", "begin", "end", "front", "back", "at", "swap", "copy", "frobnicate"}) {
+            check(!cling::isKnownStringViewMethod(no), std::string("string_view method refused by rule: ") + no);
+        }
+        check(cling::stringViewMethodReturnsView("substr") && !cling::stringViewMethodReturnsView("size"), "substr returns a view, size does not");
+        check(cling::isStringViewType("string_view") && cling::isStringViewType("std::string_view") && !cling::isStringViewType("string"), "string_view type names");
         // std::map: only the methods whose callable overloads return nothing or a number
         for (const char* ok : {"size", "empty", "clear", "count", "erase", "max_size"}) {
             check(cling::isKnownMapMethod(ok), std::string("map method admitted by rule: ") + ok);

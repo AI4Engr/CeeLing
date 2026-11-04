@@ -103,6 +103,14 @@ bool vectorMethodInvalidatesReferences(const std::string& methodName);
 // library (facts/std-vector.clfacts, std-string.clfacts) by a rule in library_summary.cpp; there is no list of names.
 std::string vectorMethodRefusal(const std::string& methodName);
 
+// `string_view` (facts/std-string_view.clfacts): a non-owning view of a string. Only a local or a parameter may have this type (the checker
+// follows a view to the string it was made from; a field, a return value or a container element would escape that), and its methods are
+// admitted by the same rule, except that a `view` result (substr) is honoured: it is a view of the same owner.
+bool isStringViewType(const std::string& type);
+bool isKnownStringViewMethod(const std::string& methodName);
+std::string stringViewMethodRefusal(const std::string& methodName);
+bool stringViewMethodReturnsView(const std::string& methodName);
+
 // The same for `std::map<K, V>` (facts/std-map.clfacts): which methods may be called on a map, and why not. A map has no
 // methods other than these and the subscript.
 bool isKnownMapMethod(const std::string& methodName);
@@ -112,12 +120,10 @@ std::string stringMethodRefusal(const std::string& methodName);
 
 // The same question for a `string`. The standard: `push_back`, `append`, `clear`, `reserve`
 // (all four admitted by isKnownStringMethod) may invalidate references, pointers and iterators
-// into the string. **It has no effect today**, and nothing tests it: a `string` is a value type
-// that never enters DanglingChecker's observer table (`ref string t = s; s.append("c"); use(t)`
-// is accepted, checked 2026-11-02), no `ref char` compiles, and `string_view` is not tracked.
-// DanglingChecker::invalidateContainerObservers already consults this function, so when string
-// observers or views are registered the admitted mutators are marked and the first fixture
-// that observes a string will reject; until then this only records the list.
+// into the string. **It is live since 2026-11-03**: a `string_view` is an observer of its string
+// (DanglingChecker::bindStringView), and DanglingChecker::invalidateContainerObservers consults this function, so a
+// mutating call on the string kills the view. (A `ref string` observer is still never registered: `ref string t = s;
+// s.append("c"); use(t)` is accepted; it is a pointer to the string OBJECT, which stays valid.)
 bool stringMethodInvalidatesReferences(const std::string& methodName);
 
 // Is `type` CeeLing's `string` primitive (bare keyword, or `std::string`/`string`
