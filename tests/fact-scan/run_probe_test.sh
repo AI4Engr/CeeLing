@@ -64,5 +64,18 @@ else
     echo "SKIP: yaml-cpp probe (no yaml-cpp at $YAML_DIR; set YAML_DIR)"
 fi
 
+# --- the probe can vouch for what it exercised: --mark-probed, then --strict=probed accepts exactly those facts ------------------------------------
+cp "$TMP/vx.clfacts" "$TMP/vx_marked.clfacts"
+out="$(python -I "$ROOT/tools/fact-gauge/probe_pack.py" --cling "$CLING" --pack "$TMP/vx_marked.clfacts" --conf "$HERE/probe/eigen_vectorxd.conf" -I "$EIGEN_DIR" --mark-probed 2>&1)"; code=$?
+if [ $code -eq 0 ] && echo "$out" | grep -q "marked [0-9]* fact(s) review=probed:"; then ok "probe: a passing probe marks the facts it exercised ($(echo "$out" | grep -o 'marked [0-9]* fact(s)'))"; else bad "probe: --mark-probed failed (exit $code): $out"; fi
+cd "$HERE"
+"$CLING" --strict --facts "$TMP/vx_marked.clfacts" eigen_probed_use.clg --cpp "$TMP/m1.cpp" >/dev/null 2>&1 && bad "strict: probed facts passed plain --strict" || ok "strict: probed Eigen facts do not satisfy plain --strict"
+"$CLING" --strict=probed --facts "$TMP/vx_marked.clfacts" eigen_probed_use.clg --cpp "$TMP/m2.cpp" >/dev/null 2>&1 && ok "strict=probed: a program using only probed Eigen facts compiles" || bad "strict=probed refused a program whose facts were probed"
+out="$("$CLING" --strict=probed --facts "$TMP/vx_marked.clfacts" eigen_vec_use.clg --cpp "$TMP/m3.cpp" 2>&1)"; code=$?
+[ $code -eq 3 ] && echo "$out" | grep -q "function Eigen::VectorXd::Ones" && ok "strict=probed: a function fact (Ones) is not exercised by the probe, so it still needs a reviewer" || bad "strict=probed did not flag the unprobed function fact (exit $code): $out"
+cp "$TMP/vx.clfacts" "$TMP/vx_pretend.clfacts"
+python -I "$ROOT/tools/fact-gauge/probe_pack.py" --cling "$CLING" --pack "$TMP/vx_pretend.clfacts" --conf "$HERE/probe/eigen_vectorxd.conf" -I "$EIGEN_DIR" --pretend-fresh resize conservativeResize --mark-probed >/dev/null 2>&1
+grep -q "review=probed" "$TMP/vx_pretend.clfacts" && bad "probe: a failing/pretend run marked facts probed" || ok "probe: a failing or pretend run never marks anything probed"
+
 exit $fail
 

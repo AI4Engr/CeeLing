@@ -30,6 +30,7 @@ public:
         std::string source;               // "declared" | "inferred"
         std::string review;               // free text after review=, empty if absent
         std::string pack;                 // the @pack it came from
+        bool external = false;            // loaded with --facts (a project's pack), not shipped inside the compiler
     };
 
     // Parses `text` (the content of one pack) and adds it. `originName` is used in error messages only.

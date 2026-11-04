@@ -132,4 +132,33 @@ if [ -f "$EIGEN_DIR/Eigen/Dense" ]; then
     [ $code -eq 1 ] && echo "$out" | grep -q "DIFFER cbegin" && ok "compare_packs: VectorXd and MatrixXd DIFFER (cbegin/cend): a pack for one instantiation is not a pack for another" || bad "compare_packs did not find the VectorXd/MatrixXd difference: $out"
 fi
 
+# 8. --strict: which facts may a program rely on? (declared by a person; reviewed by a named person; with =probed also probed)
+cd "$LIB"
+SC="$TMP/strict.clfacts"
+scan --header "$LIB/grid.h" --class Grid --out "$SC" >/dev/null
+"$CLING" --facts "$SC" ok.clg --cpp "$TMP/s0.cpp" >/dev/null 2>&1 && ok "strict: without --strict a scanned (unreviewed) pack is usable" || bad "strict: baseline compile failed"
+out="$("$CLING" --strict --facts "$SC" ok.clg --cpp "$TMP/s1.cpp" 2>&1)"; code=$?
+if [ $code -eq 3 ] && echo "$out" | grep -q "nobody vouches for" && echo "$out" | grep -q "fresh Grid::width"; then ok "strict: --strict refuses a program that relies on unreviewed scanned facts (exit 3), naming them"; else bad "strict: not refused (exit $code): $out"; fi
+[ -f "$TMP/s1.cpp" ] && bad "strict: C++ was written although the compile was refused" || ok "strict: no output file is written for a refused compile"
+"$CLING" --strict --facts "$LIB/grid.clfacts" ok.clg --cpp "$TMP/s2.cpp" >/dev/null 2>&1 && ok "strict: a hand-written (declared) pack passes --strict" || bad "strict: declared pack refused"
+printf '#include "grid.h"
+int main() { Grid g = new Grid(2, 2); Grid w = g.window(1, 1); return 0; }
+' > "$TMP/onlyopaque.clg"
+"$CLING" --strict --facts "$SC" "$TMP/onlyopaque.clg" --cpp "$TMP/s3.cpp" >/dev/null 2>&1 && ok "strict: a program that relies only on the opaque default passes (opaque only makes checking stricter)" || bad "strict: opaque-only program refused"
+cp "$SC" "$TMP/probed.clfacts"; sed -i 's/review=unreviewed/review=probed:2026-11-03/' "$TMP/probed.clfacts"
+"$CLING" --strict --facts "$TMP/probed.clfacts" ok.clg --cpp "$TMP/s4.cpp" >/dev/null 2>&1 && bad "strict: probed facts passed plain --strict" || ok "strict: probed facts do NOT satisfy plain --strict"
+"$CLING" --strict=probed --facts "$TMP/probed.clfacts" ok.clg --cpp "$TMP/s5.cpp" >/dev/null 2>&1 && ok "strict: --strict=probed accepts facts marked probed" || bad "strict: --strict=probed refused probed facts"
+cp "$SC" "$TMP/reviewed.clfacts"
+python -I "$ROOT/tools/cling-scan/review_pack.py" "$TMP/reviewed.clfacts" --reviewer alice --date 2026-11-03 >/dev/null
+"$CLING" --strict --facts "$TMP/reviewed.clfacts" ok.clg --cpp "$TMP/s6.cpp" >/dev/null 2>&1 && ok "strict: facts reviewed by a named person pass --strict" || bad "strict: reviewed facts refused"
+python -I "$ROOT/tools/cling-scan/review_pack.py" "$TMP/reviewed.clfacts" --reviewer "bad name" >/dev/null 2>&1 && bad "review_pack accepted a reviewer name with a space" || ok "review_pack: the reviewer must be a single-word name"
+printf 'int main() { std::vector<int> v; v.push_back(1); return 0; }
+' > "$TMP/vec.clg"
+"$CLING" --strict "$TMP/vec.clg" --cpp "$TMP/s7.cpp" >/dev/null 2>&1 && ok "strict: the facts shipped in the compiler are not audited by plain --strict" || bad "strict: plain --strict refused a std-only program"
+out="$("$CLING" --strict-all "$TMP/vec.clg" --cpp "$TMP/s8.cpp" 2>&1)"; code=$?
+[ $code -eq 3 ] && echo "$out" | grep -q "vector.sig" && ok "strict: --strict-all audits the shipped facts too, and today they are scanner drafts (exit 3)" || bad "strict-all: not refused (exit $code): $out"
+printf 'int main() { return 0; }
+' > "$TMP/none.clg"
+"$CLING" --strict --facts "$SC" "$TMP/none.clg" --cpp "$TMP/s9.cpp" >/dev/null 2>&1 && ok "strict: unreviewed facts the program does not use are not a problem" || bad "strict: refused because of an unused fact"
+
 exit $fail

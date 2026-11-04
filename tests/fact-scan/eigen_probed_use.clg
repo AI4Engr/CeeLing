@@ -1,0 +1,10 @@
+#include <Eigen/Dense>
+
+int main() {
+    Eigen::VectorXd v = new Eigen::VectorXd(4);     // a constructor: not a fact, checked by C++
+    v.fill(2.0);                                    // mutator: exercised by the probe
+    double total = v.sum();                         // fresh: exercised by the probe
+    int n = v.size();                               // fresh: exercised by the probe
+    std::cout << total << " " << n << std::endl;
+    return 0;
+}

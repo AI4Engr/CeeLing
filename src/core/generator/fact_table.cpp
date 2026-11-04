@@ -121,6 +121,7 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
         f.kind = words[0];
         f.subject = words[1];
         f.pack = pack;
+        f.external = projectPack;
         for (size_t i = 2; i < words.size(); ++i) {
             const std::string& w = words[i];
             if (w.rfind("source=", 0) == 0) {

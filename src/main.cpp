@@ -181,6 +181,8 @@ void showUsage(const char* programName) {
     std::cout << "  --ptr-demands-out <file> - Write the pointer kinds this file needs from the classes it includes (separate compilation; see smart_pointer_analyzer.h)" << std::endl;
     std::cout << "  --ptr-demands <file>     - Read such demands written by other files (repeatable)" << std::endl;
     std::cout << "  --facts <file>     - Add a project fact pack (functions, classes, operators, borrowing and fresh methods of a C++ library; repeatable). It can add, never replace, what the compiler knows" << std::endl;
+    std::cout << "  --strict[=probed]  - Refuse to compile if the program relied on a fact of a --facts pack that nobody vouches for: accepted are `declared` facts (written by a person) and facts with review=reviewed:<who>:<date>; =probed also accepts review=probed:<date> (set by tools/fact-gauge/probe_pack.py --mark-probed). `opaque` is always accepted (it only makes checking stricter)" << std::endl;
+    std::cout << "  --strict-all       - Like --strict, but also for the facts shipped inside the compiler (an audit: the scanned std facts are inferred/unreviewed, so this fails today)" << std::endl;
     std::cout << "  --strict-headers   - Refuse a fact pack whose scanned headers cannot be found to check (a header that IS found must always match its recorded sha256)" << std::endl;
     std::cout << "  --report-facts     - After a successful compile, list every fact the program relied on and where it came from (the trusted-boundary report)" << std::endl;
     std::cout << "  -g, --debug-lines  - Mark every generated statement with its .clg line (#line), so g++ -g and gdb show and step through the .clg source" << std::endl;
@@ -238,6 +240,7 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--strict-headers") cling::setStrictHeaders(true);   // before any --facts is read, whatever the order
     }
+    bool strictFacts = false, strictAcceptsProbed = false, strictIncludesBuiltin = false;   // --strict[=probed] / --strict-all
     bool reportFacts = false;                         // --report-facts: print the facts the program relied on
     std::string demandsOutFile;                       // --ptr-demands-out: write what this file needs from the classes it includes
     std::vector<std::string> demandsInFiles;          // --ptr-demands: read what other files need (see SmartPointerAnalyzer::setDemands)
@@ -272,6 +275,10 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: --facts: " << err << std::endl;
                 return 2;
             }
+        } else if (arg == "--strict" || arg == "--strict=probed" || arg == "--strict-all") {
+            strictFacts = true;
+            strictAcceptsProbed = (arg == "--strict=probed") || (arg == "--strict-all" && strictAcceptsProbed);
+            strictIncludesBuiltin = strictIncludesBuiltin || arg == "--strict-all";
         } else if (arg == "--strict-headers") {
             // consumed by the pre-scan below; nothing to do here
         } else if (arg == "--report-facts") {
@@ -515,6 +522,27 @@ int main(int argc, char* argv[]) {
         cppCode = rewriteClhIncludes(cppCode);
 
         // Write to output file
+        if (strictFacts) {
+            // --strict: every fact the program relied on must be vouched for. `declared` = a person wrote it; `reviewed:<who>:<date>` = a person
+            // checked a scanner's draft; `probed:<date>` (with =probed) = tools/fact-gauge/probe_pack.py ran it against the real library.
+            // `opaque` is exempt: it only makes the checks stricter. Built-in facts are exempt unless --strict-all.
+            std::vector<std::string> unvouched;
+            for (const auto* f : cling::builtinFacts().usedFacts()) {
+                if (!f->external && !strictIncludesBuiltin) continue;
+                if (f->kind == "opaque" || f->source == "declared") continue;
+                if (f->review.rfind("reviewed:", 0) == 0 && f->review.size() > 9) continue;
+                if (strictAcceptsProbed && f->review.rfind("probed:", 0) == 0 && f->review.size() > 7) continue;
+                unvouched.push_back(f->kind + " " + f->subject + "  [" + f->pack + ", " + f->source + (f->review.empty() ? "" : ", review=" + f->review) + "]");
+            }
+            if (!unvouched.empty()) {
+                std::cerr << "Error: --strict: the program relies on " << unvouched.size() << " fact(s) nobody vouches for:" << std::endl;
+                for (size_t k = 0; k < unvouched.size() && k < 12; ++k) std::cerr << "  " << unvouched[k] << std::endl;
+                if (unvouched.size() > 12) std::cerr << "  ... and " << unvouched.size() - 12 << " more" << std::endl;
+                std::cerr << "A scanned fact is a scanner's draft. Either have a person review it (tools/cling-scan/review_pack.py), run the probe against the real library"
+                          << " (tools/fact-gauge/probe_pack.py --mark-probed, then --strict=probed), or write the fact by hand as `declared`." << std::endl;
+                return 3;
+            }
+        }
         std::ofstream outFile(outputFile);
         if (!outFile.is_open()) {
             throw std::runtime_error("Could not create output file: " + outputFile);

@@ -85,6 +85,21 @@ anything the library does behind the call: the class's internals are trusted, as
 `python tools/cling-scan/cling_scan.py --clang clang++ --header grid.h --class Grid --out grid.clfacts` writes `opaque Grid` plus the `fresh`, `borrow`, `mutator` and `function` facts the declared signatures prove, with a `#`
 comment for every method it could not decide. See `tools/cling-scan/README.md` for exactly what it proves and what it does not.
 
+## Review states and `--strict`
+
+`review=` is free text without spaces, but three shapes mean something:
+
+| `review=` | who vouches | set by |
+|---|---|---|
+| `unreviewed` | nobody: a scanner wrote it | `cling-scan` |
+| `probed:<date>` | a probe ran the fact against the real library (evidence, not review) | `probe_pack.py --mark-probed`, only on a passing, non-pretend run, only for facts it exercised (`fresh`/`borrow`/`mutator`; not `function`) |
+| `reviewed:<who>:<date>` | a named person | `tools/cling-scan/review_pack.py --reviewer <name>` (a person runs it; nothing in this repository does it on anyone's behalf) |
+| `hand` | the project's author wrote the fact | by hand |
+
+`cling --strict` refuses to compile (exit 3, no output file) a program that RELIED on a fact of a `--facts` pack that is `source=inferred` and not `reviewed:...`. `declared` facts pass (a person wrote them), `opaque` passes always (it can only make
+checking stricter), facts the program does not use are irrelevant. `--strict=probed` also accepts `probed:...`. The facts shipped inside the compiler are not audited by `--strict` (the compiler's own gauge and tests answer for them); `--strict-all` audits
+them too and fails today, because the scanned `std::vector`/`string`/`map` facts are `inferred/unreviewed`: that is the honest state, and reviewing them is the work a pack author or a maintainer would do.
+
 ## What a pack cannot do
 
 Packs are data. Loading one runs nothing and reads no other file. A fact cannot make a sealed construct legal: raw pointers, `.get()`, casts and unions are rejected by `EscapeHatchChecker`

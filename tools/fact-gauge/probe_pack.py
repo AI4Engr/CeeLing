@@ -47,6 +47,7 @@ ap.add_argument('--cxx', default='g++')
 ap.add_argument('-I', dest='includes', action='append', default=[])
 ap.add_argument('--pretend-fresh', nargs='*', default=[])
 ap.add_argument('--keep')
+ap.add_argument('--mark-probed', action='store_true', help='when the probe passes, rewrite review=unreviewed to review=probed:<date> on the facts it actually exercised (a pretend run never marks)')
 ap.add_argument('--var', action='append', default=[], help='KEY=VALUE: replaces @KEY@ in the conf (paths that differ per machine)')
 ap.add_argument('-j', type=int, default=6)
 args = ap.parse_args()
@@ -275,6 +276,22 @@ if args.keep:
         f.write('| method | fact | verdict | detail |\n|---|---|---|---|\n')
         for name, v, verdict_, detail, _ in sorted(results):
             f.write('| %s | %s | %s | %s |\n' % (name, v, verdict_, detail.replace('|', '/')))
+if args.mark_probed:
+    if bad or args.pretend_fresh:
+        print('not marking: the probe failed or this was a pretend run')
+    else:
+        import datetime
+        today = datetime.date.today().isoformat()
+        exercised = {name for name, v, verdict_, detail, _ in results if verdict_.startswith('OK')}
+        text = open(args.pack, encoding='utf-8', newline='').read().split(chr(10))
+        n = 0
+        for i, ln in enumerate(text):
+            m = re.match(r'^(fresh|borrow|mutator) %s::(\S+) ' % re.escape(T), ln)
+            if m and m.group(2) in exercised and 'review=unreviewed' in ln:
+                text[i] = ln.replace('review=unreviewed', 'review=probed:' + today)
+                n += 1
+        open(args.pack, 'w', encoding='utf-8', newline='').write(chr(10).join(text))
+        print('marked %d fact(s) review=probed:%s in %s' % (n, today, args.pack))
 if tmp_pack:
     os.unlink(tmp_pack.name)
 sys.exit(1 if bad else 0)
