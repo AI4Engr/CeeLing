@@ -58,15 +58,27 @@ public:
     const std::vector<Fact>& facts() const { return facts_; }
     // "pack@version" of every loaded pack, in load order (what `--report` will print).
     const std::vector<std::string>& packs() const { return packs_; }
-    // The `@header <path> sha256=<hex>` lines of every loaded pack (what a scan read), "pack: path sha256=hex". Recorded and printed by
-    // --report-facts; a pack is not yet REFUSED when the header on disk has changed (cling-scan --check does that comparison).
+    // The `@header <path> sha256=<hex>` lines of every loaded pack (what a scan read), "pack: path sha256=hex", as --report-facts prints them.
     const std::vector<std::string>& headers() const { return headers_; }
+
+    // One `@header` line: the header a pack was scanned from. `baseDir` is the directory of the pack file (the recorded path is relative to it).
+    struct HeaderBinding {
+        std::string pack, path, sha256, baseDir;
+    };
+    const std::vector<HeaderBinding>& headerBindings() const { return bindings_; }
+
+    // Compares the headers recorded by the packs added since binding number `fromIndex` with the files on disk (content hash, line endings
+    // normalised to LF as the scanner does). Returns an empty string when every header that exists matches; otherwise a message naming the
+    // pack, the header and both hashes. A header that cannot be found only adds a line to `missing` (a different directory layout is not a
+    // different library): it is reported, never silently used as proof. `checked` receives the number of headers compared.
+    std::string verifyHeaders(size_t fromIndex, std::vector<std::string>& missing, size_t& checked) const;
 
 private:
     std::vector<Fact> facts_;
     std::map<std::string, size_t> index_;   // "kind|subject" -> position in facts_
     std::vector<std::string> packs_;
     std::vector<std::string> headers_;
+    std::vector<HeaderBinding> bindings_;
     mutable std::set<size_t> used_;
 };
 
@@ -79,5 +91,9 @@ const FactTable& builtinFacts();
 // string on success, otherwise the error (unreadable file, or any load error of FactTable::addText, including a fact that
 // duplicates a shipped one: a project pack can ADD facts, never replace or weaken a shipped one).
 std::string addProjectFacts(const std::string& path);
+// With strict headers on, a pack whose `@header` file cannot be found at the recorded place is an error instead of a warning.
+// Set it BEFORE the first addProjectFacts (main.cpp reads `--strict-headers` from the whole command line first).
+void setStrictHeaders(bool strict);
+// (It also verifies the pack's `@header` hashes against the files on disk and returns an error on a mismatch.)
 
 }  // namespace cling

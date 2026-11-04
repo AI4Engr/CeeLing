@@ -31,6 +31,7 @@ member templates, operators (write `operator` facts by hand). Every fact is `sou
 * `--type` takes any type expression and instantiates it (`static_assert(sizeof(T) > 0)`), then reads the class **and its public base classes** (Eigen keeps most of its API in `DenseBase`, `MatrixBase`,
   `PlainObjectBase`...). Facts are named with the spelling you give. A template is scanned for the ONE instantiation you name: the facts of `VectorXd` are not claimed for `MatrixXf` (the plan's "witness types" check,
   scanning two instantiations and requiring equal facts, is not done here). Typedefs and enums of the classes and of the namespace are resolved. Member templates, operators and constructors are skipped.
+* The compiler enforces that binding: `cling --facts pack` refuses a pack whose recorded headers changed (exit 2), warns about headers it cannot find, and `--strict-headers` makes a missing header an error.
 * The pack binds **every non-system header the translation unit includes** (`clang -MM`; 265 for Eigen/Dense), not only the entry header, so a change anywhere in the library is noticed by `--check`.
 * It is a prototype on clang's **text AST dump**, not the LibTooling tool of the plan (no LLVM development libraries on the machine it was written on). Fast enough (0.6 s for `Json::Value`), brittle against changes of the
   dump format; the tests pin the behaviour.

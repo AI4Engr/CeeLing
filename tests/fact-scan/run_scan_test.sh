@@ -58,6 +58,24 @@ scan --header "$TMP/grid.h" --class Grid --out "$TMP/bound.clfacts" >/dev/null
 scan --clang "$CLANG" --check "$TMP/bound.clfacts" >/dev/null 2>&1; [ $? -eq 0 ] && ok "--check: unchanged header matches the pack" || bad "--check failed on an unchanged header"
 printf '\n// edited\nint extra();\n' >> "$TMP/grid.h"
 scan --check "$TMP/bound.clfacts" >/dev/null 2>&1; [ $? -eq 1 ] && ok "--check: a changed header is reported" || bad "--check did not notice the edit"
+# 4b. the COMPILER enforces the header hashes (not only the scanner's --check)
+cp "$LIB/grid.h" "$TMP/h1.h"
+scan --header "$TMP/h1.h" --class Grid --out "$TMP/h1.clfacts" >/dev/null
+printf 'int main() { return 0; }\n' > "$TMP/h1.clg"
+"$CLING" --facts "$TMP/h1.clfacts" "$TMP/h1.clg" --cpp "$TMP/h1.cpp" >/dev/null 2>&1 && ok "compiler: a pack whose headers are unchanged loads" || bad "compiler: refused a pack with unchanged headers"
+# only the line endings change (LF -> CRLF): the hash is taken over LF-normalised content
+awk '{ printf "%s\r\n", $0 }' "$LIB/grid.h" > "$TMP/h1.h"
+"$CLING" --facts "$TMP/h1.clfacts" "$TMP/h1.clg" --cpp "$TMP/h1.cpp" >/dev/null 2>&1 && ok "compiler: changing only the line endings of a header does not invalidate the pack" || bad "compiler: line endings alone invalidated the pack"
+cp "$LIB/grid.h" "$TMP/h1.h"; printf '\n// one more line\n' >> "$TMP/h1.h"
+out="$("$CLING" --facts "$TMP/h1.clfacts" "$TMP/h1.clg" --cpp "$TMP/h1.cpp" 2>&1)"; code=$?
+if [ $code -eq 2 ] && echo "$out" | grep -q "scan-Grid" && echo "$out" | grep -q "h1.h" && echo "$out" | grep -q "changed after the pack was written"; then
+    ok "compiler: a changed header makes the pack unusable (exit 2), naming the pack and the header"
+else bad "compiler: changed header not refused (exit $code): $out"; fi
+rm "$TMP/h1.h"
+out="$("$CLING" --facts "$TMP/h1.clfacts" "$TMP/h1.clg" --cpp "$TMP/h1b.cpp" 2>&1)"; code=$?
+if [ $code -eq 0 ] && echo "$out" | grep -q "warning" && echo "$out" | grep -q "not found at the recorded place"; then ok "compiler: a header that cannot be found is a warning, said out loud"; else bad "compiler: missing header handling wrong (exit $code): $out"; fi
+"$CLING" --strict-headers --facts "$TMP/h1.clfacts" "$TMP/h1.clg" --cpp "$TMP/h1c.cpp" >/dev/null 2>&1; [ $? -eq 2 ] && ok "compiler: --strict-headers turns a missing header into an error" || bad "compiler: --strict-headers did not refuse"
+"$CLING" --facts "$TMP/h1.clfacts" --strict-headers "$TMP/h1.clg" --cpp "$TMP/h1d.cpp" >/dev/null 2>&1; [ $? -eq 2 ] && ok "compiler: --strict-headers works placed after --facts too" || bad "compiler: --strict-headers order matters"
 printf '@pack p\n@version 1\n@origin t\n@header x.h sha256=zz\nfunction f source=declared\n' > "$TMP/badhash.clfacts"
 "$CLING" --facts "$TMP/badhash.clfacts" ok.clg --cpp "$TMP/x.cpp" >/dev/null 2>&1; [ $? -eq 2 ] && ok "the loader rejects a malformed @header line" || bad "malformed @header accepted"
 

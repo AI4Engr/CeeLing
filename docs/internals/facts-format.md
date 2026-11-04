@@ -18,7 +18,9 @@ function std::stoi source=declared review=hand
 * **Header lines** `@pack`, `@version`, `@origin` come first and are all required. The pack is reported as `pack@version`.
 * **A fact** is one line: `<kind> <subject> [flag ...] source=<declared|inferred> [review=<state>]`. Words are separated by spaces, so a subject has none (`Eigen::MatrixXd|*` for an operator).
 * `#` starts a comment line; blank lines are ignored; CRLF is accepted.
-* Optional header lines: `@header <path> sha256=<64 hex digits>` (a header the facts were scanned from; repeatable; shown by `--report-facts`, checked by `cling-scan --check`; NOT yet enforced by the compiler) and `@scanner <text>`.
+* Optional header lines: `@header <path> sha256=<64 hex digits>` (a header the facts were scanned from; repeatable; the path is relative to the pack file) and `@scanner <text>`. **The compiler enforces the hashes** when
+  a pack is loaded with `--facts`: every recorded header that exists must hash (SHA-256 of the content with line endings normalised to LF) to the recorded value, otherwise the pack is refused (exit 2) with a message that names the
+  pack and the header. A header that cannot be found at the recorded place is a warning on stderr, or an error with `--strict-headers`. Built-in packs have no `@header` lines.
 * **`source`** is `declared` (a person wrote it) or `inferred` (a scanner wrote it). **`review`** is free text; the shipped packs use `hand`. Later versions add reviewer names and dates.
 
 ## Kinds and flags

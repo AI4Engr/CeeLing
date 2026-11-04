@@ -5,6 +5,7 @@
 #include <string>
 
 #include "generator/fact_table.h"
+#include "generator/sha256.h"
 #include "generator/library_summary.h"
 
 namespace {
@@ -63,6 +64,37 @@ int main() {
         check(f != nullptr && f->attrs.at("result") == "void,scalar" && f->attrs.at("mutates") == "no", "sig attributes kept");
         check(t.find("vector.sig", "g/const/-") == nullptr, "find of an absent fact");
         check(t.withPrefix("vector.sig", "f/").size() == 1 && t.withPrefix("vector.sig", "g/").empty(), "withPrefix");
+    }
+
+    {   // SHA-256 (binds a pack to its headers): references computed with Python's hashlib, including every padding boundary
+        check(cling::sha256Hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "sha256 of abc");
+        check(cling::sha256Hex(std::string(1000000, 'a')) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0", "sha256 of a million a");
+        check(cling::sha256Hex(std::string(0, 'x')) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "sha256 of 0 bytes");
+        check(cling::sha256Hex(std::string(1, 'x')) == "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881", "sha256 of 1 bytes");
+        check(cling::sha256Hex(std::string(3, 'x')) == "cd2eb0837c9b4c962c22d2ff8b5441b7b45805887f051d39bf133b583baf6860", "sha256 of 3 bytes");
+        check(cling::sha256Hex(std::string(55, 'x')) == "d5e285683cd4efc02d021a5c62014694958901005d6f71e89e0989fac77e4072", "sha256 of 55 bytes");
+        check(cling::sha256Hex(std::string(56, 'x')) == "04c26261370ee7541549d16dee320c723e3fd14671e66a099afe0a377c16888e", "sha256 of 56 bytes");
+        check(cling::sha256Hex(std::string(57, 'x')) == "ae14a2563ccf969d99aca69ce6bb74981f734bbf9f655f73b8f06db68cab5217", "sha256 of 57 bytes");
+        check(cling::sha256Hex(std::string(63, 'x')) == "75220b47218278e656f2013bb8f0c455a25eaf01e86c64924e9d48d89776d6f2", "sha256 of 63 bytes");
+        check(cling::sha256Hex(std::string(64, 'x')) == "7ce100971f64e7001e8fe5a51973ecdfe1ced42befe7ee8d5fd6219506b5393c", "sha256 of 64 bytes");
+        check(cling::sha256Hex(std::string(65, 'x')) == "9537c5fdf120482f7d58d25e9ed583f52c02b4e304ea814db1633ad565aed7e9", "sha256 of 65 bytes");
+        check(cling::sha256Hex(std::string(119, 'x')) == "000b48d4edf0fa7bee3c6236ecd2785baa5db4eeb8bb54341b029e0d9fa5fb0c", "sha256 of 119 bytes");
+        check(cling::sha256Hex(std::string(120, 'x')) == "13f05a0b594787f5ecd315edc96141bd3243203d1b7d4f0836f37308b276ba98", "sha256 of 120 bytes");
+        check(cling::sha256Hex(std::string(128, 'x')) == "24da1b81d0b16df6428eee73c69fcb2a93c76bc6df706f0c6670fe6bfe800464", "sha256 of 128 bytes");
+        check(cling::sha256Hex(std::string(1000, 'x')) == "44f8354494a5ba03ba1792a8d3e9c534c47a9181980fde7a3f44b06ef2ae7c7f", "sha256 of 1000 bytes");
+    }
+
+    {   // @header lines: parsed, recorded with the pack's directory, and verified against the files on disk
+        FactTable t;
+        std::string h(64, 'a');
+        check(t.addText(std::string(kHeader) + "@header lib/x.h sha256=" + h + "\n" "function f source=declared" "\n", "dir/pack.clfacts").empty(), "@header accepted");
+        check(t.headerBindings().size() == 1 && t.headerBindings()[0].path == "lib/x.h" && t.headerBindings()[0].baseDir == "dir" &&
+                  t.headerBindings()[0].sha256 == h, "@header recorded with the pack's directory");
+        std::vector<std::string> missing;
+        size_t checked = 0;
+        check(t.verifyHeaders(0, missing, checked).empty() && checked == 0 && missing.size() == 1, "a header not found is reported as missing, not as a mismatch");
+        rejects("@header x.h sha256=short" "\n" "function f source=declared" "\n", "@header");
+        rejects("@header x.h" "\n" "function f source=declared" "\n", "@header");
     }
 
     // everything the loader does not understand is an error

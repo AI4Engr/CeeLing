@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+
+#include "sha256.h"
 #include <sstream>
 
 namespace cling {
@@ -166,7 +168,16 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
         facts_.push_back(std::move(f));
     }
     packs_.push_back(pack + "@" + version);
-    for (const auto& h : headers) headers_.push_back(pack + ": " + h);
+    {
+        std::string dir;
+        size_t slash = originName.find_last_of("/\\");
+        if (slash != std::string::npos) dir = originName.substr(0, slash);
+        for (const auto& h : headers) {
+            headers_.push_back(pack + ": " + h);
+            size_t sp = h.find(' ');
+            bindings_.push_back({pack, h.substr(0, sp), h.substr(sp + 1 + 7), dir});
+        }
+    }
     return "";
 }
 
@@ -201,6 +212,37 @@ bool FactTable::hasFlag(const std::string& kind, const std::string& subject, con
     return true;
 }
 
+std::string FactTable::verifyHeaders(size_t fromIndex, std::vector<std::string>& missing, size_t& checked) const {
+    checked = 0;
+    for (size_t i = fromIndex; i < bindings_.size(); ++i) {
+        const HeaderBinding& b = bindings_[i];
+        std::string full = b.path;
+        bool absolute = !full.empty() && (full[0] == '/' || full[0] == '\\' || (full.size() > 1 && full[1] == ':'));
+        if (!absolute && !b.baseDir.empty()) full = b.baseDir + "/" + full;
+        std::ifstream in(full, std::ios::binary);
+        if (!in) {
+            missing.push_back(b.path);
+            continue;
+        }
+        std::ostringstream buf;
+        buf << in.rdbuf();
+        std::string content = buf.str(), normalised;
+        normalised.reserve(content.size());
+        for (size_t k = 0; k < content.size(); ++k) {
+            if (content[k] == '\r' && k + 1 < content.size() && content[k + 1] == '\n') continue;
+            normalised.push_back(content[k]);
+        }
+        ++checked;
+        std::string actual = sha256Hex(normalised);
+        if (actual != b.sha256) {
+            return "fact pack `" + b.pack + "` was scanned from `" + b.path + "` (sha256 " + b.sha256.substr(0, 16) + "...), but the file is now " +
+                   actual.substr(0, 16) + "...: the library changed after the pack was written, so its facts may no longer be true. "
+                   "Rescan it (tools/cling-scan/cling_scan.py) or get a pack for this version of the library.";
+        }
+    }
+    return "";
+}
+
 std::vector<const FactTable::Fact*> FactTable::usedFacts() const {
     std::vector<const Fact*> out;
     for (size_t i : used_) out.push_back(&facts_[i]);
@@ -229,12 +271,39 @@ const FactTable& builtinFacts() {
     return factsInForce();
 }
 
+namespace {
+bool g_strictHeaders = false;
+}
+
+void setStrictHeaders(bool strict) {
+    g_strictHeaders = strict;
+}
+
 std::string addProjectFacts(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return path + ": cannot open the fact pack";
     std::ostringstream text;
     text << in.rdbuf();
-    return factsInForce().addText(text.str(), path, true);
+    FactTable& table = factsInForce();
+    const size_t firstBinding = table.headerBindings().size();
+    std::string err = table.addText(text.str(), path, true);
+    if (!err.empty()) return err;
+    // The pack says which headers its facts were read from. Facts about a library that has since changed are not facts about this library:
+    // refuse the pack (never "use it anyway"). A header that cannot be found at the recorded place is only a warning (the directory layout
+    // may differ); the compiler says so rather than pretending it checked.
+    std::vector<std::string> missing;
+    size_t checked = 0;
+    err = table.verifyHeaders(firstBinding, missing, checked);
+    if (!err.empty()) return path + ": " + err;
+    if (!missing.empty() && g_strictHeaders) {
+        return path + ": --strict-headers: " + std::to_string(missing.size()) + " header(s) this pack was scanned from were not found at the recorded place (first: " +
+               missing[0] + "), so the pack cannot be checked against the library on disk";
+    }
+    if (!missing.empty()) {
+        std::fprintf(stderr, "cling: warning: %s: %zu of the %zu headers this pack was scanned from were not found at the recorded place (first: %s); their hashes were not checked\n",
+                     path.c_str(), missing.size(), missing.size() + checked, missing[0].c_str());
+    }
+    return "";
 }
 
 }  // namespace cling

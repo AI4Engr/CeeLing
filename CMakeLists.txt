@@ -51,6 +51,7 @@ set(CORE_SOURCES
     src/core/generator/ast_emitter.cpp
     src/core/generator/library_summary.cpp
     src/core/generator/fact_table.cpp
+    src/core/generator/sha256.cpp
     ${CMAKE_BINARY_DIR}/generated/builtin_facts_data.cpp
     src/core/generator/class_hierarchy.cpp
 )

@@ -181,6 +181,7 @@ void showUsage(const char* programName) {
     std::cout << "  --ptr-demands-out <file> - Write the pointer kinds this file needs from the classes it includes (separate compilation; see smart_pointer_analyzer.h)" << std::endl;
     std::cout << "  --ptr-demands <file>     - Read such demands written by other files (repeatable)" << std::endl;
     std::cout << "  --facts <file>     - Add a project fact pack (functions, classes, operators, borrowing and fresh methods of a C++ library; repeatable). It can add, never replace, what the compiler knows" << std::endl;
+    std::cout << "  --strict-headers   - Refuse a fact pack whose scanned headers cannot be found to check (a header that IS found must always match its recorded sha256)" << std::endl;
     std::cout << "  --report-facts     - After a successful compile, list every fact the program relied on and where it came from (the trusted-boundary report)" << std::endl;
     std::cout << "  -g, --debug-lines  - Mark every generated statement with its .clg line (#line), so g++ -g and gdb show and step through the .clg source" << std::endl;
     std::cout << "  --pool-shared      - Allocate shared objects from a per-thread free list (faster node-heavy code)" << std::endl;
@@ -234,6 +235,9 @@ int main(int argc, char* argv[]) {
     bool nullChecks = true;
     bool poolShared = false;
     bool debugLines = false;                          // -g: #line directives (see AstEmitter::setDebugLines)
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--strict-headers") cling::setStrictHeaders(true);   // before any --facts is read, whatever the order
+    }
     bool reportFacts = false;                         // --report-facts: print the facts the program relied on
     std::string demandsOutFile;                       // --ptr-demands-out: write what this file needs from the classes it includes
     std::vector<std::string> demandsInFiles;          // --ptr-demands: read what other files need (see SmartPointerAnalyzer::setDemands)
@@ -268,6 +272,8 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: --facts: " << err << std::endl;
                 return 2;
             }
+        } else if (arg == "--strict-headers") {
+            // consumed by the pre-scan below; nothing to do here
         } else if (arg == "--report-facts") {
             reportFacts = true;
         } else if (arg == "--legacy-cpp") {
