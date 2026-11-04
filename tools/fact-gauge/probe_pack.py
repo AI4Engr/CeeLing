@@ -21,6 +21,8 @@ For every method the pack gives a fact, two programs.
    * `fresh`, `borrow`: must run CLEAN. A sanitiser report = BEHAVIOUR CONTRADICTS FACT: the method really did something to the storage
      the view points into, whatever its signature says.
    * `mutator`: informational only (a mutator that does not invalidate is merely conservative).
+3. If the conf has `state = <expression>`, the object's observable state is printed before the first call and after each one; a `fresh` or `borrow` method must leave it unchanged (BEHAVIOUR CONTRADICTS FACT
+   otherwise). This is the check for a value rewritten IN PLACE, which a sanitiser cannot see. A second lazy view (`cxx_view2_decl`, `cxx_view2`, `cxx_touch2`: a pointer, an iterator) can be added.
 A method none of whose overloads can be called with synthesised arguments is UNREACHABLE (reported, not hidden).
 
 --pretend-fresh NAME rewrites the pack in memory so that a mutator NAME is declared `fresh`: the probe must then FAIL (the negative control:
@@ -150,21 +152,32 @@ def program(name, a):
 
 
 def cxx_program(name, variants):
-    """The same probe as plain C++ with a LAZY view (`auto`, or a reference): what CeeLing's rule is meant to protect against."""
+    """The same probe as plain C++ with LAZY views (`auto`, a reference, a pointer, an iterator): what CeeLing's rule is meant to protect against.
+    After the view(s) are made, and after every call, it prints the object's observable state (conf `state`) as `STATE:<value>` lines."""
+    def sub(x):
+        return x.replace('{obj}', 'obj').replace('{view}', 'view').replace('{view2}', 'view2')
+
     lines = ['#include <iostream>',
              '#include %s' % conf['include'],
              '',
              'int main() {',
              '    %s obj = %s;' % (T, conf['make'])]
     if conf.get('cxx_setup'):
-        lines.append('    ' + conf['cxx_setup'].replace('{obj}', 'obj'))
-    lines += ['    %s view = %s;' % (conf.get('cxx_view_decl', 'auto'), conf.get('cxx_view', conf['view']).replace('{obj}', 'obj')),
-              ] + sum([['    obj.%s(%s);' % (name, a),
-                        '    std::cout << %s << std::endl;' % conf.get('cxx_touch', conf['touch']).replace('{view}', 'view').replace('{obj}', 'obj')]
-                       for a in variants], []) + [
-              '    return 0;',
-              '}',
-              '']
+        lines.append('    ' + sub(conf['cxx_setup']))
+    lines.append('    %s view = %s;' % (conf.get('cxx_view_decl', 'auto'), sub(conf.get('cxx_view', conf.get('view', '')))))
+    if conf.get('cxx_view2'):
+        lines.append('    %s view2 = %s;' % (conf.get('cxx_view2_decl', 'auto'), sub(conf['cxx_view2'])))
+    state = sub(conf['state']) if conf.get('state') else None
+    if state:
+        lines.append('    std::cout << "STATE:" << (%s) << std::endl;' % state)
+    for a in variants:
+        lines.append('    obj.%s(%s);' % (name, a))
+        lines.append('    std::cout << %s << std::endl;' % sub(conf.get('cxx_touch', conf.get('touch', '0'))))
+        if conf.get('cxx_touch2'):
+            lines.append('    std::cout << %s << std::endl;' % sub(conf['cxx_touch2']))
+        if state:
+            lines.append('    std::cout << "STATE:" << (%s) << std::endl;' % state)
+    lines += ['    return 0;', '}', '']
     return chr(10).join(lines)
 
 
@@ -241,7 +254,7 @@ def sanitise(res):
     extra = conf.get('flags', '')
     objs = ' '.join(lib_objects)
     cmd = 'g++ -std=c++17 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined %s %s %s %s -o /tmp/probe_%s.out 2>&1 | grep -m3 -E "error" ; ' \
-          'ASAN_OPTIONS=detect_leaks=0 /tmp/probe_%s.out 2>&1 | head -12; echo "exit=${PIPESTATUS[0]}"' % (incs, extra, ws, objs, name, name)
+          'ASAN_OPTIONS=detect_leaks=0 /tmp/probe_%s.out 2>&1 | head -60; echo "exit=${PIPESTATUS[0]}"' % (incs, extra, ws, objs, name, name)
     r = subprocess.run(['wsl', '-d', args.wsl, '--', 'bash', '-c', cmd], capture_output=True, text=True, errors='replace')
     out = r.stdout
     exit_code = re.search(r'exit=(\d+)', out)
@@ -256,6 +269,12 @@ def sanitise(res):
     if exit_code and exit_code.group(1) != '0':
         # a library assertion (a bad index among the synthesised arguments) is not evidence either way
         return (name, v, 'NOT EVIDENCE', 'the probe aborted: exit %s %s' % (exit_code.group(1), out.strip().replace(chr(10), ' ')[:100]), cpp)
+    states = [ln[len('STATE:'):] for ln in out.split(chr(10)) if ln.startswith('STATE:')]
+    if len(set(states)) > 1:
+        change = 'observable state changed: %s -> %s' % (states[0][:40], next(x for x in states if x != states[0])[:40])
+        if v == 'mutator':
+            return (name, v, 'OK (really changes it)' if verdict_ == 'COMPILER OK' else verdict_, change, cpp)
+        return (name, v, 'BEHAVIOUR CONTRADICTS FACT', change, cpp)
     return (name, v, 'OK (sanitiser clean)' if verdict_ == 'COMPILER OK' else verdict_, detail, cpp)
 
 

@@ -44,8 +44,17 @@ python -I tools/fact-gauge/probe_pack.py --cling build/cling.exe --pack vx.clfac
   assigning a shorter string reuses the old buffer, so nothing was freed. Same lesson as the lazy view: a probe that cannot fail is not a probe.
 * **What the probe found about the scanner itself:** the first jsoncpp run failed to compile `obj.index()`: `Json::Value` had no such method. The scanner had read PAST the end of the class into the next node of clang's filtered
   dump (`Json::Value::CZString`, whose name also contains `Value`) and attributed its methods to `Json::Value`. The pack committed one step earlier contained those bogus facts. Fixed, with a regression test.
-* Limits: one object, one view, one call per argument set, arguments chosen by a script; a clean run is evidence, not proof. It sees STORAGE going away or moving, not a value changing under the view (declaring `fill` fresh passes: `fill`
+* Limits: one object, one or two views, one call per argument set, arguments chosen by a script; a clean run is evidence, not proof. It sees STORAGE going away or moving, not a value changing under the view (declaring `fill` fresh passes: `fill`
   rewrites values in place). A method that cannot be called with synthesised arguments is `UNREACHABLE`; a library assertion fired by the synthesised arguments is `NOT EVIDENCE`, never a pass.
+
+### Added 2026-11-03: values rewritten in place, and a second view kind
+
+* **State snapshot (`state =` in the conf).** The probe prints the object's observable state before the first call and after each call; a `fresh` or `borrow` method must leave it unchanged, otherwise `BEHAVIOUR CONTRADICTS FACT: ... observable state
+  changed: 8 -> 20`. This is the check AddressSanitizer cannot do: a method that rewrites values in place frees nothing. The Eigen control: `--pretend-fresh fill` (previously invisible, and listed here as a limit) is now caught. Eigen: `state = obj.sum()`;
+  jsoncpp: `toStyledString()`; yaml-cpp: `YAML::Dump(obj)`.
+* **Second view (`cxx_view2_decl/cxx_view2/cxx_touch2`).** A raw pointer into the vector's storage (Eigen `data()`), an iterator into the tree (jsoncpp `begin()`), an iterator into the node (yaml-cpp). Both views are read after every call.
+* **Recipe limits that stay.** One object per library: jsoncpp's recipe builds an object value, so array-only methods (`resize`, `append`) do nothing there, and the probe reports them as clean, which means "not exercised", not "verified". A conf with a
+  second recipe (an array) would fix that; it has not been written. ThreadSanitizer is deliberately NOT used: no thread-safety claim is made anywhere, and a green race detector must not be read as one.
 
 ## What this does not show (read before quoting)
 

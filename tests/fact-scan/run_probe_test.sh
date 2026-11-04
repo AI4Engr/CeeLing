@@ -34,6 +34,12 @@ if [ $code -ne 0 ] && echo "$out" | grep -q "BEHAVIOUR CONTRADICTS FACT: Eigen::
     ok "negative control: a wrong fact (resize declared fresh) is caught by AddressSanitizer"
 else bad "negative control did not fail as it must (exit $code): $out"; fi
 
+# negative control for what a sanitiser cannot see: `fill` rewrites values IN PLACE (no storage is freed or moved), so only the state snapshot can catch it
+out="$(probe --pretend-fresh fill)"; code=$?
+if [ $code -ne 0 ] && echo "$out" | grep -q "BEHAVIOUR CONTRADICTS FACT: Eigen::VectorXd::fill (fresh) -- observable state changed"; then
+    ok "negative control: fill declared fresh is caught by the state snapshot (a value rewritten in place; AddressSanitizer sees nothing)"
+else bad "state negative control did not fail as it must (exit $code): $out"; fi
+
 # --- a second library of a different shape: jsoncpp's Json::Value (a tree with deep copies, not a flat numeric array) ---------------------------------
 JSONCPP_DIR="${JSONCPP_DIR:-/c/project/jsoncpp-master/jsoncpp-master}"
 if [ -f "$JSONCPP_DIR/include/json/json.h" ]; then
