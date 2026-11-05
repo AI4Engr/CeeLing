@@ -380,8 +380,8 @@ int main() {
 ```
 
 Everything else is the "unknown call" error above. That is the default-reject rule of [chapter 8](08-sealed-escape-hatches.md): it closes the door through which a dangling reference could otherwise slip past the checker
-unseen. The table lives in `src/core/generator/library_summary.cpp`; adding to it means changing the compiler, which is why `ext_fn` exists for your own functions. (A few names from an earlier graphics experiment,
-`gfx_init` and its relatives, are still in that table.)
+unseen. The facts live in `facts/*.clfacts`, shipped inside the compiler, and a project adds its own with `--facts` (above); `ext_fn` is the way to declare one of your own functions inside the program. (A few names from an earlier graphics
+experiment, `gfx_init` and its relatives, used to be built in; imgui-cling now keeps them in its own `shim/gfx_shim.clfacts`.)
 
 **Eigen** is the one third-party library with facts in the table: `Eigen::MatrixXd`, the factory `Identity`, `operator*`, and the view-returning methods `block`, `row`, `col`, `transpose`, `segment`, `head`, `tail`,
 `diagonal`, which are treated as borrowing their receiver. That is [chapter 6](06-dangling-references.md) (a `block` that dangles is rejected; an unlisted method such as `topRows` is refused). The machine this guide

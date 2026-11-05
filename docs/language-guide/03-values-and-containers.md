@@ -501,7 +501,7 @@ prose.
 | `cling::readFileToString`, `cling::fileExists`, `cling::readFileToBytes` | files (below) |
 | `cling::spawn` and the worker-pool functions | produced by `spawn` ([chapter 10](10-threads.md)) |
 
-(The table also holds a handful of names for a graphics-demo shim and one Eigen entry, `Eigen::MatrixXd::Identity`; those belong to [chapter 11](11-talking-to-cpp.md).) The methods of `std::vector` and `string` are **not on a list**. The compiler holds what a scan of the library's own declarations found for every method
+(The table also holds one Eigen entry, `Eigen::MatrixXd::Identity`; those belong to [chapter 11](11-talking-to-cpp.md).) The methods of `std::vector` and `string` are **not on a list**. The compiler holds what a scan of the library's own declarations found for every method
 (`facts/std-vector.clfacts`, `facts/std-string.clfacts`, generated, from the MSVC STL and libstdc++), and a rule admits a method when everything it hands back is something the checker can follow: nothing
 (`void`), a number or `bool`, a fresh `string`, or the receiver itself (`append` returns `*this`). Today that admits, for `std::vector`, `assign capacity clear empty max_size pop_back push_back reserve resize shrink_to_fit size`
 (and CeeLing's own `copyWithin`), and for `string`, `append assign capacity clear compare empty find find_first_not_of find_first_of find_last_not_of find_last_of length max_size pop_back push_back reserve resize rfind

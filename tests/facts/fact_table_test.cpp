@@ -129,7 +129,7 @@ int main() {
 
     {   // the shipped packs: they loaded (otherwise builtinFacts() would have aborted)
         const FactTable& b = cling::builtinFacts();
-        check(b.packs().size() == 7, "seven shipped packs, got " + std::to_string(b.packs().size()));
+        check(b.packs().size() == 6, "six shipped packs, got " + std::to_string(b.packs().size()));
         for (const auto& f : b.facts()) {
             bool scanned = f.kind == "vector.sig" || f.kind == "string.sig" || f.kind == "string_view.sig" || f.kind == "map.sig";
             check(scanned ? (f.source == "inferred" && f.review == "unreviewed") : (f.source == "declared" && f.review == "hand"),

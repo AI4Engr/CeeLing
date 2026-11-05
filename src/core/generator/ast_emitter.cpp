@@ -1274,8 +1274,8 @@ void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
         // ext_fn emits ONLY a forward declaration -- never a body. The real
         // implementation is hand-written C++ the user links in separately
         // (reached via an ordinary #include, exactly like imgui-cling's
-        // gfx_shim.h pattern -- see library_summary.cpp's
-        // isKnownQualifiedFreeFunction doc comment). CeeLing emits the trust
+        // gfx_shim.h pattern, whose `function` facts that project now keeps in
+        // its own shim/gfx_shim.clfacts and passes with `cling --facts`). CeeLing emits the trust
         // boundary, never fabricates a body for it.
         varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
         currentExternRefParams_ = extFn->refParams;
