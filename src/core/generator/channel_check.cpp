@@ -92,4 +92,12 @@ bool programUsesChannel(const Program& program) {
     return found;
 }
 
+bool programUsesSpan(const Program& program) {
+    bool found = false;
+    forEachType(const_cast<Program&>(program), [&](const std::string& type, const ASTNode&, bool, bool) {
+        if (type.find("span<") != std::string::npos) found = true;
+    });
+    return found;
+}
+
 }  // namespace cling

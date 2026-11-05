@@ -1,0 +1,13 @@
+//@ expect: accept
+//@ run-fail: span::subspan out of range
+//@ reason: narrowing a span past its end is caught at run time with the offset, count and size, and the program aborts.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    std::span<int> s = v;
+    std::span<int> t = s.subspan(1, 5);
+    std::cout << t.size() << std::endl;
+    return 0;
+}

@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ error: use of dangling observer `s`
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::span<int> s = v;
+    v.push_back(2);                       // may reallocate: the span of v is dead
+    std::cout << s.size() << std::endl;
+    return 0;
+}

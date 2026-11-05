@@ -314,6 +314,9 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         if (isOptionalType(declaredType)) {
             return isKnownOptionalMethod(member->member);
         }
+        if (isSpanType(declaredType)) {
+            return isKnownSpanMethod(member->member);
+        }
         if (isMapType(declaredType)) {
             return isKnownMapMethod(member->member);
         }
@@ -552,6 +555,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                 else if (isStringType(recvType)) why = stringMethodRefusal(calleeMember->member);
                 else if (isStringViewType(recvType)) why = stringViewMethodRefusal(calleeMember->member);
                 else if (isOptionalType(recvType)) why = optionalMethodRefusal(calleeMember->member);
+                else if (isSpanType(recvType)) why = spanMethodRefusal(calleeMember->member);
                 else if (isMapType(recvType)) why = mapMethodRefusal(calleeMember->member);
                 if (!why.empty()) {
                     e.message = "`" + calleeMember->member + "` is not available on `" + recvType + "`: " + why;
@@ -825,6 +829,31 @@ void EscapeHatchChecker::requireKnownType(const std::string& type, const std::st
         errors_.push_back(e);
         return;
     }
+    if (isSpanType(trimType(type))) {
+        const std::string elem = spanElementType(trimType(type));
+        if (!isSpanElementAllowed(elem)) {
+            if (!reportedUnknownTypes_.insert(trimType(type) + "@" + std::to_string(line)).second) return;
+            EscapeHatchError e;
+            e.line = line;
+            e.column = column;
+            e.message = "`" + trimType(type) + "` is not supported for " + what;
+            e.help = "A span views a vector of numbers, bool, char, byte or int64. A view of strings or objects would hand out a reference to an "
+                     "owner; copy what you need into a vector of numbers, or pass the vector itself.";
+            errors_.push_back(e);
+            return;
+        }
+        if (allowView) return;
+        if (!reportedUnknownTypes_.insert(trimType(type) + "@" + std::to_string(line)).second) return;
+        EscapeHatchError e;
+        e.line = line;
+        e.column = column;
+        e.message = "`span` cannot be used for " + what;
+        e.help = "A `span` does not own its elements, and the checker follows one only as a local variable or a parameter, back to the vector it "
+                 "was made from. As a field, a return value or a container element it could outlive that vector where nothing follows it. Use a "
+                 "`std::vector` (an owner) here.";
+        errors_.push_back(e);
+        return;
+    }
     if (typeIsKnown(type)) return;
     if (isOptionalType(trimType(type))) {
         if (!reportedUnknownTypes_.insert(trimType(type) + "@" + std::to_string(line)).second) return;
@@ -855,12 +884,13 @@ void EscapeHatchChecker::requireKnownType(const std::string& type, const std::st
 void EscapeHatchChecker::checkStatement(const Statement* stmt) {
     if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
         requireKnownType(decl->type, "variable `" + decl->identifier + "`", stmt->loc.line, stmt->loc.column, /*allowView=*/true);
-        if (decl->isObserver && isStringViewType(trimType(decl->type))) {
+        if (decl->isObserver && isViewType(trimType(decl->type))) {
+            const std::string kind = isSpanType(trimType(decl->type)) ? "span" : "string_view";
             EscapeHatchError e;
             e.line = stmt->loc.line;
             e.column = stmt->loc.column;
-            e.message = "`ref string_view` is not allowed";
-            e.help = "A `string_view` is already a non-owning view; declare it without `ref`: `string_view " + decl->identifier + " = ...;`.";
+            e.message = "`ref " + kind + "` is not allowed";
+            e.help = "A `" + kind + "` is already a non-owning view; declare it without `ref`: `" + trimType(decl->type) + " " + decl->identifier + " = ...;`.";
             errors_.push_back(e);
         }
         rejectThisEscapeInConstructor(decl->expression.get(), stmt);

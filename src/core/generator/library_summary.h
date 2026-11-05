@@ -111,6 +111,19 @@ bool isKnownStringViewMethod(const std::string& methodName);
 std::string stringViewMethodRefusal(const std::string& methodName);
 bool stringViewMethodReturnsView(const std::string& methodName);
 
+// `span<T>` / `std::span<T>` (facts/cling-span.clfacts, hand-written): CeeLing's OWN non-owning view of a vector's elements, lowered to
+// cling::span (spanHelperDefinition). std::span itself is C++20 and the generated code is C++17, so there is nothing to scan. T is a number, bool,
+// char, byte or int64. Like a string_view it is an observer of the vector it was made from, and only a local or a parameter may have this type.
+bool isSpanType(const std::string& type);
+std::string spanElementType(const std::string& type);
+bool isSpanElementAllowed(const std::string& elem);
+bool isKnownSpanMethod(const std::string& methodName);
+std::string spanMethodRefusal(const std::string& methodName);
+bool spanMethodReturnsView(const std::string& methodName);
+std::string spanHelperDefinition();
+// A view of either kind (string_view or span): only a local variable or a parameter may have such a type.
+bool isViewType(const std::string& type);
+
 // `std::optional<T>` (facts/std-optional.clfacts, scanned with T = int and T = std::string as witnesses): a value that may be absent. T is
 // restricted to a primitive or a string, so an optional is a plain value (copied, never an observer target). `value()` on an empty optional
 // throws std::bad_optional_access (uncaught: the program terminates, no undefined behaviour); `*o` and `o->` (undefined behaviour when empty) are refused.

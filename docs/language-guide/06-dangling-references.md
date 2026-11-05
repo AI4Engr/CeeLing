@@ -1642,6 +1642,59 @@ error[semantic/use-after-move]: use of dangling observer `v` (its owner `s` is g
   help: `v` observes `s`, which no longer has a live owner
 ```
 
+**`span`.** `std::span<T>` (T a number, `bool`, `char`, `byte` or `int64`) is CeeLing's own type, not the standard one: `std::span` is C++20 and the generated code is built as C++17, so the compiler provides `cling::span` and `std::span<int>` is the
+spelling that lowers to it. It is a view of a vector's elements and is followed exactly like a `string_view`: the vector's reassignment, a method that may reallocate it (`push_back`, `resize`, `clear`, ...), its being moved away and the end of its scope kill the
+span. It can be made from a vector local or parameter, from another span, or from `subspan`, `first` or `last` of a span; it may only be a local variable or a parameter. A vector passed to a `span` parameter is viewed, not moved. Every way to narrow a
+span is range-checked at run time, and so is `s[i]` (`cling::at`, like a vector's subscript); `data()` and iterators do not exist on it. The facts are `facts/cling-span.clfacts`, written by hand because there is nothing to scan.
+
+<!-- example: 06_span_ok.clg -->
+```cpp
+int sum(std::span<int> s) {
+    int total = 0;
+    int i = 0;
+    while (i < s.size()) {
+        total = total + s[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    v.push_back(4);
+    std::span<int> all = v;               // a view of the vector v
+    std::span<int> mid = all.subspan(1, 2);
+    mid[0] = 20;                          // writes the vector's element
+    std::cout << all.size() << " " << mid.size() << " " << sum(v) << " " << sum(mid) << std::endl;
+    return 0;
+}
+```
+<!-- output: 06_span_ok.clg -->
+```
+4 2 28 23
+```
+
+<!-- example: 06_span_dies.clg -->
+```cpp
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::span<int> s = v;
+    v.push_back(2);                       // may reallocate: the span of v is dead
+    std::cout << s.size() << std::endl;
+    return 0;
+}
+```
+<!-- error: 06_span_dies.clg -->
+```
+error[semantic/use-after-move]: use of dangling observer `s` (its owner `v` is gone)
+  --> 06_span_dies.clg:6:18
+  help: `s` observes `v`, which no longer has a live owner
+```
+
 The trap above, a view of a temporary, is refused because a view cannot be made from the result of a call, nor from a concatenation, nor from a field (a field has no owner the checker follows):
 
 <!-- example: 06_gap_string_view.clg -->
@@ -1663,8 +1716,8 @@ error[semantic/use-after-move]: cannot tell what the `string_view` `sv` would re
   help: A call that returns a `string` returns a temporary, and a view of a temporary dangles at the end of the statement. Store the result in a `string` variable and make the view from that.
 ```
 
-What is still not there: converting a view back into a `string` (`std::string(v)` is not a CeeLing expression yet), `std::span`, and a view of a vector. `std::span`, `auto` and any made-up name are **unknown types, and a type name the
-compiler has no shape for is an error.** The checks follow the types CeeLing knows (its classes, structs and enums, the primitives, `string`, `string_view`, vectors, maps, `Channel`, and the classes a loaded fact pack declares); a value of any
+What is still not there: converting a view back into a `string` (`std::string(v)` is not a CeeLing expression yet) and views in fields. `auto` and any made-up name are **unknown types, and a type name the
+compiler has no shape for is an error.** The checks follow the types CeeLing knows (its classes, structs and enums, the primitives, `string`, `string_view`, `std::span`, vectors, maps, `Channel`, and the classes a loaded fact pack declares); a value of any
 other type would be invisible to them, so it cannot be declared. For a C++ library type, declare it in a fact pack and pass the pack with `--facts` ([chapter 11](11-talking-to-cpp.md)).
 
 ### Eigen
@@ -1760,7 +1813,7 @@ Now the limits, which are larger than the feature:
   need only the CeeLing compiler. The accepted counterparts live in a separate spike folder and were run by hand.
 
 What works in a sentence: if you write `Eigen::MatrixXd` as the type of a variable and call one of the eight methods, you get a dependence on the receiver, with all the death events. What
-does not: lazy expressions, any other view type, `string_view` and `span`.
+does not: lazy expressions and any other view type (`string_view` and `std::span` are followed, above).
 
 ## What this does not cover
 
@@ -1769,7 +1822,7 @@ compiled" is not read as more than it means.
 
 * **Iterators.** A range-`for` over a container that its own body changes is not tracked. An iterator held in a variable is refused where it comes from a `vector` or `string` method (`begin()`, `end()`, `insert`, `erase`); one
   that comes from anything else the compiler does not know is refused as an unknown call.
-* **Views.** `string_view`, `span` and similar types, and Eigen's lazy expressions held through `auto`, are not tracked, and cannot be declared: an unknown type name is an error.
+* **Views.** `string_view` and `std::span` are followed (as locals and parameters only); other view types, and Eigen's lazy expressions held through `auto`, are not tracked, and cannot be declared: an unknown type name is an error.
 * **Unknown type names are errors (since 2026-11-02; they used to pass through).** A declaration whose type name is not one of CeeLing's, and not declared by a loaded fact pack, is refused.
   The remaining blind spots are the ones a known type can hide.
 * **Other Eigen calls.** Eight view methods on one type; everything else is refused or untracked.

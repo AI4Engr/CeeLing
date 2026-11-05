@@ -776,6 +776,7 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
                 }
             }
             if (calleeParams != nullptr && i < calleeParams->size()) {
+                if (isSpanType((*calleeParams)[i].first)) continue;     // viewed for the call, not given away
                 const std::string& pname = (*calleeParams)[i].second;
                 const bool isReadOnlyContainer = receiverType.empty()
                     ? analyzer_->isReadOnlyContainerParam(call->function_name, pname)
@@ -1150,6 +1151,66 @@ void DanglingChecker::bindStringView(const std::string& name, const Expression* 
     danglingObservers_.erase(name);
 }
 
+void DanglingChecker::bindSpan(const std::string& name, const Expression* init, const Statement* at) {
+    auto fail = [&](const std::string& what, const std::string& help) {
+        DanglingError e;
+        e.line = at->loc.line;
+        e.column = at->loc.column;
+        e.message = "cannot tell what the `span` `" + name + "` would refer to: " + what;
+        e.help = help;
+        errors_.push_back(e);
+    };
+    const std::string myElem = localType_.count(name) ? spanElementType(localType_.at(name)) : std::string{};
+    std::string owner;
+    if (init == nullptr) {
+        fail("it has no initializer", "Initialize the span from a vector variable of this function.");
+        return;
+    }
+    auto memberCall = [](const Expression* e) -> const MemberAccess* {
+        auto c = dynamic_cast<const FunctionCall*>(e);
+        return c != nullptr && c->callee != nullptr ? dynamic_cast<const MemberAccess*>(c->callee.get()) : nullptr;
+    };
+    if (auto id = dynamic_cast<const Identifier*>(init)) {
+        auto typeIt = localType_.find(id->name);
+        if (typeIt != localType_.end() && isVectorType(typeIt->second) && objectLocals_.count(id->name) > 0) {
+            if (vectorElementType(typeIt->second) != myElem) {
+                fail("`" + id->name + "` is a `" + typeIt->second + "`, not a vector of `" + myElem + "`",
+                     "A span views the elements of a vector of the same element type.");
+                return;
+            }
+            owner = id->name;
+        } else if (typeIt != localType_.end() && isSpanType(typeIt->second)) {
+            auto o = observerOf_.find(id->name);          // a copy of a span follows the same vector
+            if (o != observerOf_.end()) owner = o->second;
+        } else {
+            fail("`" + id->name + "` is not a vector local or parameter",
+                 "A span can be made from a vector variable of this function, or from another span. A field has no owner the checker follows, so the "
+                 "field could be reassigned or grow while the span lives: copy it into a local vector first.");
+            return;
+        }
+    } else if (const MemberAccess* mc = memberCall(init);
+               mc != nullptr && dynamic_cast<const Identifier*>(mc->object.get()) != nullptr &&
+               localType_.count(static_cast<const Identifier*>(mc->object.get())->name) > 0 &&
+               isSpanType(localType_.at(static_cast<const Identifier*>(mc->object.get())->name)) && spanMethodReturnsView(mc->member)) {
+        // `s.subspan(a, n)` / `s.first(n)` / `s.last(n)` on a span: another view of the SAME vector
+        auto o = observerOf_.find(static_cast<const Identifier*>(mc->object.get())->name);
+        if (o != observerOf_.end()) owner = o->second;
+    } else if (dynamic_cast<const FunctionCall*>(init) != nullptr) {
+        fail("it would be made from the result of a call",
+             "A call that returns a vector returns a temporary, and a span of a temporary dangles at the end of the statement. Store the result in a "
+             "vector variable and make the span from that.");
+        return;
+    } else {
+        fail("the expression is not a vector variable",
+             "A span can be made from a vector variable of this function, or from another span.");
+        return;
+    }
+    if (owner.empty()) observerOf_.erase(name);
+    else observerOf_[name] = owner;
+    observerNames_.insert(name);
+    danglingObservers_.erase(name);
+}
+
 void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
                                  const std::vector<std::pair<std::string, std::string>>& params,
                                  const std::string& ownerClass, const std::string& scope) {
@@ -1180,8 +1241,8 @@ void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
             // tracked, but its type must be recorded for ThrowStatement's check.
             localType_[name] = type;
             if (isStringType(type)) stringOwners_.insert(name);
-        } else if (isStringViewType(type)) {
-            localType_[name] = type;     // a view parameter: the caller's string outlives the call, so it has no owner here
+        } else if (isViewType(type)) {
+            localType_[name] = type;     // a view parameter: the caller's string / vector outlives the call, so it has no owner here
         }
     }
 
@@ -1379,7 +1440,7 @@ void DanglingChecker::mergeBranchStates(const BranchState& before, const BranchS
         // A string_view that is bound to a string on one path and to nothing with an owner (a literal, a view parameter: storage that outlives the
         // function) on the other is dangling after the merge exactly when that one string dies. The two paths do not conflict.
         auto lt = localType_.find(name);
-        const bool isView = lt != localType_.end() && isStringViewType(lt->second);
+        const bool isView = lt != localType_.end() && isViewType(lt->second);
         if (isView && thenOwner != elseOwner && (thenOwner.empty() || elseOwner.empty())) {
             observerOf_[name] = !thenOwner.empty() ? thenOwner : elseOwner;
         } else if (thenOwner == elseOwner) {
@@ -1411,6 +1472,11 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         if (isStringViewType(decl->type)) {
             localType_[decl->identifier] = decl->type;
             bindStringView(decl->identifier, decl->expression.get(), decl);
+            return;
+        }
+        if (isSpanType(decl->type)) {
+            localType_[decl->identifier] = decl->type;
+            bindSpan(decl->identifier, decl->expression.get(), decl);
             return;
         }
         if (isStringType(decl->type) && !decl->isObserver) {
@@ -1550,6 +1616,10 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             auto vt = localType_.find(assign->variable);
             if (vt != localType_.end() && isStringViewType(vt->second)) {
                 bindStringView(assign->variable, assign->expression.get(), assign);    // a view rebinds, like an observer
+                return;
+            }
+            if (vt != localType_.end() && isSpanType(vt->second)) {
+                bindSpan(assign->variable, assign->expression.get(), assign);          // so does a span
                 return;
             }
             if (vt != localType_.end() && isStringType(vt->second) && stringOwners_.count(assign->variable) > 0) {

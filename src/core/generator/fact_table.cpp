@@ -41,6 +41,7 @@ const std::map<std::string, KindSpec>& kindSpecs() {
         {"map.sig", sig},
         {"string_view.sig", sig},
         {"optional.sig", sig},
+        {"span.sig", sig},
         {"vector.note", {{"shares-arg0"}, {}}},   // a declared fact no signature can give (the argument is linked, not consumed)
         {"vector.own", {{}, {}}},                // a method CeeLing itself defines (no std counterpart)
         {"function", {{}, {}}},

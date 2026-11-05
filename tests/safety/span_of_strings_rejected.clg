@@ -1,0 +1,11 @@
+//@ expect: reject
+//@ error: `std::span<string>` is not supported
+//@ reason: a span views numbers; a view of strings or objects would hand out a reference to an owner.
+
+int main() {
+    std::vector<string> v;
+    v.push_back("a");
+    std::span<string> s = v;
+    std::cout << s.size() << std::endl;
+    return 0;
+}

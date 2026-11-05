@@ -28,6 +28,7 @@ function std::stoi source=declared review=hand
 | kind | subject | flags | meaning |
 |---|---|---|---|
 | `vector.sig`, `string.sig`, `string_view.sig`, `optional.sig`, `map.sig` | `name/const\|nonconst/<parameter kinds joined by +>` (`-` for none) | attributes `result`, `mutates`, `partial`, `impls` | what a scan found for one SIGNATURE (below); written by `gen_pack.py`, `source=inferred review=unreviewed` |
+| `span.sig` | `name/const\|nonconst/<parameter kinds joined by +>` | attributes as above | the same shape for CeeLing's own `std::span<T>` (`cling::span`, a runtime type of the compiler): written by hand (`source=declared review=hand`), because there is nothing to scan; `result=view` is another span of the same vector, `element-reference` an element |
 | `vector.note` | method name | `shares-arg0` | a declared fact no signature can give: the first argument is linked into the container, not consumed |
 | `vector.own` | method name | none | a method CeeLing itself defines (`copyWithin`); admitted without a scan fact |
 | `function` | called name | none | a free function the program may call; matched on the bare name, with or without a namespace qualifier |

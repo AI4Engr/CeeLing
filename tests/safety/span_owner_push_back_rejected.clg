@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: use of dangling observer `s`
+//@ reason: push_back may reallocate the vector's buffer, so a span of it dies (the same invalidation table a `ref` observer uses).
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::span<int> s = v;
+    v.push_back(2);
+    std::cout << s.size() << std::endl;
+    return 0;
+}

@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: `ref span` is not allowed
+//@ reason: a span is already a non-owning view; observing it adds nothing.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::span<int> s = v;
+    ref std::span<int> t = s;
+    std::cout << t.size() << std::endl;
+    return 0;
+}

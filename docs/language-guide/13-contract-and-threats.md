@@ -134,7 +134,7 @@ The 19 threats CeeLing was designed against, each with what happens today. "Stat
 | 2 | Return a reference to a local | **By construction.** There is no reference return type, so a return is always owning; returning a `ref` observer is rejected. | [6](06-dangling-references.md) |
 | 3 | A reference stored in a longer-lived field | **By construction.** The grammar has no `ref` field, and `ref` parameters are rejected, so an observer has no place to be stored. | [6](06-dangling-references.md), [8](08-sealed-escape-hatches.md) |
 | 4 | Iterator invalidation | **Partly.** A `ref` into a vector element dies at every method that changes the vector (`push_back`, `resize`, `pop_back`, `reserve`, `clear`, `assign`, ...). An iterator cannot be held: `v.begin()` and the other iterator-returning methods are refused. Mutation inside a range-for body is **open**, see below. | [6](06-dangling-references.md) |
-| 5 | `string_view` / `span` of a temporary | **Tracked for `string_view`** (since 2026-11-03): a view is an observer of its string and dies with it; a view of a temporary, a field or a call result is refused; a view cannot be a field, a return value or a container element. `std::span` is an unknown type and refused. | [6](06-dangling-references.md), below |
+| 5 | `string_view` / `span` of a temporary | **Tracked** for `string_view` (since 2026-11-03) and for `std::span<T>` (since 2026-11-04, CeeLing's own runtime type, T a number): a view is an observer of its string or vector and dies with it; a view of a temporary, a field or a call result is refused; a view cannot be a field, a return value or a container element. | [6](06-dangling-references.md), below |
 | 6 | Expression-template dangle (Eigen `auto e = A + B`) | **Cannot be written with `auto`.** `auto` is refused ("has no known type", since 2026-11-02); before that it was accepted and not tracked. A short hand-written list of Eigen view methods (`block`, `row`, `col`, `transpose`, `segment`, `head`, `tail`, `diagonal`) is tracked; its fixtures live outside `tests/safety`, in a separate Eigen spike. | below |
 | 7 | A lambda captures `[&]` and escapes | **By construction.** Closures capture by value only; there is no `&` to write. | [9](09-closures.md) |
 | 8 | A temporary bound to a `const&` | **Listed open; the C++ shape cannot be written.** There is no `const T& x = f();` local (it is a syntax error), and a `ref` bound to a call result is rejected. Views returned from library calls fall under row 5. | [6](06-dangling-references.md) |
@@ -245,7 +245,7 @@ int main() {
 
 A `push_back` inside the body of a range-for over the same vector is accepted too. The run-time bounds check does not help: `*it` is not a subscript.
 
-**Views (row 5).** `std::string_view` is followed since 2026-11-03 (chapter 6); between 2026-11-02 and then it was refused as an unknown type, and before 2026-11-02 it was accepted and nothing recorded that it pointed into a string.
+**Views (row 5).** `std::span<int>` is followed since 2026-11-04 as an observer of the vector, with the vector's mutators as death events (chapter 6). `std::string_view` is followed since 2026-11-03 (chapter 6); between 2026-11-02 and then it was refused as an unknown type, and before 2026-11-02 it was accepted and nothing recorded that it pointed into a string.
 
 <!-- example: 13_gap_string_view.clg -->
 ```cpp

@@ -260,6 +260,20 @@ def seed_string_view(name, call_args):
 ''' % (name, call_args)
 
 
+def seed_span(cls, name, call_args):
+    typ, init = CLASSES[cls]
+    return '''int main() {
+    %s v;
+    %s
+    %s w;
+    std::span<int> r = v;
+    v.%s(%s);
+    std::cout << r.size() << std::endl;
+    return 0;
+}
+''' % (typ, init, typ, name, call_args)
+
+
 def work(item):
     cls, name = item
     mutates = all_facts[cls][name]
@@ -273,7 +287,10 @@ def work(item):
     if call_args is None:
         return [(cls, name, 'both', mutates, 'UNREACHABLE', 'every callable overload needs an argument CeeLing cannot write')]
     out = []
-    for ctx, builder in (('whole-container observer', seed_whole), ('element observer', seed_element)):
+    contexts = [('whole-container observer', seed_whole), ('element observer', seed_element)]
+    if cls == 'vector':
+        contexts.append(('span observer', seed_span))      # CeeLing's own std::span<int> (cling::span): a vector mutator must kill it too
+    for ctx, builder in contexts:
         src = builder(cls, name, call_args)
         if src is None:
             continue

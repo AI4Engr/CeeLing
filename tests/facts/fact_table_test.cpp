@@ -129,7 +129,7 @@ int main() {
 
     {   // the shipped packs: they loaded (otherwise builtinFacts() would have aborted)
         const FactTable& b = cling::builtinFacts();
-        check(b.packs().size() == 7, "seven shipped packs, got " + std::to_string(b.packs().size()));
+        check(b.packs().size() == 8, "eight shipped packs, got " + std::to_string(b.packs().size()));
         for (const auto& f : b.facts()) {
             bool scanned = f.kind == "vector.sig" || f.kind == "string.sig" || f.kind == "string_view.sig" || f.kind == "optional.sig" || f.kind == "map.sig";
             check(scanned ? (f.source == "inferred" && f.review == "unreviewed") : (f.source == "declared" && f.review == "hand"),
@@ -162,6 +162,20 @@ int main() {
         }
         check(cling::isOptionalType("std::optional<int>") && cling::isOptionalType("optional<string>") && !cling::isOptionalType("std::vector<int>"), "optional type names");
         check(cling::optionalElementType("std::optional<string>") == "string" && cling::isOptionalElementAllowed("string") && !cling::isOptionalElementAllowed("Node"), "optional element type");
+        // std::span<T> (CeeLing's own runtime type, facts written by hand): size/empty/subspan/first/last/front/back are admitted; data and iterators do not exist
+        for (const char* ok : {"size", "empty", "subspan", "first", "last", "front", "back"}) {
+            check(cling::isKnownSpanMethod(ok), std::string("span method admitted: ") + ok);
+        }
+        for (const char* no : {"data", "begin", "end", "swap", "frobnicate"}) {
+            check(!cling::isKnownSpanMethod(no), std::string("span method refused: ") + no);
+        }
+        check(cling::spanMethodReturnsView("subspan") && cling::spanMethodReturnsView("first") && !cling::spanMethodReturnsView("size") &&
+                  !cling::spanMethodReturnsView("front"), "subspan/first/last return a view, size/front do not");
+        check(cling::isSpanType("std::span<int>") && cling::isSpanType("span<byte>") && !cling::isSpanType("std::vector<int>") && cling::isViewType("std::span<int>") &&
+                  cling::isViewType("string_view") && !cling::isViewType("string"), "span type names");
+        check(cling::spanElementType("std::span<int64>") == "int64" && cling::isSpanElementAllowed("int") && cling::isSpanElementAllowed("byte") &&
+                  !cling::isSpanElementAllowed("string") && !cling::isSpanElementAllowed("Node"), "span element type");
+        check(cling::spanHelperDefinition().find("class span") != std::string::npos, "the runtime type is provided");
         // std::string_view: readers are admitted, substr (a view of the same string) is admitted and known to return a view, data() is sealed
         for (const char* ok : {"size", "length", "empty", "find", "rfind", "compare", "substr", "remove_prefix"}) {
             check(cling::isKnownStringViewMethod(ok), std::string("string_view method admitted by rule: ") + ok);

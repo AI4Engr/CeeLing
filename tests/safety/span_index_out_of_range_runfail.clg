@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ run-fail: index out of bounds at line 12
+//@ reason: s[i] on a span goes through cling::at like a vector's subscript.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::span<int> s = v;
+    int i = 3;
+    std::cout << "x" << std::endl;
+    int k = 0;
+    k = s[i];
+    std::cout << k << std::endl;
+    return 0;
+}

@@ -17,4 +17,8 @@ void checkChannels(Program& program);
 // uses it to put the runtime template (library_summary.h: channelHelperDefinition) into the generated file or header.
 bool programUsesChannel(const Program& program);
 
+// True if some declaration, parameter or return type in the program mentions a `span<T>`: the emitter then puts library_summary.h's
+// spanHelperDefinition (cling::span) into the generated file or header.
+bool programUsesSpan(const Program& program);
+
 }  // namespace cling

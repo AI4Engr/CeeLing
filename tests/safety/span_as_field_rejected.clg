@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: `span` cannot be used for the type of field
+//@ reason: a span stored in a field could outlive the vector it refers to where nothing follows it.
+
+class Holder {
+public:
+    std::span<int> view;
+    Holder() {}
+};
+
+int main() {
+    return 0;
+}

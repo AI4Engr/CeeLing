@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ error: cannot tell what the `span` `s` would refer to
+//@ reason: a field has no owner the checker follows: it could be reassigned or grow while the span lives.
+
+class Holder {
+public:
+    std::vector<int> items;
+    Holder() { items.push_back(1); }
+    int count() {
+        std::span<int> s = items;
+        return s.size();
+    }
+};
+
+int main() {
+    Holder h = new Holder();
+    std::cout << h.count() << std::endl;
+    return 0;
+}

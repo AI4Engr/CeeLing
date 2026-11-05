@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: use of dangling observer `s`
+//@ reason: the vector is moved into another variable, so the span no longer refers to a live owner.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::span<int> s = v;
+    std::vector<int> w = v;
+    std::cout << s.size() << " " << w.size() << std::endl;
+    return 0;
+}

@@ -107,6 +107,10 @@ private:
     // nothing could say what it refers to.
     std::set<std::string> stringOwners_;   // string locals and parameters currently in scope
     void bindStringView(const std::string& name, const Expression* init, const Statement* at);
+    // A `span<T>` (library_summary.h) is the same kind of observer, of a vector local or parameter: the vector's reassignment, a method that
+    // may reallocate it (vectorMethodInvalidatesReferences), its being moved away and the end of its scope kill the span. It can be made from
+    // such a vector, from another span, or from first/last/subspan of a span; anything else (a call result, a field) is refused.
+    void bindSpan(const std::string& name, const Expression* init, const Statement* at);
 
     // Snapshot of every piece of state a branch body can mutate that must NOT leak
     // into a sibling branch that didn't run (only one branch of an `if`/`else` ever

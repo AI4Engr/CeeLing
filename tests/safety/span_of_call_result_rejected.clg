@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ error: cannot tell what the `span` `s` would refer to
+//@ reason: a call that returns a vector returns a temporary, and a span of it dangles at the end of the statement.
+
+std::vector<int> make() {
+    std::vector<int> v;
+    v.push_back(1);
+    return v;
+}
+
+int main() {
+    std::span<int> s = make();
+    std::cout << s.size() << std::endl;
+    return 0;
+}

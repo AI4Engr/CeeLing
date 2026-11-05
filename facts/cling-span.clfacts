@@ -1,0 +1,19 @@
+# CeeLing's own `span<T>` (also spelled std::span<T>): a non-owning view of the elements of a vector, defined by the compiler's runtime
+# (cling::span, library_summary.cpp spanHelperDefinition). It is NOT std::span: that is C++20, and the generated code is built as C++17.
+# So there is nothing to scan, and these facts are written by hand; they say what the checker may assume about each method.
+#   size, empty        a number
+#   subspan, first, last   another view of the SAME vector (the checker follows it to the vector)
+#   front, back        the element; the type is restricted to numbers, so it is consumed as a copy
+# Everything checked at run time (an out-of-range subspan / first / last / front / back prints a message and aborts; `s[i]` is bounds-checked like a vector's).
+# data(), begin(), end() do not exist on cling::span: a raw pointer and an iterator have nowhere legal to go.
+@pack cling-span
+@version 1
+@origin hand-written for the compiler's own runtime type cling::span
+
+span.sig size/const/- result=scalar mutates=no source=declared review=hand
+span.sig empty/const/- result=scalar mutates=no source=declared review=hand
+span.sig subspan/const/value+value result=view mutates=no source=declared review=hand
+span.sig first/const/value result=view mutates=no source=declared review=hand
+span.sig last/const/value result=view mutates=no source=declared review=hand
+span.sig front/const/- result=element-reference mutates=no source=declared review=hand
+span.sig back/const/- result=element-reference mutates=no source=declared review=hand

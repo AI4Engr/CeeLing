@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ run: 4 2 28 23
+int sum(std::span<int> s) {
+    int total = 0;
+    int i = 0;
+    while (i < s.size()) {
+        total = total + s[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    v.push_back(3);
+    v.push_back(4);
+    std::span<int> all = v;               // a view of the vector v
+    std::span<int> mid = all.subspan(1, 2);
+    mid[0] = 20;                          // writes the vector's element
+    std::cout << all.size() << " " << mid.size() << " " << sum(v) << " " << sum(mid) << std::endl;
+    return 0;
+}

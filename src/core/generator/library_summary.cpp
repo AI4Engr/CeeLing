@@ -105,7 +105,8 @@ namespace {
 // argument by default, which would empty the other operand.
 bool shapeHonoured(const std::string& shape, const std::string& cls = "") {
     // A `view` result (std::string_view::substr) is a view of the SAME owner as the receiver: the checker follows it, but only for a string_view receiver.
-    if (shape == "view" && cls == "string_view") return true;
+    if (shape == "view" && (cls == "string_view" || cls == "span")) return true;
+    if (shape == "element-reference" && cls == "span") return true;      // the element is a number: consumed as a copy
     // An optional holds a number, a bool, a char or a string (nothing else is allowed, see isOptionalElementAllowed). A REFERENCE to that element
     // (`value()`) can only be consumed as a value here: CeeLing cannot bind a reference to a primitive or a string, and a call result is not a valid
     // origin for a view. So the reference is a copy by the time anything can see it, and the element type itself (`value_or` returns it by value) is fresh.
@@ -256,6 +257,78 @@ std::string stripStdPrefix(const std::string& type) {
     return type.rfind("std::", 0) == 0 ? type.substr(5) : type;
 }
 }  // namespace
+
+bool isSpanType(const std::string& type) {
+    const std::string t = stripStdPrefix(type);
+    return t.size() > 6 && t.rfind("span<", 0) == 0 && t.back() == '>';
+}
+
+std::string spanElementType(const std::string& type) {
+    if (!isSpanType(type)) return {};
+    const std::string t = stripStdPrefix(type);
+    std::string elem = t.substr(5, t.size() - 6);
+    size_t a = elem.find_first_not_of(" 	"), b = elem.find_last_not_of(" 	");
+    return a == std::string::npos ? std::string{} : elem.substr(a, b - a + 1);
+}
+
+bool isSpanElementAllowed(const std::string& elem) {
+    return isPrimitiveType(elem) && !isStringType(elem);      // numbers, bool, char, byte, int64
+}
+
+bool isViewType(const std::string& type) {
+    return isStringViewType(type) || isSpanType(type);
+}
+
+bool isKnownSpanMethod(const std::string& methodName) {
+    return methodVerdict("span", methodName).admitted;
+}
+
+std::string spanMethodRefusal(const std::string& methodName) {
+    return methodVerdict("span", methodName).reason;
+}
+
+bool spanMethodReturnsView(const std::string& methodName) {
+    for (const FactTable::Fact* f : builtinFacts().withPrefix("span.sig", methodName + "/")) {
+        const std::string& r = f->attrs.at("result");
+        if (r == "view" || r.find("view,") == 0 || r.find(",view") != std::string::npos) return true;
+    }
+    return false;
+}
+
+std::string spanHelperDefinition() {
+    return R"CLINGSPAN(#ifndef CLING_SPAN_DEFINED
+#define CLING_SPAN_DEFINED
+#include <cstdio>
+#include <cstdlib>
+namespace cling {
+// A non-owning view of a vector's elements (CeeLing's span<T>). Every way to narrow it is range-checked; subscripts go through cling::at.
+template <typename T>
+class span {
+public:
+    using size_type = size_t;
+    span() : p_(nullptr), n_(0) {}
+    span(std::vector<T>& v) : p_(v.data()), n_(v.size()) {}
+    size_t size() const { return n_; }
+    bool empty() const { return n_ == 0; }
+    T& operator[](size_t i) const { return p_[i]; }
+    span subspan(size_t off, size_t count) const { if (off > n_ || count > n_ - off) fail("subspan", off, count); return span(p_ + off, count); }
+    span first(size_t count) const { if (count > n_) fail("first", 0, count); return span(p_, count); }
+    span last(size_t count) const { if (count > n_) fail("last", 0, count); return span(p_ + (n_ - count), count); }
+    T& front() const { if (n_ == 0) fail("front", 0, 0); return p_[0]; }
+    T& back() const { if (n_ == 0) fail("back", 0, 0); return p_[n_ - 1]; }
+private:
+    span(T* p, size_t n) : p_(p), n_(n) {}
+    void fail(const char* what, size_t off, size_t count) const {
+        std::fprintf(stderr, "cling: span::%s out of range (offset %zu, count %zu, size %zu)\n", what, off, count, n_);
+        std::abort();
+    }
+    T* p_;
+    size_t n_;
+};
+} // namespace cling
+#endif
+)CLINGSPAN";
+}
 
 bool isOptionalType(const std::string& type) {
     const std::string t = stripStdPrefix(type);

@@ -114,6 +114,9 @@ std::string AstEmitter::emit(const Program& program) {
     if (programUsesChannel(program)) {
         out << channelHelperDefinition() << "\n";
     }
+    if (programUsesSpan(program)) {
+        out << spanHelperDefinition() << "\n";
+    }
     if (poolShared_) {
         out << poolAllocatorHelperDefinition() << "\n";
     }
@@ -299,6 +302,9 @@ std::string AstEmitter::emitHeader(const Program& program, const std::string& gu
     }
     if (programUsesChannel(program)) {
         out << channelHelperDefinition() << "\n";
+    }
+    if (programUsesSpan(program)) {
+        out << spanHelperDefinition() << "\n";
     }
     for (const auto& stmt : program.statements) {
         if (stmt->isExternalDeclaration) continue;
@@ -696,7 +702,8 @@ std::pair<std::string, std::string> AstEmitter::calleeParam(const FunctionCall& 
     }
     if (argIndex >= params->size()) return {};
     const auto& [ptype, pname] = (*params)[argIndex];
-    return isClassType(ptype) ? std::make_pair(ptype, pname) : std::pair<std::string, std::string>{};
+    // (a `span` parameter is returned too: emitMovedArg then passes a vector argument as is instead of moving it)
+    return isClassType(ptype) || isSpanType(ptype) ? std::make_pair(ptype, pname) : std::pair<std::string, std::string>{};
 }
 
 // Must the string argument at `argIndex` be copied (rather than bound by const&) at this call? Only if it
@@ -1111,6 +1118,7 @@ bool AstEmitter::isBareValueReturningSpecializationCall(const Expression* expr) 
 std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::string& varName) const {
     if (isStringType(ceelingType)) return "std::string";
     if (isStringViewType(ceelingType)) return "std::string_view";
+    if (isSpanType(ceelingType)) return "cling::span<" + cppTypeFor(spanElementType(ceelingType), "") + ">";
     if (isOptionalType(ceelingType)) return "std::optional<" + cppTypeFor(optionalElementType(ceelingType), "") + ">";
     // `byte`/`int64` are the two primitives whose CeeLing spelling is NOT
     // identical to their C++ spelling (every other primitive --
@@ -2004,6 +2012,8 @@ std::string AstEmitter::emitMovedArg(const Expression* arg,
         // `continue`/emit their own copy before ever calling emitMovedArg.
         if (auto ctIt = containerVarType_.find(id->name);
             ctIt != containerVarType_.end() && !isCurrentField(id->name)) {
+            // A vector handed to a `span` parameter is viewed, not given away (DanglingChecker::applyCallArgMoves does not mark it moved).
+            if (isSpanType(targetParam.first)) return id->name;
             return "std::move(" + id->name + ")";
         }
     }

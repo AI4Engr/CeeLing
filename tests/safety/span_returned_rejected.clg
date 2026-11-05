@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: `span` cannot be used for the return type
+//@ reason: a returned span would outlive the local vector it refers to.
+
+std::span<int> view(std::vector<int> v) {
+    std::span<int> s = v;
+    return s;
+}
+
+int main() {
+    return 0;
+}
