@@ -1,0 +1,20 @@
+name	const	return	shape	result-borrow	params	param-classes	mutates-receiver	param-kinds
+bool	const	bool	scalar	fresh				-
+emplace		std::basic_string<char> &	element-reference	borrows self	_Types &&...	template-param (needs witness)	yes	args
+emplace		std::basic_string<char> &	element-reference	borrows self	initializer_list<_Elem>; _Types &&...	by value; template-param (needs witness)	yes	initlist,args
+has_value	const	bool	scalar	fresh				-
+operator->	const	const std::basic_string<char> *	raw-pointer	SEALED (borrows self)				-
+operator->		std::basic_string<char> *	raw-pointer	SEALED (borrows self)			accessor	-
+operator=		optional<std::string> &	self-reference	borrows self (returns *this)	_Ty2 &&	template-param (needs witness)	yes	value
+operator=		optional<std::string> &	self-reference	borrows self (returns *this)	const optional<_Ty2> &	template-param (needs witness)	yes	value
+operator=		optional<std::string> &	self-reference	borrows self (returns *this)	const optional<std::string> &	read-only ref	yes	value
+operator=		optional<std::string> &	self-reference	borrows self (returns *this)	nullopt_t	by value	yes	value
+operator=		optional<std::string> &	self-reference	borrows self (returns *this)	optional<_Ty2> &&	template-param (needs witness)	yes	value
+operator=		optional<std::string> &	self-reference	borrows self (returns *this)	optional<std::string> &&	consumed (rvalue)	yes	value
+swap		void	void	none	optional<std::string> &	mutated (non-const ref)	yes	mref
+value	const	const std::basic_string<char> &	element-reference	borrows self				-
+value		std::basic_string<char> &	element-reference	borrows self			accessor	-
+value		std::basic_string<char> &&	element-reference	borrows self			accessor	-
+value	const	const std::basic_string<char> &&	element-reference	borrows self				-
+value_or	const	remove_cv_t<std::basic_string<char, std::char_traits<char>, std::allocator<char>>>	value	fresh (owner)	_Ty2 &&	template-param (needs witness)		value
+value_or		remove_cv_t<std::basic_string<char, std::char_traits<char>, std::allocator<char>>>	value	fresh (owner)	_Ty2 &&	template-param (needs witness)	accessor	value

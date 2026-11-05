@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ error: `swap` is not available on `std::optional<int>`
+//@ reason: swap takes a non-const reference parameter; CeeLing would move the argument out.
+
+int main() {
+    std::optional<int> a = 1;
+    std::optional<int> b = 2;
+    a.swap(b);
+    return 0;
+}

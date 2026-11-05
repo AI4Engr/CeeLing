@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: `*` on a `std::optional` is not available
+//@ reason: *o on an empty optional is undefined behaviour; value() (which throws) and value_or() are the checked spellings.
+
+int main() {
+    std::optional<int> o = 5;
+    std::cout << *o << std::endl;
+    return 0;
+}

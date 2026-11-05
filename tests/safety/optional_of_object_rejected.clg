@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ error: `std::optional<N>` is not supported
+//@ reason: an optional of an object would need an ownership decision (one owner or several); a CeeLing class handle can already be empty.
+
+class N {
+public:
+    int v;
+    N(int x) { v = x; }
+};
+
+int main() {
+    std::optional<N> o;
+    return 0;
+}

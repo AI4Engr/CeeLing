@@ -339,8 +339,30 @@ def string_methods():
     return out
 
 
+def optional_methods():
+    out = []
+    for ln in open(os.path.join(facts_dir, 'std-optional.clfacts'), encoding='utf-8'):
+        m = re.match(r'optional\.sig (\S+?)/', ln)
+        if m and not m.group(1).startswith(('_', 'operator')) and m.group(1) not in out:
+            out.append(m.group(1))
+    return out
+
+
+def optional_args(name):
+    """Arguments for a std::optional<int> method: value_or takes a value, emplace takes the contained type's constructor arguments."""
+    return {'value_or': '3', 'emplace': '4'}.get(name, '')
+
+
 def usage_work(item):
     cls, name = item
+    if cls == 'optional':
+        # an optional is a plain value: nothing can observe it, so the check is that each ADMITTED method is usable (g++ -std=c++17, runs)
+        if name in ('swap', 'bool'):
+            return (cls, name, 'UNREACHABLE', '')
+        src = ('int main() {\n    std::optional<int> v;\n    v = 1;\n    v.%s(%s);\n    std::cout << v.has_value() << std::endl;\n    return 0;\n}\n'
+               % (name, optional_args(name)))
+        v, detail = gpp_check(src)
+        return (cls, name, v, detail)
     call_args = string_args(name) if cls == 'string' else args_for(cls, name)
     if call_args is None:
         return (cls, name, 'UNREACHABLE', '')
@@ -353,7 +375,7 @@ def usage_work(item):
     return (cls, name, v, detail)
 
 
-uitems = [(c, n) for c in CLASSES for n in sorted(all_facts[c]) if not n.startswith(('_', 'operator'))] + [('string', n) for n in string_methods()]
+uitems = [(c, n) for c in CLASSES for n in sorted(all_facts[c]) if not n.startswith(('_', 'operator'))] + [('string', n) for n in string_methods()] + [('optional', n) for n in optional_methods()]
 with ThreadPoolExecutor(args.j) as ex:
     usage = list(ex.map(usage_work, uitems))
 ucount = {}

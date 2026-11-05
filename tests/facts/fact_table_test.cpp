@@ -129,9 +129,9 @@ int main() {
 
     {   // the shipped packs: they loaded (otherwise builtinFacts() would have aborted)
         const FactTable& b = cling::builtinFacts();
-        check(b.packs().size() == 6, "six shipped packs, got " + std::to_string(b.packs().size()));
+        check(b.packs().size() == 7, "seven shipped packs, got " + std::to_string(b.packs().size()));
         for (const auto& f : b.facts()) {
-            bool scanned = f.kind == "vector.sig" || f.kind == "string.sig" || f.kind == "string_view.sig" || f.kind == "map.sig";
+            bool scanned = f.kind == "vector.sig" || f.kind == "string.sig" || f.kind == "string_view.sig" || f.kind == "optional.sig" || f.kind == "map.sig";
             check(scanned ? (f.source == "inferred" && f.review == "unreviewed") : (f.source == "declared" && f.review == "hand"),
                   "provenance of a shipped fact: " + f.kind + " " + f.subject);
         }
@@ -153,6 +153,15 @@ int main() {
         check(cling::vectorMethodInvalidatesReferences("reserve") && cling::vectorMethodInvalidatesReferences("clear") &&
                   cling::vectorMethodInvalidatesReferences("assign"), "derived mutators invalidate");
         check(!cling::vectorMethodInvalidatesReferences("size") && !cling::vectorMethodInvalidatesReferences("empty"), "readers do not");
+        // std::optional<T>: has_value, value, value_or, reset, emplace are admitted (a reference to the element is consumed as a value); swap and the operators are not
+        for (const char* ok : {"has_value", "value", "value_or", "reset", "emplace"}) {
+            check(cling::isKnownOptionalMethod(ok), std::string("optional method admitted by rule: ") + ok);
+        }
+        for (const char* no : {"swap", "size", "frobnicate"}) {
+            check(!cling::isKnownOptionalMethod(no), std::string("optional method refused by rule: ") + no);
+        }
+        check(cling::isOptionalType("std::optional<int>") && cling::isOptionalType("optional<string>") && !cling::isOptionalType("std::vector<int>"), "optional type names");
+        check(cling::optionalElementType("std::optional<string>") == "string" && cling::isOptionalElementAllowed("string") && !cling::isOptionalElementAllowed("Node"), "optional element type");
         // std::string_view: readers are admitted, substr (a view of the same string) is admitted and known to return a view, data() is sealed
         for (const char* ok : {"size", "length", "empty", "find", "rfind", "compare", "substr", "remove_prefix"}) {
             check(cling::isKnownStringViewMethod(ok), std::string("string_view method admitted by rule: ") + ok);

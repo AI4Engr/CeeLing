@@ -311,6 +311,9 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         if (isStringViewType(declaredType)) {
             return isKnownStringViewMethod(member->member);
         }
+        if (isOptionalType(declaredType)) {
+            return isKnownOptionalMethod(member->member);
+        }
         if (isMapType(declaredType)) {
             return isKnownMapMethod(member->member);
         }
@@ -548,6 +551,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                 if (isVectorType(recvType)) why = vectorMethodRefusal(calleeMember->member);
                 else if (isStringType(recvType)) why = stringMethodRefusal(calleeMember->member);
                 else if (isStringViewType(recvType)) why = stringViewMethodRefusal(calleeMember->member);
+                else if (isOptionalType(recvType)) why = optionalMethodRefusal(calleeMember->member);
                 else if (isMapType(recvType)) why = mapMethodRefusal(calleeMember->member);
                 if (!why.empty()) {
                     e.message = "`" + calleeMember->member + "` is not available on `" + recvType + "`: " + why;
@@ -736,6 +740,16 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
         return;
     }
     if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+        if (un->operator_str == "*" && isOptionalType(resolveDeclaredType(un->operand.get()))) {
+            // `*o` on an empty optional is undefined behaviour in C++ (value() throws instead). There is no checked spelling of it: use value() or value_or().
+            EscapeHatchError e;
+            e.line = expr->loc.line;
+            e.column = expr->loc.column;
+            e.message = "`*` on a `std::optional` is not available";
+            e.help = "Dereferencing an empty optional is undefined behaviour. Use `value()` (an empty optional then ends the program with std::bad_optional_access, "
+                     "it does not read garbage) or `value_or(default)`.";
+            errors_.push_back(e);
+        }
         checkExpression(un->operand.get());
         return;
     }
@@ -790,6 +804,7 @@ bool EscapeHatchChecker::typeIsKnown(const std::string& rawType) const {
     if (isPrimitiveType(type) || isStringType(type) || isOstreamType(type)) return true;
     if (classNames_.count(type) > 0 || enumNames_.count(type) > 0) return true;
     if (isKnownExternalClassType(type)) return true;
+    if (isOptionalType(type)) return isOptionalElementAllowed(optionalElementType(type));
     if (isVectorType(type)) return typeIsKnown(vectorElementType(type));
     if (isMapType(type)) return typeIsKnown(mapKeyType(type)) && typeIsKnown(mapValueType(type));
     if (isChannelType(type)) return typeIsKnown(channelElementType(type));
@@ -811,6 +826,17 @@ void EscapeHatchChecker::requireKnownType(const std::string& type, const std::st
         return;
     }
     if (typeIsKnown(type)) return;
+    if (isOptionalType(trimType(type))) {
+        if (!reportedUnknownTypes_.insert(trimType(type) + "@" + std::to_string(line)).second) return;
+        EscapeHatchError e;
+        e.line = line;
+        e.column = column;
+        e.message = "`" + trimType(type) + "` is not supported for " + what;
+        e.help = "std::optional holds a number, a bool, a char or a string for now. An optional of an object would need an ownership decision (one owner or "
+                 "several) that the analysis does not make for it; use a CeeLing class handle (which can already be empty) instead.";
+        errors_.push_back(e);
+        return;
+    }
     // one report per distinct name and line: a type used ten times on one line is one mistake
     if (!reportedUnknownTypes_.insert(trimType(type) + "@" + std::to_string(line)).second) return;
     EscapeHatchError e;

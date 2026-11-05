@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ error: cannot tell what the `string_view` `v` would refer to
+//@ reason: value() returns a reference into the optional; a view made from a call result is refused, so the reference cannot be held.
+
+int main() {
+    std::optional<string> o = "abc";
+    string_view v = o.value();
+    std::cout << v << std::endl;
+    return 0;
+}

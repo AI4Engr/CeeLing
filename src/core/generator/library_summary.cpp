@@ -106,6 +106,10 @@ namespace {
 bool shapeHonoured(const std::string& shape, const std::string& cls = "") {
     // A `view` result (std::string_view::substr) is a view of the SAME owner as the receiver: the checker follows it, but only for a string_view receiver.
     if (shape == "view" && cls == "string_view") return true;
+    // An optional holds a number, a bool, a char or a string (nothing else is allowed, see isOptionalElementAllowed). A REFERENCE to that element
+    // (`value()`) can only be consumed as a value here: CeeLing cannot bind a reference to a primitive or a string, and a call result is not a valid
+    // origin for a view. So the reference is a copy by the time anything can see it, and the element type itself (`value_or` returns it by value) is fresh.
+    if (cls == "optional" && (shape == "element-reference" || shape == "value")) return true;
     return shape == "void" || shape == "scalar" || shape == "string" || shape == "self-reference";
 }
 
@@ -245,6 +249,37 @@ bool stringViewMethodReturnsView(const std::string& methodName) {
         if (r == "view" || r.find("view,") == 0 || r.find(",view") != std::string::npos) return true;
     }
     return false;
+}
+
+namespace {
+std::string stripStdPrefix(const std::string& type) {
+    return type.rfind("std::", 0) == 0 ? type.substr(5) : type;
+}
+}  // namespace
+
+bool isOptionalType(const std::string& type) {
+    const std::string t = stripStdPrefix(type);
+    return t.size() > 10 && t.rfind("optional<", 0) == 0 && t.back() == '>';
+}
+
+std::string optionalElementType(const std::string& type) {
+    if (!isOptionalType(type)) return {};
+    const std::string t = stripStdPrefix(type);
+    std::string elem = t.substr(9, t.size() - 10);
+    size_t a = elem.find_first_not_of(" 	"), b = elem.find_last_not_of(" 	");
+    return a == std::string::npos ? std::string{} : elem.substr(a, b - a + 1);
+}
+
+bool isOptionalElementAllowed(const std::string& elem) {
+    return isPrimitiveType(elem);        // int float double bool char byte int64 string (isPrimitiveType includes string)
+}
+
+bool isKnownOptionalMethod(const std::string& methodName) {
+    return methodVerdict("optional", methodName).admitted;
+}
+
+std::string optionalMethodRefusal(const std::string& methodName) {
+    return methodVerdict("optional", methodName).reason;
 }
 
 bool isKnownMapMethod(const std::string& methodName) {

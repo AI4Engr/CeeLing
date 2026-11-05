@@ -1,0 +1,23 @@
+name	const	return	shape	result-borrow	params	param-classes	mutates-receiver	param-kinds
+bool	const	bool	scalar	fresh				-
+emplace		enable_if_t<is_constructible_v<int, _Args...>, int &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	_Args &&...	template-param (needs witness)	yes	args
+emplace		enable_if_t<is_constructible_v<int, initializer_list<_Up> &, _Args...>, int &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	initializer_list<_Up>; _Args &&...	by value; template-param (needs witness)	yes	initlist,args
+has_value	const	bool	scalar	fresh				-
+operator*	const	const int &	element-reference	borrows self				-
+operator*		int &	element-reference	borrows self			accessor	-
+operator*		int &&	element-reference	borrows self			accessor	-
+operator*	const	const int &&	element-reference	borrows self				-
+operator->	const	const int *	raw-pointer	SEALED (borrows self)				-
+operator->		int *	raw-pointer	SEALED (borrows self)			accessor	-
+operator=		enable_if_t<__and_v<__not_self<_Up>, __not_<__and_<is_scalar<int>, is_same<int, decay_t<_Up>>>>, is_constructible<int, _Up>, is_assignable<int &, _Up>>, optional<int> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	_Up &&	template-param (needs witness)	yes	value
+operator=		enable_if_t<__and_v<__not_<is_same<int, _Up>>, is_constructible<int, const _Up &>, is_assignable<int &, const _Up &>, __not_<__converts_from_optional<int, _Up>>, __not_<__assigns_from_optional<int, _Up>>>, optional<int> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const optional<_Up> &	read-only ref	yes	value
+operator=		optional<int> &	self-reference	borrows self (returns *this)	nullopt_t	by value	yes	value
+operator=		enable_if_t<__and_v<__not_<is_same<int, _Up>>, is_constructible<int, _Up>, is_assignable<int &, _Up>, __not_<__converts_from_optional<int, _Up>>, __not_<__assigns_from_optional<int, _Up>>>, optional<int> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	optional<_Up> &&	consumed (rvalue)	yes	value
+reset		void	void	none			yes	-
+swap		void	void	none	optional<int> &	mutated (non-const ref)	yes	mref
+value	const	const int &	element-reference	borrows self				-
+value		int &	element-reference	borrows self			accessor	-
+value		int &&	element-reference	borrows self			accessor	-
+value	const	const int &&	element-reference	borrows self				-
+value_or	const	remove_cv_t<int>	value	fresh (owner)	_Up &&	template-param (needs witness)		value
+value_or		remove_cv_t<int>	value	fresh (owner)	_Up &&	template-param (needs witness)	accessor	value

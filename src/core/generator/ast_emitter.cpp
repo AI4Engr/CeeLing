@@ -82,7 +82,7 @@ std::string AstEmitter::emit(const Program& program) {
     std::set<std::string> emittedIncludes;
     for (const char* hdr : {"#include <memory>", "#include <utility>",
                             "#include <iostream>", "#include <vector>",
-                            "#include <string>", "#include <string_view>", "#include <map>"}) {
+                            "#include <string>", "#include <string_view>", "#include <optional>", "#include <map>"}) {
         if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
     }
     if (!usedRuntimeHelpers_.empty()) {
@@ -294,7 +294,7 @@ std::string AstEmitter::emitHeader(const Program& program, const std::string& gu
     std::set<std::string> emittedIncludes;
     for (const char* hdr : {"#include <memory>", "#include <utility>",
                             "#include <iostream>", "#include <vector>",
-                            "#include <string>", "#include <string_view>", "#include <map>"}) {
+                            "#include <string>", "#include <string_view>", "#include <optional>", "#include <map>"}) {
         if (emittedIncludes.insert(hdr).second) out << hdr << "\n";
     }
     if (programUsesChannel(program)) {
@@ -1111,6 +1111,7 @@ bool AstEmitter::isBareValueReturningSpecializationCall(const Expression* expr) 
 std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::string& varName) const {
     if (isStringType(ceelingType)) return "std::string";
     if (isStringViewType(ceelingType)) return "std::string_view";
+    if (isOptionalType(ceelingType)) return "std::optional<" + cppTypeFor(optionalElementType(ceelingType), "") + ">";
     // `byte`/`int64` are the two primitives whose CeeLing spelling is NOT
     // identical to their C++ spelling (every other primitive --
     // int/float/double/bool/char -- happens to share a name with its C++

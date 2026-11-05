@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: `size` is not available on `std::optional<string>`
+//@ reason: o->size() would be undefined behaviour on an empty optional; the optional has no `size` member in the facts, so the call is refused.
+
+int main() {
+    std::optional<string> o = "ab";
+    std::cout << o->size() << std::endl;
+    return 0;
+}

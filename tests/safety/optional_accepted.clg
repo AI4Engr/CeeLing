@@ -1,0 +1,42 @@
+//@ expect: accept
+//@ run: 5 5|9|30|none zed|x0
+//@ reason: std::optional of a number and of a string: empty by default, assigned, reset, returned from a function (std::nullopt), a field,
+//@ reason: copied (the copy is independent), read with value() / value_or(), tested with has_value() and in a condition.
+
+std::optional<int> find(int k) {
+    if (k > 0) {
+        return k;
+    }
+    return std::nullopt;
+}
+
+class Person {
+public:
+    std::optional<string> nick;
+    Person() { }
+    void set(string s) { nick = s; }
+    string get() { return nick.value_or("none"); }
+};
+
+int main() {
+    std::optional<int> o;
+    if (o.has_value()) {
+        std::cout << "never" << std::endl;
+    }
+    o = 5;
+    std::cout << o.value() << " " << o.value_or(9) << "|";
+    o.reset();
+    std::cout << o.value_or(9) << "|";
+    std::optional<int> a = find(3);
+    std::optional<int> b = find(-1);
+    std::cout << a.value_or(0) << b.value_or(0) << "|";
+    Person p = new Person();
+    std::cout << p.get() << " ";
+    p.set("zed");
+    std::cout << p.get() << "|";
+    std::optional<string> s1 = "x";
+    std::optional<string> s2 = s1;
+    s1.reset();
+    std::cout << s2.value() << s1.has_value() << std::endl;
+    return 0;
+}

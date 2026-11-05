@@ -111,6 +111,15 @@ bool isKnownStringViewMethod(const std::string& methodName);
 std::string stringViewMethodRefusal(const std::string& methodName);
 bool stringViewMethodReturnsView(const std::string& methodName);
 
+// `std::optional<T>` (facts/std-optional.clfacts, scanned with T = int and T = std::string as witnesses): a value that may be absent. T is
+// restricted to a primitive or a string, so an optional is a plain value (copied, never an observer target). `value()` on an empty optional
+// throws std::bad_optional_access (uncaught: the program terminates, no undefined behaviour); `*o` and `o->` (undefined behaviour when empty) are refused.
+bool isOptionalType(const std::string& type);
+std::string optionalElementType(const std::string& type);
+bool isOptionalElementAllowed(const std::string& elem);
+bool isKnownOptionalMethod(const std::string& methodName);
+std::string optionalMethodRefusal(const std::string& methodName);
+
 // The same for `std::map<K, V>` (facts/std-map.clfacts): which methods may be called on a map, and why not. A map has no
 // methods other than these and the subscript.
 bool isKnownMapMethod(const std::string& methodName);

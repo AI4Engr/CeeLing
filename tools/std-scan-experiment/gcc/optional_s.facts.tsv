@@ -1,0 +1,23 @@
+name	const	return	shape	result-borrow	params	param-classes	mutates-receiver	param-kinds
+bool	const	bool	scalar	fresh				-
+emplace		enable_if_t<is_constructible_v<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, _Args...>, std::basic_string<char, std::char_traits<char>, std::allocator<char>> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	_Args &&...	template-param (needs witness)	yes	args
+emplace		enable_if_t<is_constructible_v<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, initializer_list<_Up> &, _Args...>, std::basic_string<char, std::char_traits<char>, std::allocator<char>> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	initializer_list<_Up>; _Args &&...	by value; template-param (needs witness)	yes	initlist,args
+has_value	const	bool	scalar	fresh				-
+operator*	const	const std::basic_string<char> &	element-reference	borrows self				-
+operator*		std::basic_string<char> &	element-reference	borrows self			accessor	-
+operator*		std::basic_string<char> &&	element-reference	borrows self			accessor	-
+operator*	const	const std::basic_string<char> &&	element-reference	borrows self				-
+operator->	const	const std::basic_string<char> *	raw-pointer	SEALED (borrows self)				-
+operator->		std::basic_string<char> *	raw-pointer	SEALED (borrows self)			accessor	-
+operator=		enable_if_t<__and_v<__not_self<_Up>, __not_<__and_<is_scalar<std::basic_string<char, std::char_traits<char>, std::allocator<char>>>, is_same<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, decay_t<_Up>>>>, is_constructible<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, _Up>, is_assignable<std::basic_string<char, std::char_traits<char>, std::allocator<char>> &, _Up>>, optional<std::string> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	_Up &&	template-param (needs witness)	yes	value
+operator=		enable_if_t<__and_v<__not_<is_same<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, _Up>>, is_constructible<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, const _Up &>, is_assignable<std::basic_string<char, std::char_traits<char>, std::allocator<char>> &, const _Up &>, __not_<__converts_from_optional<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, _Up>>, __not_<__assigns_from_optional<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, _Up>>>, optional<std::string> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	const optional<_Up> &	read-only ref	yes	value
+operator=		optional<std::string> &	self-reference	borrows self (returns *this)	nullopt_t	by value	yes	value
+operator=		enable_if_t<__and_v<__not_<is_same<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, _Up>>, is_constructible<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, _Up>, is_assignable<std::basic_string<char, std::char_traits<char>, std::allocator<char>> &, _Up>, __not_<__converts_from_optional<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, _Up>>, __not_<__assigns_from_optional<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, _Up>>>, optional<std::string> &>	UNRESOLVED	unknown -> treat as borrows self (conservative)	optional<_Up> &&	consumed (rvalue)	yes	value
+reset		void	void	none			yes	-
+swap		void	void	none	optional<std::string> &	mutated (non-const ref)	yes	mref
+value	const	const std::basic_string<char> &	element-reference	borrows self				-
+value		std::basic_string<char> &	element-reference	borrows self			accessor	-
+value		std::basic_string<char> &&	element-reference	borrows self			accessor	-
+value	const	const std::basic_string<char> &&	element-reference	borrows self				-
+value_or	const	remove_cv_t<std::basic_string<char, std::char_traits<char>, std::allocator<char>>>	value	fresh (owner)	_Up &&	template-param (needs witness)		value
+value_or		remove_cv_t<std::basic_string<char, std::char_traits<char>, std::allocator<char>>>	value	fresh (owner)	_Up &&	template-param (needs witness)	accessor	value
