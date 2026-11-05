@@ -37,6 +37,13 @@ member templates, operators (write `operator` facts by hand). Every fact is `sou
   dump format; the tests pin the behaviour.
 * Nothing was run against the library to confirm a fact (no sanitiser probes yet).
 
+## Witness types: `--witness`
+
+A template's facts depend on its arguments, so a pack for `Eigen::VectorXd` is not a pack for `Eigen::MatrixXd` (`cbegin`/`cend` differ). `--witness OtherType` (repeatable) scans the other instantiation too and **keeps a fact only where the verdict is
+identical**; a method that differs gets no fact (it falls back to the conservative `opaque` default) and a `#` line saying which two verdicts disagreed. The pack records `@witness <type>: N fact(s) agree, M dropped`. On Eigen,
+`VectorXd` with witnesses `MatrixXd` and `Matrix3f` keeps 66 facts and drops `cbegin`/`cend`. Limits: agreement among the instantiations you name is evidence about those, not about every instantiation; and the pack is still NAMED for one type, the
+compiler does not know a pack was meant to be shared.
+
 ## Is a scanned fact true? `tools/fact-gauge/probe_pack.py`
 
 The scan reads signatures; the probe checks the facts against the real library: the compiler judges one seeded program per fact, and a plain-C++ twin with a lazy view is built with AddressSanitizer and run. On

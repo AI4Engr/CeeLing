@@ -99,11 +99,11 @@ std::string FactTable::addText(const std::string& text, const std::string& origi
                 headers.push_back(words[1] + " " + words[2]);
                 continue;
             }
-            if (words[0] == "@scanner") continue;      // free text: who wrote the facts
+            if (words[0] == "@scanner" || words[0] == "@witness") continue;      // free text: who wrote the facts / which other types the scan was compared with
             if (words[0] == "@pack") pack = value;
             else if (words[0] == "@version") version = value;
             else if (words[0] == "@origin") origin = value;
-            else return fail(lineNo, "unknown header line `" + words[0] + "` (expected @pack, @version, @origin, @header or @scanner)");
+            else return fail(lineNo, "unknown header line `" + words[0] + "` (expected @pack, @version, @origin, @header, @scanner or @witness)");
             continue;
         }
 

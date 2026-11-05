@@ -128,6 +128,13 @@ if [ -f "$EIGEN_DIR/Eigen/Dense" ]; then
     scan --header "$EIGEN_DIR/Eigen/Dense" --type Eigen::MatrixXd -I "$EIGEN_DIR" --out "$TMP/mx.clfacts" >/dev/null
     scan --header "$EIGEN_DIR/Eigen/Dense" --type Eigen::Matrix3f -I "$EIGEN_DIR" --out "$TMP/m3.clfacts" >/dev/null
     $COMPARE "$TMP/mx.clfacts" "$TMP/m3.clfacts" >/dev/null && ok "compare_packs: MatrixXd and Matrix3f have the same verdict for every method" || bad "compare_packs: MatrixXd and Matrix3f differ"
+    scan --header "$EIGEN_DIR/Eigen/Dense" --type Eigen::VectorXd -I "$EIGEN_DIR" --witness Eigen::MatrixXd --witness Eigen::Matrix3f --out "$TMP/vw.clfacts" >/dev/null
+    if grep -q "^@witness Eigen::MatrixXd: .* 2 dropped" "$TMP/vw.clfacts" && grep -q "^# cbegin: no fact -- the verdict differs" "$TMP/vw.clfacts" && ! grep -qE "^(fresh|borrow) Eigen::VectorXd::cbegin " "$TMP/vw.clfacts"; then
+        ok "witness: --witness drops exactly the facts the other instantiation disagrees on (cbegin, cend), with the reason written down"
+    else bad "witness: --witness did not drop cbegin/cend: $(grep -E '^@witness|cbegin' "$TMP/vw.clfacts" | head -4)"; fi
+    printf 'int main() { return 0; }
+' > "$TMP/w.clg"
+    "$CLING" --facts "$TMP/vw.clfacts" "$TMP/w.clg" --cpp "$TMP/w.cpp" >/dev/null 2>&1 && ok "witness: a pack with @witness lines loads" || bad "witness: the loader refused a pack with @witness lines"
     out="$($COMPARE "$TMP/vx.clfacts" "$TMP/mx.clfacts")"; code=$?
     [ $code -eq 1 ] && echo "$out" | grep -q "DIFFER cbegin" && ok "compare_packs: VectorXd and MatrixXd DIFFER (cbegin/cend): a pack for one instantiation is not a pack for another" || bad "compare_packs did not find the VectorXd/MatrixXd difference: $out"
 fi
