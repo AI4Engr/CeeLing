@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ run: hello ell hello hellohello hello hello hello, world
+//@ reason: a view becomes an owning string by an explicit copy: in a declaration, a substr of a view, an assignment, an argument for a `string` parameter and a return.
+//@ reason: the copy is a fresh owner, so it survives the owner string being changed afterward (the last value printed).
+
+string twice(string s) {
+    return s + s;
+}
+
+string head(string_view v) {
+    string r = v;
+    return r;
+}
+
+string same(string_view v) {
+    return v;
+}
+
+int main() {
+    string s = "hello";
+    string_view v = s;
+    string a = v;
+    string b = v.substr(1, 3);
+    string c = "x";
+    c = v;
+    string d = head(v);
+    string e = same(v);
+    s.append(", world");
+    std::cout << a << " " << b << " " << c << " " << twice(a) << " " << d << " " << e << " " << s << std::endl;
+    return 0;
+}

@@ -1,0 +1,15 @@
+//@ expect: accept
+//@ run: hello hello world
+//@ generated: std::string(v)
+string keep(string_view v) {
+    return v;                             // a view becomes an owning string by a copy
+}
+
+int main() {
+    string s = "hello";
+    string_view v = s;
+    string t = keep(v);                   // t owns its characters
+    s.append(" world");                   // v is dead now, t is not
+    std::cout << t << " " << s << std::endl;
+    return 0;
+}

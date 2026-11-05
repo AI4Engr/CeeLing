@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: use of dangling observer `v`
+//@ reason: copying a view reads it, so a view that died (its string was changed) cannot be copied into a string either.
+
+int main() {
+    string s = "hello";
+    string_view v = s;
+    s.append("!");
+    string a = v;
+    std::cout << a << std::endl;
+    return 0;
+}

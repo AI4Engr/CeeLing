@@ -157,6 +157,14 @@ private:
     // decisions are keyed by (className, variableName), not class alone. Returns
     // ("", "") if unknown/not an object parameter.
     std::pair<std::string, std::string> calleeParam(const FunctionCall& call, size_t argIndex) const;
+    // The declared type of parameter `argIndex` of a callee defined in this program (any type, not only a class), or "" if unknown.
+    std::string calleeParamType(const FunctionCall& call, size_t argIndex) const;
+
+    // `string_view` -> `string`: a view is converted to an owning string by an explicit copy. A view-valued expression (a `string_view` local or
+    // parameter, or `substr` of one) that lands where a `string` is expected -- a declaration, an assignment, a call argument whose parameter is a
+    // `string`, a `return` of a function returning `string` -- is emitted as `std::string(...)`; C++ has no implicit conversion for it.
+    bool isViewExpression(const Expression* e) const;
+    std::string emitAsString(const Expression* e);
 
     // Does call argument `argIndex` need an EXPLICIT COPY instead of the
     // plain reference emitMovedArg would otherwise emit? Returns the
@@ -448,6 +456,8 @@ private:
     // (copy, never move; `new T(...)` becomes a bare constructor call, never a
     // make_unique/make_shared factory).
     bool currentMethodReturnsValueType_ = false;
+    std::string currentReturnType_;                 // declared return type of the function being emitted
+    std::set<std::string> viewVars_;                // string_view locals and parameters of the function being emitted
 };
 
 } // namespace cling

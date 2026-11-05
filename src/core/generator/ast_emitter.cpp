@@ -262,7 +262,7 @@ void AstEmitter::emitExternalSpecializationMarker(const ExternalSpecializationMa
                                                     const ClassDeclaration& targetClass,
                                                     std::ostringstream& out) {
     const MethodDeclaration* method = marker.method;
-    varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+    varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear(); viewVars_.clear();
     // When this specialization's return type IS its own concrete
     // specialized type (`Point Node::as<Point>()`, as opposed to e.g. `bool
     // Node::decodeInto<Point>(Point out)`, whose return type is `bool`, not
@@ -667,6 +667,41 @@ void AstEmitter::collectUsedRuntimeHelpers(const Program& program) {
             }
         }
     }
+}
+
+std::string AstEmitter::calleeParamType(const FunctionCall& call, size_t argIndex) const {
+    const std::vector<std::pair<std::string, std::string>>* params = nullptr;
+    if (call.callee) {
+        auto member = dynamic_cast<const MemberAccess*>(call.callee.get());
+        if (member == nullptr) return {};
+        const std::string objClass = exprObjectClass(member->object.get());
+        if (objClass.empty()) return {};
+        auto clsIt = classMethodParams_.find(objClass);
+        if (clsIt == classMethodParams_.end()) return {};
+        auto paramIt = clsIt->second.find(call.templateArg.empty() ? member->member : specializationKey(member->member, call.templateArg));
+        if (paramIt == clsIt->second.end() && call.templateArg.empty()) paramIt = clsIt->second.find(overloadKey(member->member, call.arguments.size()));
+        if (paramIt == clsIt->second.end()) return {};
+        params = &paramIt->second;
+    } else {
+        auto paramIt = functionParams_.find(call.function_name);
+        if (paramIt == functionParams_.end()) return {};
+        params = &paramIt->second;
+    }
+    return argIndex < params->size() ? (*params)[argIndex].first : std::string{};
+}
+
+bool AstEmitter::isViewExpression(const Expression* e) const {
+    if (auto id = dynamic_cast<const Identifier*>(e)) return viewVars_.count(id->name) > 0;
+    if (auto call = dynamic_cast<const FunctionCall*>(e)) {
+        auto member = call->callee ? dynamic_cast<const MemberAccess*>(call->callee.get()) : nullptr;
+        auto recv = member ? dynamic_cast<const Identifier*>(member->object.get()) : nullptr;
+        return recv != nullptr && viewVars_.count(recv->name) > 0 && stringViewMethodReturnsView(member->member);
+    }
+    return false;
+}
+
+std::string AstEmitter::emitAsString(const Expression* e) {
+    return isViewExpression(e) ? "std::string(" + emitExpression(e) + ")" : emitExpression(e);
 }
 
 std::pair<std::string, std::string> AstEmitter::calleeParam(const FunctionCall& call, size_t argIndex) const {
@@ -1286,7 +1321,7 @@ void AstEmitter::emitTopLevel(const Statement* stmt, std::ostringstream& out) {
         // gfx_shim.h pattern, whose `function` facts that project now keeps in
         // its own shim/gfx_shim.clfacts and passes with `cling --facts`). CeeLing emits the trust
         // boundary, never fabricates a body for it.
-        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear(); viewVars_.clear();
         currentExternRefParams_ = extFn->refParams;
         std::string sig = buildFunctionSignature(extFn->returnType, extFn->name,
                                                   extFn->parameters, "", false, false, false, extFn->name);
@@ -1441,7 +1476,7 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
                     << var->identifier << (zeroed ? "{}" : "") << ";\n";
             }
         } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
-            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear(); viewVars_.clear();
             std::string sig = buildFunctionSignature("", ctor->name, ctor->parameters, cls.name,
                                                       false, false, false, "");
             out << indentStr(1) << sig << ";\n";
@@ -1487,7 +1522,7 @@ void AstEmitter::emitClass(const ClassDeclaration& cls, std::ostringstream& out)
                              method->name);
                 continue;
             }
-            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear(); viewVars_.clear();
             std::string sig = buildFunctionSignature(method->returnType, method->name, method->parameters,
                                                       cls.name, method->isConst, method->isVirtual,
                                                       method->isOverride, method->name);
@@ -1596,7 +1631,7 @@ void AstEmitter::emitClassHeader(const ClassDeclaration& cls, std::ostringstream
                     << var->identifier << (zeroed ? "{}" : "") << ";\n";
             }
         } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
-            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear(); viewVars_.clear();
             std::string sig = buildFunctionSignature("", ctor->name, ctor->parameters, cls.name,
                                                       false, false, false, "");
             out << indentStr(1) << sig << ";\n";
@@ -1615,7 +1650,7 @@ void AstEmitter::emitClassHeader(const ClassDeclaration& cls, std::ostringstream
                              method->name);
                 continue;
             }
-            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+            varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear(); viewVars_.clear();
             std::string sig = buildFunctionSignature(method->returnType, method->name, method->parameters,
                                                       cls.name, method->isConst, method->isVirtual,
                                                       method->isOverride, method->name);
@@ -1629,7 +1664,7 @@ void AstEmitter::emitClassHeader(const ClassDeclaration& cls, std::ostringstream
         // Declaration only: `template<> ReturnType Node::as<int>(params);` -- build
         // the signature the same way the in-class declarations above do, but at
         // namespace scope with the qualified/specialized name, and no body.
-        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear(); viewVars_.clear();
         std::string sig = buildFunctionSignature(
             method->returnType,
             cls.name + "::" + method->name + "<" + cppTypeFor(method->specializationArg, "") + ">",
@@ -1651,7 +1686,7 @@ void AstEmitter::emitTopLevelHeader(const Statement* stmt, std::ostringstream& o
         }
         out << " };\n\n";
     } else if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt)) {
-        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear(); viewVars_.clear();
         std::string sig = buildFunctionSignature(fn->returnType, fn->name, fn->parameters,
                                                   "", false, false, false, fn->name);
         out << sig << ";\n\n";
@@ -1660,7 +1695,7 @@ void AstEmitter::emitTopLevelHeader(const Statement* stmt, std::ostringstream& o
         // declaration above -- an ext_fn already IS just a signature, so
         // header emission needs no special-casing beyond reusing the same
         // buildFunctionSignature call.
-        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear();
+        varKinds_.clear(); varClass_.clear(); observerClass_.clear(); containerVarType_.clear(); viewVars_.clear();
         currentExternRefParams_ = extFn->refParams;
         std::string sig = buildFunctionSignature(extFn->returnType, extFn->name, extFn->parameters,
                                                   "", false, false, false, extFn->name);
@@ -1823,6 +1858,7 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
             if (isVectorType(ptype) || isChannelType(ptype)) {
                 containerVarType_[pname] = ptype;
             }
+            if (isStringViewType(ptype)) viewVars_.insert(pname);
         }
     }
     sig += ")";
@@ -1843,11 +1879,13 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     varKinds_.clear();
     varClass_.clear();
     observerClass_.clear();
-    containerVarType_.clear();
+    containerVarType_.clear(); viewVars_.clear();
     const std::string savedClass = currentClass_;
     currentClass_ = ownerClass;
     const bool savedReturnsShared = currentMethodReturnsShared_;
     const bool savedReturnsValueType = currentMethodReturnsValueType_;
+    const std::string savedReturnType = currentReturnType_;
+    currentReturnType_ = returnType;
     const std::string savedFunctionName = currentFunctionName_;
     const std::string savedBodyScope = currentScope_;
     currentScope_ = scopeKeyFor(ownerClass, name, methodName);
@@ -1933,6 +1971,7 @@ void AstEmitter::emitFunction(const std::string& returnType, const std::string& 
     currentClass_ = savedClass;
     currentMethodReturnsShared_ = savedReturnsShared;
     currentMethodReturnsValueType_ = savedReturnsValueType;
+    currentReturnType_ = savedReturnType;
     currentFunctionName_ = savedFunctionName;
     currentScope_ = savedBodyScope;
     currentParamNames_ = savedParamNames;
@@ -2063,6 +2102,10 @@ std::string AstEmitter::selectAssignmentRhs(const AssignmentStatement* assign, c
                                             bool memberTarget, bool subscriptTarget) {
     std::string rhs;
     const bool rhsIsNullptr = isNullptrLiteral(assign->expression.get());
+    // a view stored into a `string` (a local or a field) is copied; into another view it is rebound as it is
+    if (!subscriptTarget && isViewExpression(assign->expression.get()) && (memberTarget || viewVars_.count(assign->variable) == 0)) {
+        return emitAsString(assign->expression.get());
+    }
     if (subscriptTarget) {
         // `m[key] = value;` (std::map insert-or-update, Phase 2.6 map slice): the
         // value is always a primitive this slice (enforced at parse time), so it's
@@ -2280,8 +2323,9 @@ void AstEmitter::emitStatementImpl(const Statement* stmt, std::ostringstream& ou
             if (isChannelType(decl->type)) {
                 containerVarType_[decl->identifier] = decl->type;      // (for method receivers; the handle is copied, never moved)
             }
+            if (isStringViewType(decl->type)) viewVars_.insert(decl->identifier);
             std::string rhs = rhsIsVector ? emitMovedArg(decl->expression.get())
-                                          : emitExpression(decl->expression.get());
+                                          : (isStringType(decl->type) ? emitAsString(decl->expression.get()) : emitExpression(decl->expression.get()));
             out << pad << cppTypeFor(decl->type, decl->identifier) << " " << decl->identifier << " = "
                 << rhs << ";\n";
         }
@@ -2444,6 +2488,8 @@ void AstEmitter::emitStatementImpl(const Statement* stmt, std::ostringstream& ou
                 rhs += emitExpression(neww->arguments[i].get());
             }
             rhs += ")";
+        } else if (isStringType(currentReturnType_) && isViewExpression(ret->expression.get())) {
+            rhs = emitAsString(ret->expression.get());
         } else {
             rhs = emitMovedArg(ret->expression.get());
         }
@@ -3014,6 +3060,10 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
                 // guaranteed before this parameter was ever classified
                 // read-only).
                 s += cppTypeFor(argContainerType, "") + "(" + emitExpression(call->arguments[i].get()) + ")";
+                continue;
+            }
+            if (isViewExpression(call->arguments[i].get()) && isStringType(calleeParamType(*call, i))) {
+                s += emitAsString(call->arguments[i].get());      // a view handed to a `string` parameter: an explicit copy
                 continue;
             }
             s += emitMovedArg(call->arguments[i].get(), calleeParam(*call, i));

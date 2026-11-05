@@ -1695,6 +1695,36 @@ error[semantic/use-after-move]: use of dangling observer `s` (its owner `v` is g
   help: `s` observes `v`, which no longer has a live owner
 ```
 
+A view is turned into an owning `string` by a copy, and the compiler writes the copy for you wherever a `string` is expected: a declaration (`string t = v;`), an assignment, an argument for a `string` parameter, a `return` from a function that
+returns `string`. The copy is a fresh owner, so it outlives the string the view was made from; reading a view that has died (to copy it) is still the use the checker rejects. Not converted: `s + v` (concatenation) and library functions that take a
+`string` (`std::stoi(v)`): copy first (`string t = v;`).
+
+<!-- example: 06_string_view_copy.clg -->
+```cpp
+string keep(string_view v) {
+    return v;                             // a view becomes an owning string by a copy
+}
+
+int main() {
+    string s = "hello";
+    string_view v = s;
+    string t = keep(v);                   // t owns its characters
+    s.append(" world");                   // v is dead now, t is not
+    std::cout << t << " " << s << std::endl;
+    return 0;
+}
+```
+<!-- output: 06_string_view_copy.clg -->
+```
+hello hello world
+```
+<!-- generated: 06_string_view_copy.clg "std::string keep(" -->
+```
+std::string keep(std::string_view v) {
+    return std::string(v);
+}
+```
+
 The trap above, a view of a temporary, is refused because a view cannot be made from the result of a call, nor from a concatenation, nor from a field (a field has no owner the checker follows):
 
 <!-- example: 06_gap_string_view.clg -->
@@ -1716,7 +1746,7 @@ error[semantic/use-after-move]: cannot tell what the `string_view` `sv` would re
   help: A call that returns a `string` returns a temporary, and a view of a temporary dangles at the end of the statement. Store the result in a `string` variable and make the view from that.
 ```
 
-What is still not there: converting a view back into a `string` (`std::string(v)` is not a CeeLing expression yet) and views in fields. `auto` and any made-up name are **unknown types, and a type name the
+What is still not there: views in fields (a copy into a `string` is the answer today). `auto` and any made-up name are **unknown types, and a type name the
 compiler has no shape for is an error.** The checks follow the types CeeLing knows (its classes, structs and enums, the primitives, `string`, `string_view`, `std::span`, vectors, maps, `Channel`, and the classes a loaded fact pack declares); a value of any
 other type would be invisible to them, so it cannot be declared. For a C++ library type, declare it in a fact pack and pass the pack with `--facts` ([chapter 11](11-talking-to-cpp.md)).
 
