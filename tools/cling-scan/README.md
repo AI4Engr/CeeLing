@@ -1,4 +1,4 @@
-# cling-scan (prototype)
+# cling-scan
 
 Writes a draft fact pack for one C++ class from its declaration, so a project does not have to type the facts of its library by hand.
 
@@ -33,8 +33,14 @@ member templates, operators (write `operator` facts by hand). Every fact is `sou
   scanning two instantiations and requiring equal facts, is not done here). Typedefs and enums of the classes and of the namespace are resolved. Member templates, operators and constructors are skipped.
 * The compiler enforces that binding: `cling --facts pack` refuses a pack whose recorded headers changed (exit 2), warns about headers it cannot find, and `--strict-headers` makes a missing header an error.
 * The pack binds **every non-system header the translation unit includes** (`clang -MM`; 265 for Eigen/Dense), not only the entry header, so a change anywhere in the library is noticed by `--check`.
-* It is a prototype on clang's **text AST dump**, not the LibTooling tool of the plan (no LLVM development libraries on the machine it was written on). Fast enough (0.6 s for `Json::Value`), brittle against changes of the
-  dump format; the tests pin the behaviour.
+* **Two backends** (`--backend auto|libclang|text`), one analysis. `libclang` (`libclang_backend.py`, since 2026-11-04) reads a non-template class through clang's **C API** with ctypes: a stable interface, so it does not break when the
+  dump format changes, and it needs only the libclang shared library (no LLVM development headers; this is the stable C API, not LibTooling). `text` is the first version, which parses `clang -Xclang -ast-dump`: it needs `--clang`, is
+  brittle against changes of the dump format (the tests pin it), and is the **only** way to read `--type`: the C API does not enumerate the members of a class template instantiation (tried on Eigen: `clang_visitChildren` on
+  `Eigen::Matrix<double,-1,1>` yields only its template arguments, even after an explicit instantiation, and no base specifiers). `auto` picks libclang for `--class` when it finds the library, otherwise text; `--type` and `--witness` are text.
+  The tests require both backends to give the same verdict for every method of `Shapes`, `Grid`, `Json::Value` (42 facts) and `YAML::Node` (13), with a negative control.
+* libclang needs its own builtin headers (`stddef.h`, the intrinsics): the `libclang-common-NN-dev` package. Without it the backend falls back to gcc's include directory, which is enough for ordinary C++ and **not** for a library that
+  includes `<immintrin.h>` (Eigen: gcc's header uses builtins clang lacks); `--clang-arg=-DEIGEN_DONT_VECTORIZE` avoids that include for Eigen. `--libclang <path>` (or `CLING_SCAN_LIBCLANG`) names the library; `--clang-arg` passes
+  other arguments (`-resource-dir=DIR` works only with headers of the same clang version).
 * Nothing was run against the library to confirm a fact (no sanitiser probes yet).
 
 ## Witness types: `--witness`

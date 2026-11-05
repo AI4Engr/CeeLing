@@ -244,6 +244,9 @@ if(NOT EMSCRIPTEN)
         if(EXISTS "${CLING_CLANG}")
             add_test(NAME cling_scan
                 COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/fact-scan/run_scan_test.sh $<TARGET_FILE:cling> ${CLING_CLANG})
+            # the same test with the scans of a class read through the libclang C API in WSL (skips itself without python3 + libclang there)
+            add_test(NAME cling_scan_libclang
+                COMMAND ${CMAKE_COMMAND} -E env SCAN_BACKEND=libclang ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/fact-scan/run_scan_test.sh $<TARGET_FILE:cling> ${CLING_CLANG})
             # is each scanned fact TRUE of the real library? (AddressSanitizer in WSL; skips itself without Eigen or WSL g++)
             add_test(NAME cling_scan_probe
                 COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/fact-scan/run_probe_test.sh $<TARGET_FILE:cling> ${CLING_CLANG})

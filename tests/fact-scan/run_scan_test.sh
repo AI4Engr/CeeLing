@@ -2,6 +2,10 @@
 # cling-scan (tools/cling-scan/cling_scan.py): a draft fact pack written from a class declaration, then USED.
 #
 #   usage: run_scan_test.sh <path-to-cling> <path-to-clang++>
+#
+# SCAN_BACKEND=text (default): every scan reads clang's text AST dump. SCAN_BACKEND=libclang: scans of a CLASS (--class) go through the libclang C API
+# inside WSL (python3 + libclang.so; it skips itself when WSL has neither), scans of a TEMPLATE instantiation (--type) stay on the text backend, because the
+# C API cannot enumerate the members of an instantiation; and section 8 requires both backends to write the same verdicts for the same classes.
 set -u
 CLING="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 CLANG="$2"
@@ -15,7 +19,32 @@ trap 'rm -rf "$TMP"' EXIT
 fail=0
 ok()  { echo "PASS: $1"; }
 bad() { echo "FAIL: $1"; fail=1; }
-scan() { python -I "$SCAN" --clang "$CLANG" "$@"; }
+WSL_DISTRO="${WSL_DISTRO:-Ubuntu-22.04}"
+BACKEND="${SCAN_BACKEND:-text}"
+wslp() { local m; m="$(cygpath -m "$1")"; printf '/mnt/%s%s' "$(printf %s "${m:0:1}" | tr A-Z a-z)" "${m:2}"; }
+scan_text() { python -I "$SCAN" --backend text --clang "$CLANG" "$@"; }
+scan_libclang() {
+    local a=() x
+    while [ $# -gt 0 ]; do
+        x="$1"; shift
+        if [ "$x" = "--clang" ]; then shift; continue; fi
+        if [[ "$x" == /* || "$x" =~ ^[A-Za-z]:[/\] ]] && { [ -e "$x" ] || [ -d "$(dirname "$x")" ]; }; then x="$(wslp "$x")"; fi
+        a+=("$x")
+    done
+    MSYS_NO_PATHCONV=1 wsl -d "$WSL_DISTRO" -- python3 -I "$(wslp "$SCAN")" --backend libclang "${a[@]}" 2>&1 | grep -v "systemd user session"
+    return "${PIPESTATUS[0]}"
+}
+scan() {
+    if [ "$BACKEND" = libclang ]; then
+        for x in "$@"; do
+            if [ "$x" = "--type" ] || [ "$x" = "--check" ]; then scan_text "$@"; return $?; fi
+        done
+        scan_libclang "$@"
+    else scan_text "$@"; fi
+}
+if [ "$BACKEND" = libclang ]; then
+    MSYS_NO_PATHCONV=1 wsl -d "$WSL_DISTRO" -- python3 -c "import ctypes; ctypes.CDLL('/usr/lib/llvm-14/lib/libclang.so.1')" >/dev/null 2>&1 || { echo "SKIP: no python3 + libclang in WSL distro $WSL_DISTRO"; exit 0; }
+fi
 
 # 1. every method shape gets the verdict the signature proves, and nothing more
 scan --header "$HERE/shapes.h" --class Shapes --out "$TMP/shapes.clfacts" >/dev/null || bad "scanning shapes.h failed"
@@ -167,5 +196,25 @@ out="$("$CLING" --strict-all "$TMP/vec.clg" --cpp "$TMP/s8.cpp" 2>&1)"; code=$?
 printf 'int main() { return 0; }
 ' > "$TMP/none.clg"
 "$CLING" --strict --facts "$SC" "$TMP/none.clg" --cpp "$TMP/s9.cpp" >/dev/null 2>&1 && ok "strict: unreviewed facts the program does not use are not a problem" || bad "strict: refused because of an unused fact"
+
+
+# 8. the two backends agree: the same class scanned through the text dump and through the libclang C API gets the same verdict for every method
+if [ "$BACKEND" = libclang ]; then
+    equal() {   # name, then the scan arguments of one class
+        local name="$1"; shift
+        scan_text "$@" --out "$TMP/eq_t_$name.clfacts" >/dev/null 2>&1 || { bad "backends: the text scan of $name failed"; return; }
+        scan_libclang "$@" --out "$TMP/eq_l_$name.clfacts" >/dev/null 2>&1 || { bad "backends: the libclang scan of $name failed"; return; }
+        python -I "$ROOT/tools/cling-scan/compare_packs.py" "$TMP/eq_t_$name.clfacts" "$TMP/eq_l_$name.clfacts" >/dev/null && ok "backends: $name gets the same verdict from the text dump and from libclang ($(grep -cE '^(fresh|borrow|mutator|function) ' "$TMP/eq_l_$name.clfacts") facts)" || bad "backends: $name differs between the text dump and libclang"
+    }
+    equal shapes --header "$HERE/shapes.h" --class Shapes
+    equal grid --header "$LIB/grid.h" --class Grid
+    [ -f "$JSONCPP_DIR/include/json/json.h" ] && equal jsoncpp --header "$JSONCPP_DIR/include/json/json.h" --class Json::Value -I "$JSONCPP_DIR/include"
+    [ -f "$YAML_DIR/include/yaml-cpp/yaml.h" ] && equal yamlcpp --header "$YAML_DIR/include/yaml-cpp/yaml.h" --class YAML::Node -I "$YAML_DIR/include"
+    # negative control: a pack with one verdict flipped must NOT compare equal (the comparison is not vacuous)
+    sed 's/^fresh Shapes::count /mutator Shapes::count /' "$TMP/eq_l_shapes.clfacts" > "$TMP/eq_flipped.clfacts"
+    python -I "$ROOT/tools/cling-scan/compare_packs.py" "$TMP/eq_t_shapes.clfacts" "$TMP/eq_flipped.clfacts" >/dev/null && bad "backends: a flipped verdict was not noticed" || ok "backends: negative control, a flipped verdict is noticed by the comparison"
+    # --type with the libclang backend says why it cannot
+    out="$(scan_libclang --header "$HERE/shapes.h" --type Shapes 2>&1)"; echo "$out" | grep -q "needs --backend text" && ok "backends: --type with --backend libclang is refused with the reason" || bad "backends: --type with libclang not refused clearly: $out"
+fi
 
 exit $fail

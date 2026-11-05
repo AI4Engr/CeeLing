@@ -1,7 +1,15 @@
-"""cling-scan (prototype): write a draft fact pack for one C++ class by reading its declaration with clang.
+"""cling-scan: write a draft fact pack for one C++ class by reading its declaration with clang.
 
-usage: cling_scan.py --clang <clang++> --header <header.h> (--class <Name> | --type <TypeExpr>) [-I <dir> ...] [-std c++17] [--out <file>]
+usage: cling_scan.py [--backend auto|libclang|text] [--clang <clang++>] [--libclang <libclang.so>] --header <header.h>
+                     (--class <Name> | --type <TypeExpr>) [-I <dir> ...] [-std c++17] [--clang-arg <arg> ...] [--out <file>]
        cling_scan.py --check <pack.clfacts>
+
+  Two ways of reading the declarations, one analysis on top of them (the verdict rules below do not depend on the backend):
+    libclang   clang's C API through ctypes (libclang_backend.py): a stable interface, no text parsing. For --class (a non-template class).
+               Needs only the libclang shared library (no LLVM development headers) and a clang resource directory or gcc's builtin headers.
+    text       `clang -Xclang -ast-dump` parsed as text (the first version): needs --clang. The only way to read --type, because the C API does not
+               enumerate the members of a template instantiation. Brittle against changes of the dump format; the tests pin it.
+    auto       (default) libclang for --class when the shared library is found, otherwise text.
 
   --class Name        a non-template class or struct (`Grid`, `Json::Value`)
   --type  TypeExpr    any type expression C++ accepts, including a template instantiation or a typedef of one
@@ -26,9 +34,8 @@ usage: cling_scan.py --clang <clang++> --header <header.h> (--class <Name> | --t
 
 What this is: a signature-level reading, nothing more. It never looks at a method BODY, so "const" is taken at its word (a `mutable`
 member or a global can break it), "returns a number" is taken from the declared type, and a class with a constructor it does not
-describe is still constructed by CeeLing as `new Name(...)` with unchecked arguments. It is a prototype on the text AST dump; the planned
-form is a LibTooling tool (TODO.md). Limits: operators, constructors and member templates are skipped; a base class that is itself a
-dependent type the dump does not show is not followed.
+describe is still constructed by CeeLing as `new Name(...)` with unchecked arguments. Limits: operators, constructors and member templates are skipped;
+the text backend does not follow a base class that is itself a dependent type the dump does not show.
 """
 import argparse
 import hashlib
@@ -39,7 +46,11 @@ import sys
 import tempfile
 
 ap = argparse.ArgumentParser()
-ap.add_argument('--clang', required=True)
+ap.add_argument('--clang', help='clang++ executable: needed by the text backend only')
+ap.add_argument('--backend', choices=['auto', 'libclang', 'text'], default='auto',
+                help="libclang: clang's C API (stable); text: parse `-ast-dump` (the prototype); auto: libclang when the shared library is found")
+ap.add_argument('--clang-arg', dest='clang_args', action='append', default=[], help='extra argument for libclang (e.g. -resource-dir=DIR, -D...); repeatable')
+ap.add_argument('--libclang', help='path of the libclang shared library (default: look in the usual places, or CLING_SCAN_LIBCLANG)')
 ap.add_argument('--header')
 ap.add_argument('--class', dest='cls')
 ap.add_argument('--type', dest='typ')
@@ -49,6 +60,7 @@ ap.add_argument('--out')
 ap.add_argument('--check')
 ap.add_argument('--witness', action='append', default=[], help='another instantiation of the same template: a fact is kept only if the witness gets the SAME verdict for that method')
 args = ap.parse_args()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # `python -I` does not put the script's directory on the path
 
 
 def sha256(path):
@@ -80,146 +92,168 @@ if args.check:
 if not args.header or not (args.cls or args.typ):
     ap.error('--header and one of --class / --type are required')
 
+backend = args.backend
+if backend == 'auto':
+    import libclang_backend
+    # libclang cannot enumerate the members of a template instantiation (--type): that stays on the text backend
+    backend = 'libclang' if (libclang_backend.available(args.libclang) and not args.typ) else 'text'
+if backend == 'libclang' and args.typ:
+    ap.error('--type (a template instantiation) needs --backend text: the libclang C API does not enumerate the members of an instantiation')
+if backend == 'text' and not args.clang:
+    ap.error('the text backend needs --clang (libclang was not found, or --backend text was given)')
+
 header = os.path.abspath(args.header)
 include_line = '#include "%s"\n' % header.replace('\\', '/')
 
 
-def run_clang(tu_text, dump_filter=None):
-    with tempfile.TemporaryDirectory() as d:
-        tu = os.path.join(d, 'tu.cc')
-        open(tu, 'w', encoding='utf-8').write(tu_text)
-        cmd = [args.clang, '-std=' + args.std, '-fsyntax-only', '-Xclang', '-ast-dump'] + \
-              (['-Xclang', '-ast-dump-filter=' + dump_filter] if dump_filter else []) + ['-I' + i for i in args.includes] + [tu]
-        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace')
-    if not r.stdout.strip():
-        sys.exit('clang failed:\n' + r.stderr[:2000])
-    return r.stdout.split('\n'), r.stderr
-
-
 aliases, enums = {}, set()
+methods, skipped = {}, []        # name -> list of dicts (ret, params, const, static); reasons a member was left out
+nodes = []                       # text backend: line index of every class node whose members count
+class_count = 0
+cls = args.cls or args.typ
 
-
-def collect_decls(text_lines):
-    for ln in text_lines:
-        m = re.match(r"^[| `-]*(?:TypedefDecl|TypeAliasDecl) 0x[0-9a-f]+ .*? ([A-Za-z_][A-Za-z_0-9]*) '([^']*)'(?::'([^']*)')?", ln)
-        if m:
-            aliases.setdefault(m.group(1), m.group(3) or m.group(2))
-        m = re.match(r"^[| `-]*EnumDecl 0x[0-9a-f]+ <[^>]*> (?:line:\d+:\d+|col:\d+) (?:referenced |used |implicit )*(?:class |struct )?([A-Za-z_][A-Za-z_0-9]*)", ln)
-        if m:
-            enums.add(m.group(1))
-
-
-def child_prefix(line):
-    """The prefix the DIRECT children of the node on `line` start with (the dump indents by two characters per level)."""
-    m = re.match(r'^((?:[| ] )*)([|`]-)?', line)
-    base, marker = m.group(1), m.group(2)
-    if not marker:
-        return base
-    return base + ('| ' if marker == '|-' else '  ')
-
-
-def split_top(text, sep=','):
-    out, cur, d = [], '', 0
-    for c in text:
-        if c in '<([':
-            d += 1
-        elif c in '>)]':
-            d -= 1
-        if c == sep and d == 0:
-            out.append(cur.strip())
-            cur = ''
-        else:
-            cur += c
-    if cur.strip():
-        out.append(cur.strip())
-    return out
-
-
-def norm(s):
-    return re.sub(r'\s+', '', s)
-
-
-# ---- locate the class node(s) -------------------------------------------------------------------------------------------------------
-nodes = []          # line index of every class node whose members count (the class and, for --type, its public bases)
-if args.typ:
-    lines, _ = run_clang(include_line + 'static_assert(sizeof(%s) > 0, "");\nextern %s cling_scan_probe;\n' % (args.typ, args.typ))
-    probe = None
-    for ln in lines:
-        m = re.search(r"VarDecl 0x[0-9a-f]+ .* cling_scan_probe '([^']*)'(?::'([^']*)')?", ln)
-        if m:
-            probe = m.group(2) or m.group(1)
-            break
-    if probe is None:
-        sys.exit('could not instantiate `%s` (is it a complete type after including %s?)' % (args.typ, args.header))
-    collect_decls(lines)
-
-    index = {}      # (class name, normalised template arguments) -> line index of its definition
-    for i, ln in enumerate(lines):
-        m = re.match(r'^((?:[| ] )*)[|`]-ClassTemplateSpecializationDecl 0x[0-9a-f]+ .* (?:class|struct) ([A-Za-z_][A-Za-z_0-9]*) definition', ln)
-        if not m:
-            continue
-        cp = child_prefix(ln)
-        targs = []
-        j = i + 1
-        while j < len(lines) and lines[j].startswith(cp):
-            tm = re.match('^' + re.escape(cp) + r"[|`]-TemplateArgument (?:type|integral|expr|decl|pack|template) ?'?([^']*?)'?$", lines[j])
-            if tm:
-                targs.append(norm(tm.group(1)))
-            j += 1
-        index.setdefault((m.group(2), tuple(targs)), i)
-
-    def spec_of(canonical_type):
-        t = re.sub(r'^(?:const\s+)?(?:(?:class|struct)\s+)?', '', canonical_type.strip())
-        mm = re.match(r'^(?:[A-Za-z_][A-Za-z_0-9]*::)*([A-Za-z_][A-Za-z_0-9]*)<(.*)>$', t)
-        if not mm:
-            return None
-        want_args = tuple(norm(a) for a in split_top(mm.group(2)))
-        exact = index.get((mm.group(1), want_args))
-        if exact is not None:
-            return exact
-        # the canonical spelling may omit trailing DEFAULT arguments (`Matrix<double, -1, 1>` is `Matrix<double, -1, 1, 0, -1, 1>`):
-        # accept a definition whose arguments start with the ones given, if exactly one does
-        hits = [line for (name, targs), line in index.items() if name == mm.group(1) and targs[:len(want_args)] == want_args]
-        return hits[0] if len(hits) == 1 else None
-
-    seen = set()
-
-    def visit(i):
-        if i in seen:
-            return
-        seen.add(i)
-        nodes.append(i)
-        cp = child_prefix(lines[i])
-        j = i + 1
-        while j < len(lines) and lines[j].startswith(cp):
-            bm = re.match('^' + re.escape(cp) + r"[|`]-public '([^']*)'(?::'([^']*)')?", lines[j])
-            if bm:
-                b = spec_of(bm.group(2) or bm.group(1))
-                if b is not None:
-                    visit(b)
-            j += 1
-
-    root = spec_of(probe)
-    if root is None:
-        sys.exit('found the type `%s` but not its definition in the dump (probe type: %s)' % (args.typ, probe))
-    visit(root)
-    cls = args.typ
+if backend == 'libclang':
+    import libclang_backend
+    got = libclang_backend.extract(header, args.cls, args.std, args.includes, args.libclang, args.clang_args)
+    cls, methods, skipped, enums, class_count = got['cls'], got['methods'], got['skipped'], got['enums'], got['class_count']
+    clang_version, dependency_files = got['version'], got['dependencies']
 else:
-    cls = args.cls
-    want = cls.split('::')[-1]
-    lines, _ = run_clang(include_line, dump_filter=want)
-    collect_decls(lines)
-    if '::' in cls:
-        l2, _ = run_clang(include_line, dump_filter=cls.split('::')[0])
-        collect_decls(l2)
-    start = None
-    for i, ln in enumerate(lines):
-        if re.match(r'^CXXRecordDecl 0x[0-9a-f]+ .* (class|struct) %s definition' % re.escape(want), ln):
-            start = i
-            break
-    if start is None:
-        sys.exit('no definition of a class or struct named `%s` found in %s (for a template instantiation use --type)' % (want, args.header))
-    nodes.append(start)
+    def run_clang(tu_text, dump_filter=None):
+        with tempfile.TemporaryDirectory() as d:
+            tu = os.path.join(d, 'tu.cc')
+            open(tu, 'w', encoding='utf-8').write(tu_text)
+            cmd = [args.clang, '-std=' + args.std, '-fsyntax-only', '-Xclang', '-ast-dump'] + \
+                  (['-Xclang', '-ast-dump-filter=' + dump_filter] if dump_filter else []) + ['-I' + i for i in args.includes] + [tu]
+            r = subprocess.run(cmd, capture_output=True, text=True, errors='replace')
+        if not r.stdout.strip():
+            sys.exit('clang failed:\n' + r.stderr[:2000])
+        return r.stdout.split('\n'), r.stderr
+
+
+
+
+    def collect_decls(text_lines):
+        for ln in text_lines:
+            m = re.match(r"^[| `-]*(?:TypedefDecl|TypeAliasDecl) 0x[0-9a-f]+ .*? ([A-Za-z_][A-Za-z_0-9]*) '([^']*)'(?::'([^']*)')?", ln)
+            if m:
+                aliases.setdefault(m.group(1), m.group(3) or m.group(2))
+            m = re.match(r"^[| `-]*EnumDecl 0x[0-9a-f]+ <[^>]*> (?:line:\d+:\d+|col:\d+) (?:referenced |used |implicit )*(?:class |struct )?([A-Za-z_][A-Za-z_0-9]*)", ln)
+            if m:
+                enums.add(m.group(1))
+
+
+    def child_prefix(line):
+        """The prefix the DIRECT children of the node on `line` start with (the dump indents by two characters per level)."""
+        m = re.match(r'^((?:[| ] )*)([|`]-)?', line)
+        base, marker = m.group(1), m.group(2)
+        if not marker:
+            return base
+        return base + ('| ' if marker == '|-' else '  ')
+
+
+    def split_top(text, sep=','):
+        out, cur, d = [], '', 0
+        for c in text:
+            if c in '<([':
+                d += 1
+            elif c in '>)]':
+                d -= 1
+            if c == sep and d == 0:
+                out.append(cur.strip())
+                cur = ''
+            else:
+                cur += c
+        if cur.strip():
+            out.append(cur.strip())
+        return out
+
+
+    def norm(s):
+        return re.sub(r'\s+', '', s)
+
+
+    # ---- locate the class node(s) -------------------------------------------------------------------------------------------------------
+    nodes = []          # line index of every class node whose members count (the class and, for --type, its public bases)
+    if args.typ:
+        lines, _ = run_clang(include_line + 'static_assert(sizeof(%s) > 0, "");\nextern %s cling_scan_probe;\n' % (args.typ, args.typ))
+        probe = None
+        for ln in lines:
+            m = re.search(r"VarDecl 0x[0-9a-f]+ .* cling_scan_probe '([^']*)'(?::'([^']*)')?", ln)
+            if m:
+                probe = m.group(2) or m.group(1)
+                break
+        if probe is None:
+            sys.exit('could not instantiate `%s` (is it a complete type after including %s?)' % (args.typ, args.header))
+        collect_decls(lines)
+
+        index = {}      # (class name, normalised template arguments) -> line index of its definition
+        for i, ln in enumerate(lines):
+            m = re.match(r'^((?:[| ] )*)[|`]-ClassTemplateSpecializationDecl 0x[0-9a-f]+ .* (?:class|struct) ([A-Za-z_][A-Za-z_0-9]*) definition', ln)
+            if not m:
+                continue
+            cp = child_prefix(ln)
+            targs = []
+            j = i + 1
+            while j < len(lines) and lines[j].startswith(cp):
+                tm = re.match('^' + re.escape(cp) + r"[|`]-TemplateArgument (?:type|integral|expr|decl|pack|template) ?'?([^']*?)'?$", lines[j])
+                if tm:
+                    targs.append(norm(tm.group(1)))
+                j += 1
+            index.setdefault((m.group(2), tuple(targs)), i)
+
+        def spec_of(canonical_type):
+            t = re.sub(r'^(?:const\s+)?(?:(?:class|struct)\s+)?', '', canonical_type.strip())
+            mm = re.match(r'^(?:[A-Za-z_][A-Za-z_0-9]*::)*([A-Za-z_][A-Za-z_0-9]*)<(.*)>$', t)
+            if not mm:
+                return None
+            want_args = tuple(norm(a) for a in split_top(mm.group(2)))
+            exact = index.get((mm.group(1), want_args))
+            if exact is not None:
+                return exact
+            # the canonical spelling may omit trailing DEFAULT arguments (`Matrix<double, -1, 1>` is `Matrix<double, -1, 1, 0, -1, 1>`):
+            # accept a definition whose arguments start with the ones given, if exactly one does
+            hits = [line for (name, targs), line in index.items() if name == mm.group(1) and targs[:len(want_args)] == want_args]
+            return hits[0] if len(hits) == 1 else None
+
+        seen = set()
+
+        def visit(i):
+            if i in seen:
+                return
+            seen.add(i)
+            nodes.append(i)
+            cp = child_prefix(lines[i])
+            j = i + 1
+            while j < len(lines) and lines[j].startswith(cp):
+                bm = re.match('^' + re.escape(cp) + r"[|`]-public '([^']*)'(?::'([^']*)')?", lines[j])
+                if bm:
+                    b = spec_of(bm.group(2) or bm.group(1))
+                    if b is not None:
+                        visit(b)
+                j += 1
+
+        root = spec_of(probe)
+        if root is None:
+            sys.exit('found the type `%s` but not its definition in the dump (probe type: %s)' % (args.typ, probe))
+        visit(root)
+        cls = args.typ
+    else:
+        cls = args.cls
+        want = cls.split('::')[-1]
+        lines, _ = run_clang(include_line, dump_filter=want)
+        collect_decls(lines)
+        if '::' in cls:
+            l2, _ = run_clang(include_line, dump_filter=cls.split('::')[0])
+            collect_decls(l2)
+        start = None
+        for i, ln in enumerate(lines):
+            if re.match(r'^CXXRecordDecl 0x[0-9a-f]+ .* (class|struct) %s definition' % re.escape(want), ln):
+                start = i
+                break
+        if start is None:
+            sys.exit('no definition of a class or struct named `%s` found in %s (for a template instantiation use --type)' % (want, args.header))
+        nodes.append(start)
+
 
 ARITH = r'(?:std::)?(?:unsigned |signed )?(?:char|short|int|long|long long|float|double|bool|wchar_t|char8_t|char16_t|char32_t|size_t|ptrdiff_t|int8_t|int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|uint64_t)'
 ARITH_RE = re.compile('^' + ARITH + '$')
@@ -296,50 +330,51 @@ def plain_param(p):
     return bool(ARITH_RE.match(r)) or is_string(r) or r in enums or r.split('::')[-1] in enums
 
 
-methods = {}      # name -> list of dicts
-skipped = []
-for start in nodes:
-    is_struct = ' struct ' in lines[start]
-    access = 'public' if is_struct else 'private'
-    cp = child_prefix(lines[start])
-    i = start
-    # A node printed at the top level of a filtered dump has children with NO indentation (`|-` / `` `- ``), and the next top-level node (another
-    # declaration matching the filter, e.g. the nested `Json::Value::CZString`) starts with a letter: that line ends this class. Without this,
-    # an empty prefix matched everything and the nested class's methods were read as the outer class's.
-    while i + 1 < len(lines) and lines[i + 1].startswith(cp) and (cp != '' or lines[i + 1][:1] in ('|', '`')):
-        i += 1
-        ln = lines[i]
-        m = re.match('^' + re.escape(cp) + r'[|`]-([A-Za-z]+) 0x[0-9a-f]+ (.*)$', ln)
-        if not m:
-            continue
-        kind, rest = m.groups()
-        if kind in ('TypedefDecl', 'TypeAliasDecl'):
-            tm = re.match(r".*? ([A-Za-z_][A-Za-z_0-9]*) '([^']*)'(?::'([^']*)')?", rest)
-            if tm:
-                aliases[tm.group(1)] = tm.group(3) or tm.group(2)
-            continue
-        if kind == 'AccessSpecDecl':
-            access = rest.split()[-1]
-            continue
-        if kind == 'FunctionTemplateDecl':
-            if access == 'public':
-                skipped.append('a member template (needs the arguments it is used with)')
-            continue
-        if kind != 'CXXMethodDecl':
-            continue
-        t = re.search(r"\s(operator\S*|~?[A-Za-z_][A-Za-z_0-9]*)\s+'([^']*)'(?::'([^']*)')?(.*)$", rest)
-        if not t:
-            continue
-        name, spelled, canon, tail = t.group(1), t.group(2), t.group(3), t.group(4)
-        typ = canon or spelled
-        if access != 'public' or name.startswith('operator') or name.startswith('~'):
-            if access == 'public' and name.startswith('operator'):
-                skipped.append('%s: operators need `operator` facts written by hand' % name)
-            continue
-        if re.search(r'\bimplicit\b', rest.split("'")[0]):
-            continue       # compiler-generated
-        ret, params, const = parse_type(typ)
-        methods.setdefault(name, []).append(dict(ret=ret, params=params, const=const, static=bool(re.search(r'\bstatic\b', tail))))
+if backend == 'text':
+    for start in nodes:
+        is_struct = ' struct ' in lines[start]
+        access = 'public' if is_struct else 'private'
+        cp = child_prefix(lines[start])
+        i = start
+        # A node printed at the top level of a filtered dump has children with NO indentation (`|-` / `` `- ``), and the next top-level node (another
+        # declaration matching the filter, e.g. the nested `Json::Value::CZString`) starts with a letter: that line ends this class. Without this,
+        # an empty prefix matched everything and the nested class's methods were read as the outer class's.
+        while i + 1 < len(lines) and lines[i + 1].startswith(cp) and (cp != '' or lines[i + 1][:1] in ('|', '`')):
+            i += 1
+            ln = lines[i]
+            m = re.match('^' + re.escape(cp) + r'[|`]-([A-Za-z]+) 0x[0-9a-f]+ (.*)$', ln)
+            if not m:
+                continue
+            kind, rest = m.groups()
+            if kind in ('TypedefDecl', 'TypeAliasDecl'):
+                tm = re.match(r".*? ([A-Za-z_][A-Za-z_0-9]*) '([^']*)'(?::'([^']*)')?", rest)
+                if tm:
+                    aliases[tm.group(1)] = tm.group(3) or tm.group(2)
+                continue
+            if kind == 'AccessSpecDecl':
+                access = rest.split()[-1]
+                continue
+            if kind == 'FunctionTemplateDecl':
+                if access == 'public':
+                    skipped.append('a member template (needs the arguments it is used with)')
+                continue
+            if kind != 'CXXMethodDecl':
+                continue
+            t = re.search(r"\s(operator\S*|~?[A-Za-z_][A-Za-z_0-9]*)\s+'([^']*)'(?::'([^']*)')?(.*)$", rest)
+            if not t:
+                continue
+            name, spelled, canon, tail = t.group(1), t.group(2), t.group(3), t.group(4)
+            typ = canon or spelled
+            if access != 'public' or name.startswith('operator') or name.startswith('~'):
+                if access == 'public' and name.startswith('operator'):
+                    skipped.append('%s: operators need `operator` facts written by hand' % name)
+                continue
+            if re.search(r'\bimplicit\b', rest.split("'")[0]):
+                continue       # compiler-generated
+            ret, params, const = parse_type(typ)
+            methods.setdefault(name, []).append(dict(ret=ret, params=params, const=const, static=bool(re.search(r'\bstatic\b', tail))))
+
+    class_count = len(nodes)
 
 facts, notes = [], []
 for name in sorted(methods):
@@ -383,7 +418,8 @@ witness_lines = []
 for w in args.witness:
     with tempfile.TemporaryDirectory() as dw:
         wpack = os.path.join(dw, 'w.clfacts')
-        cmd = [sys.executable, '-I', os.path.abspath(__file__), '--clang', args.clang, '--header', args.header, '--type', w, '-std', args.std, '--out', wpack] + [x for i in args.includes for x in ('-I', i)]
+        cmd = [sys.executable, '-I', os.path.abspath(__file__), '--backend', backend, '--header', args.header, '--type', w, '-std', args.std, '--out', wpack] + \
+              (['--clang', args.clang] if args.clang else []) + (['--libclang', args.libclang] if args.libclang else []) + [x for i in args.includes for x in ('-I', i)]
         r = subprocess.run(cmd, capture_output=True, text=True, errors='replace')
         if r.returncode != 0:
             sys.exit('the witness type `%s` could not be scanned: %s' % (w, (r.stdout + r.stderr)[:600]))
@@ -405,6 +441,8 @@ for w in args.witness:
 def dependencies():
     """Every non-system header the translation unit includes, transitively (clang -MM): the whole library the facts depend on, not only
     its entry header. Paths with spaces are not handled (clang escapes them with a backslash)."""
+    if backend == 'libclang':
+        return dependency_files
     with tempfile.TemporaryDirectory() as d:
         tu = os.path.join(d, 'tu.cc')
         open(tu, 'w', encoding='utf-8').write(include_line)
@@ -418,14 +456,19 @@ def dependencies():
     return sorted(set(files))
 
 
-version = subprocess.run([args.clang, '--version'], capture_output=True, text=True).stdout.split('\n')[0].split('(')[0].replace('clang version', '').strip()
-out = ['# GENERATED by tools/cling-scan/cling_scan.py (a prototype on the clang text AST) from %s.' % os.path.basename(header),
+if backend == 'text':
+    version = subprocess.run([args.clang, '--version'], capture_output=True, text=True).stdout.split('\n')[0].split('(')[0].replace('clang version', '').strip()
+else:
+    version = clang_version
+reader = 'a prototype on the clang text AST' if backend == 'text' else "clang's libclang C API"
+out = ['# GENERATED by tools/cling-scan/cling_scan.py (%s) from %s.' % (reader, os.path.basename(header)),
        '# Every fact is `inferred review=unreviewed`: a reading of the declared signatures, never of the bodies. Review it before relying on it.',
        '# A method with no fact below keeps the conservative `opaque` default (its result borrows the receiver, calling it kills the receiver\'s',
        '# observers, an object argument is refused). `fresh`, `borrow`, `mutator` and `function` facts refine it.',
        '@pack scan-' + re.sub(r'[^A-Za-z0-9_]', '_', cls),
        '@version 1',
-       '@origin cling-scan prototype, clang %s, -std=%s%s' % (version, args.std, (', %d class(es): the type and its public bases' % len(nodes)) if args.typ else ''),
+       '@origin cling-scan %s, clang %s, -std=%s%s' % ('prototype' if backend == 'text' else 'libclang', version, args.std,
+                                                 (', %d class(es): the type and its public bases' % class_count) if args.typ else ''),
        '@scanner cling_scan.py',
        '',
        'opaque %s source=inferred review=unreviewed' % cls, '']
