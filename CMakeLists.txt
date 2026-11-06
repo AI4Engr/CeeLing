@@ -244,6 +244,9 @@ if(NOT EMSCRIPTEN)
         if(EXISTS "${CLING_CLANG}")
             add_test(NAME cling_scan
                 COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/fact-scan/run_scan_test.sh $<TARGET_FILE:cling> ${CLING_CLANG})
+            # every scan (templates and --witness too) through the LibTooling program cling-scan-extract in WSL (skips itself until it is built)
+            add_test(NAME cling_scan_libtooling
+                COMMAND ${CMAKE_COMMAND} -E env SCAN_BACKEND=libtooling ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/fact-scan/run_scan_test.sh $<TARGET_FILE:cling> ${CLING_CLANG})
             # the same test with the scans of a class read through the libclang C API in WSL (skips itself without python3 + libclang there)
             add_test(NAME cling_scan_libclang
                 COMMAND ${CMAKE_COMMAND} -E env SCAN_BACKEND=libclang ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/fact-scan/run_scan_test.sh $<TARGET_FILE:cling> ${CLING_CLANG})

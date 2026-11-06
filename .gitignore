@@ -12,3 +12,6 @@ build-wasm/
 *.debug.exe
 __pycache__/
 *.pyc
+
+# built LibTooling extractor of cling-scan
+tools/cling-scan/libtooling/cling-scan-extract

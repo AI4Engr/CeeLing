@@ -47,9 +47,10 @@ import tempfile
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--clang', help='clang++ executable: needed by the text backend only')
-ap.add_argument('--backend', choices=['auto', 'libclang', 'text'], default='auto',
+ap.add_argument('--backend', choices=['auto', 'libtooling', 'libclang', 'text'], default='auto',
                 help="libclang: clang's C API (stable); text: parse `-ast-dump` (the prototype); auto: libclang when the shared library is found")
 ap.add_argument('--clang-arg', dest='clang_args', action='append', default=[], help='extra argument for libclang (e.g. -resource-dir=DIR, -D...); repeatable')
+ap.add_argument('--extractor', help='path of cling-scan-extract, the LibTooling program (tools/cling-scan/libtooling/build.sh; or CLING_SCAN_EXTRACT)')
 ap.add_argument('--libclang', help='path of the libclang shared library (default: look in the usual places, or CLING_SCAN_LIBCLANG)')
 ap.add_argument('--header')
 ap.add_argument('--class', dest='cls')
@@ -95,10 +96,16 @@ if not args.header or not (args.cls or args.typ):
 backend = args.backend
 if backend == 'auto':
     import libclang_backend
-    # libclang cannot enumerate the members of a template instantiation (--type): that stays on the text backend
-    backend = 'libclang' if (libclang_backend.available(args.libclang) and not args.typ) else 'text'
+    import libtooling_backend
+    # LibTooling reads everything, templates included. The libclang C API cannot enumerate the members of a template instantiation (--type).
+    if libtooling_backend.available(args.extractor):
+        backend = 'libtooling'
+    elif libclang_backend.available(args.libclang) and not args.typ:
+        backend = 'libclang'
+    else:
+        backend = 'text'
 if backend == 'libclang' and args.typ:
-    ap.error('--type (a template instantiation) needs --backend text: the libclang C API does not enumerate the members of an instantiation')
+    ap.error('--type (a template instantiation) needs --backend libtooling (or text): the libclang C API does not enumerate the members of an instantiation')
 if backend == 'text' and not args.clang:
     ap.error('the text backend needs --clang (libclang was not found, or --backend text was given)')
 
@@ -112,9 +119,13 @@ nodes = []                       # text backend: line index of every class node 
 class_count = 0
 cls = args.cls or args.typ
 
-if backend == 'libclang':
-    import libclang_backend
-    got = libclang_backend.extract(header, args.cls, args.std, args.includes, args.libclang, args.clang_args)
+if backend in ('libclang', 'libtooling'):
+    if backend == 'libtooling':
+        import libtooling_backend
+        got = libtooling_backend.extract(header, args.cls, args.typ, args.std, args.includes, args.extractor, args.clang_args)
+    else:
+        import libclang_backend
+        got = libclang_backend.extract(header, args.cls, args.std, args.includes, args.libclang, args.clang_args)
     cls, methods, skipped, enums, class_count = got['cls'], got['methods'], got['skipped'], got['enums'], got['class_count']
     clang_version, dependency_files = got['version'], got['dependencies']
 else:
@@ -259,6 +270,11 @@ ARITH = r'(?:std::)?(?:unsigned |signed )?(?:char|short|int|long|long long|float
 ARITH_RE = re.compile('^' + ARITH + '$')
 
 
+def is_operator(name):
+    """`operator+`, `operator()`, `operator[]`; not a method that merely starts with the letters (Eigen's `operatorNorm`)."""
+    return name.startswith('operator') and (len(name) == 8 or not (name[8].isalnum() or name[8] == '_'))
+
+
 def parse_type(typ):
     """'ret (p1, p2) const noexcept' -> (ret, [params], is_const)."""
     depth = 0
@@ -365,8 +381,8 @@ if backend == 'text':
                 continue
             name, spelled, canon, tail = t.group(1), t.group(2), t.group(3), t.group(4)
             typ = canon or spelled
-            if access != 'public' or name.startswith('operator') or name.startswith('~'):
-                if access == 'public' and name.startswith('operator'):
+            if access != 'public' or is_operator(name) or name.startswith('~'):
+                if access == 'public' and is_operator(name):
                     skipped.append('%s: operators need `operator` facts written by hand' % name)
                 continue
             if re.search(r'\bimplicit\b', rest.split("'")[0]):
@@ -441,7 +457,7 @@ for w in args.witness:
 def dependencies():
     """Every non-system header the translation unit includes, transitively (clang -MM): the whole library the facts depend on, not only
     its entry header. Paths with spaces are not handled (clang escapes them with a backslash)."""
-    if backend == 'libclang':
+    if backend in ('libclang', 'libtooling'):
         return dependency_files
     with tempfile.TemporaryDirectory() as d:
         tu = os.path.join(d, 'tu.cc')
@@ -460,14 +476,14 @@ if backend == 'text':
     version = subprocess.run([args.clang, '--version'], capture_output=True, text=True).stdout.split('\n')[0].split('(')[0].replace('clang version', '').strip()
 else:
     version = clang_version
-reader = 'a prototype on the clang text AST' if backend == 'text' else "clang's libclang C API"
+reader = {'text': 'a prototype on the clang text AST', 'libclang': "clang's libclang C API", 'libtooling': "clang's C++ AST through LibTooling"}[backend]
 out = ['# GENERATED by tools/cling-scan/cling_scan.py (%s) from %s.' % (reader, os.path.basename(header)),
        '# Every fact is `inferred review=unreviewed`: a reading of the declared signatures, never of the bodies. Review it before relying on it.',
        '# A method with no fact below keeps the conservative `opaque` default (its result borrows the receiver, calling it kills the receiver\'s',
        '# observers, an object argument is refused). `fresh`, `borrow`, `mutator` and `function` facts refine it.',
        '@pack scan-' + re.sub(r'[^A-Za-z0-9_]', '_', cls),
        '@version 1',
-       '@origin cling-scan %s, clang %s, -std=%s%s' % ('prototype' if backend == 'text' else 'libclang', version, args.std,
+       '@origin cling-scan %s, clang %s, -std=%s%s' % ({'text': 'prototype', 'libclang': 'libclang', 'libtooling': 'libtooling'}[backend], version, args.std,
                                                  (', %d class(es): the type and its public bases' % class_count) if args.typ else ''),
        '@scanner cling_scan.py',
        '',

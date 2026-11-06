@@ -263,7 +263,7 @@ class Scanner:
             name = self.spelling(member)
             if L.clang_getCXXAccessSpecifier(member) != ACCESS_PUBLIC:
                 continue
-            if name.startswith('operator'):
+            if (name.startswith('operator') and (len(name) == 8 or not (name[8].isalnum() or name[8] == '_'))):
                 skipped.append('%s: operators need `operator` facts written by hand' % name)
                 continue
             ftype = L.clang_getCursorType(member)
