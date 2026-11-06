@@ -782,9 +782,27 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
         }
     }
 
+    // An argument that an earlier call of this statement already moved (`add(v, total(v))`: total(v) is evaluated first here, and C++ leaves the
+    // order open anyway) is a use of a moved-from value even when THIS call only borrows it.
+    auto reportMovedArgument = [&](size_t i) {
+        const std::string src = asObjectLocalName(call->arguments[i].get());
+        if (src.empty() || movedFrom_.count(src) == 0) return;
+        DanglingError e;
+        e.line = call->arguments[i]->loc.line;
+        e.column = call->arguments[i]->loc.column;
+        e.message = "use of moved-from value `" + src + "`";
+        e.help = "`" + src + "` was moved by an earlier call in this same statement; split the statement or pass a copy";
+        for (const auto& old : errors_) {
+            if (old.line == e.line && old.column == e.column && old.message == e.message) return;
+        }
+        errors_.push_back(e);
+    };
+
     for (size_t i = 0; i < call->arguments.size(); ++i) {
-        if (i == outParamIdx) continue;
-        if (refParams != nullptr && refParams->count(i)) continue;
+        if (i == outParamIdx || (refParams != nullptr && refParams->count(i))) {
+            reportMovedArgument(i);
+            continue;
+        }
         // Inferred read-only container parameter (see
         // SmartPointerAnalyzer::classifyReadOnlyContainerParams and
         // ast_emitter.cpp's matching const& emission) -- borrowed for the
@@ -806,12 +824,12 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
                 }
             }
             if (calleeParams != nullptr && i < calleeParams->size()) {
-                if (isSpanType((*calleeParams)[i].first)) continue;     // viewed for the call, not given away
+                if (isSpanType((*calleeParams)[i].first)) { reportMovedArgument(i); continue; }     // viewed for the call, not given away
                 const std::string& pname = (*calleeParams)[i].second;
                 const bool isReadOnlyContainer = receiverType.empty()
                     ? analyzer_->isReadOnlyContainerParam(call->function_name, pname)
                     : analyzer_->isReadOnlyMethodContainerParam(receiverType, methodName, pname);
-                if (isReadOnlyContainer) continue;
+                if (isReadOnlyContainer) { reportMovedArgument(i); continue; }
             }
         }
         if (receiverIsVector && vectorMethodSharesArg(methodName, i)) {
@@ -1849,6 +1867,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         localType_[cdecl->identifier] = cdecl->type;
     } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
         checkExpressionUses(fors->container.get());
+        applyCallArgMoves(fors->container.get());
         processLoop(nullptr, fors, fors->body);
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         // A bare expression statement, e.g. `sink(a);`. First check uses, then

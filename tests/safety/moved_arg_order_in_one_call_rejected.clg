@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ error: use of moved-from value `v`
+//@ reason: add(v, total(v)): total(v) moves v, and the first argument reads it (C++ leaves the order of evaluation open, so either way one of them sees an emptied vector).
+
+int total(std::vector<int> v) {
+    v.push_back(1);
+    return v.size();
+}
+int add(std::vector<int> v, int n) {
+    return v.size() + n;
+}
+int main() {
+    std::vector<int> v;
+    v.push_back(5);
+    int a = add(v, total(v));
+    std::cout << a << std::endl;
+    return 0;
+}

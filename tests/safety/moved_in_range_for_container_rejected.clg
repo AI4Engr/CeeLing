@@ -1,0 +1,17 @@
+//@ expect: reject
+//@ error: use of moved-from value `v`
+//@ reason: the container expression of a range-for is evaluated once, and grow(v) moves v, so the later v.size() is a use after move.
+
+std::vector<int> grow(std::vector<int> v) {
+    v.push_back(1);
+    return v;
+}
+int main() {
+    std::vector<int> v;
+    v.push_back(5);
+    for (int x : grow(v)) {
+        std::cout << x << std::endl;
+    }
+    std::cout << v.size() << std::endl;
+    return 0;
+}
