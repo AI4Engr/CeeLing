@@ -270,7 +270,7 @@ real.
   hardest original design problem (`auto`-vs-concrete-type provenance) is moot,
   not just deferred — every CeeLing local already forces the "concrete type
   evaluates" safe idiom Eigen's own docs recommend. See Chapter 16's
-  implementation-status note, `PLAN_eigen_views.md` (repo root), and the four
+  implementation-status note, `docs/design/eigen-views.md` (repo root), and the four
   `eigen-cling-spike/block_*.clg` fixtures (2 reject, 2 accept, all compiled +
   run against real Eigen). **Still a narrow slice**: only these 8 method names are
   covered (any other Eigen view method falls through to ordinary default-reject —
@@ -388,7 +388,7 @@ real.
   unconditionally (the correct conservative default). Still missing: a GENERAL
   per-library declaration mechanism (the allow-list entries are individually
   hand-added to CeeLing's own source today, not declared in a project-local file
-  — see `PLAN_eigen_views.md`'s "out of scope for v1" section and TODO.md's Part
+  — see `docs/design/eigen-views.md`'s "out of scope for v1" section and TODO.md's Part
   A/B plan for the un-implemented general version).
 - `insert`/`erase`/`resize` as additional invalidating mutators, class-typed map
   keys/values, container-held observers precise tracking (currently just banned),

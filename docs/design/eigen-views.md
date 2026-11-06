@@ -201,7 +201,7 @@ lives in — extend it, do not create a parallel mechanism):
 // NOT a fresh owned value -- extracted by reading Eigen's own return-type
 // naming convention (ColXpr/RowXpr/Block, etc. all alias Eigen's Block/
 // Transpose/... expression-template classes, which store a reference to
-// their source -- see PLAN_eigen_views.md for the full justification).
+// their source -- see docs/design/eigen-views.md for the full justification).
 // className -> set of method names that borrow self.
 bool isKnownBorrowingMethod(const std::string& className, const std::string& methodName);
 ```

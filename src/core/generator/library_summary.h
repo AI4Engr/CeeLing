@@ -258,7 +258,7 @@ bool isKnownExternalOperator(const std::string& type, const std::string& operato
 
 // Eigen methods known to return a VIEW that BORROWS `self` (the receiver),
 // e.g. `a.block(...)`/`a.row(i)`/`a.transpose()` -- NOT a fresh owned value.
-// See PLAN_eigen_views.md for the full justification; summary: Eigen's own
+// See docs/design/eigen-views.md for the full justification; summary: Eigen's own
 // return-type naming convention makes this legible WITHOUT parsing the real
 // (macro-laden, CRTP, `.inc`-file) signatures that produce it --
 // `col()`/`row()`/`block()` etc. all return a type aliasing Eigen's `Block`/
@@ -274,13 +274,13 @@ bool isKnownExternalOperator(const std::string& type, const std::string& operato
 // single-receiver, no-multi-operand-borrow shape (`receiver.method(args) ->
 // borrows self`); does not cover `operator+(a, b)`-style multi-operand
 // borrows (moot for CeeLing -- see the `auto` finding in
-// PLAN_eigen_views.md) or chained views (`a.block(...).transpose()`, which
+// docs/design/eigen-views.md) or chained views (`a.block(...).transpose()`, which
 // are conservatively rejected as unresolvable receivers, not specially
 // handled).
 bool isKnownBorrowingMethod(const std::string& className, const std::string& methodName);
 
 // `opaque Name` in a fact pack: an external class nobody wrote method facts for ("trusted", the conservative model of
-// PLAN_third_party_inference.md). Every method may be called. A method with no `fresh`/`borrow` fact is assumed to (a) return something
+// docs/design/third-party-inference.md). Every method may be called. A method with no `fresh`/`borrow` fact is assumed to (a) return something
 // that borrows the receiver, so `Grid w = g.anything();` makes `w` an observer of `g`, and (b) change the receiver, so it kills
 // every existing observer of the receiver. `fresh` and `borrow` facts refine this per method. The class's internals are never examined:
 // what the library does with what it is handed is trusted, exactly as for an `ext_fn`.

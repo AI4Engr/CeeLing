@@ -15,3 +15,17 @@ __pycache__/
 
 # built LibTooling extractor of cling-scan
 tools/cling-scan/libtooling/cling-scan-extract
+
+# precompiled headers and MSVC build products
+*.gch
+*.pch
+*.obj
+*.lib
+*.exp
+*.pdb
+
+# local-only tool settings, scratch folders and run output
+.claude/settings.local.json
+tmp_*/
+regression/results/
+.claude/

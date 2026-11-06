@@ -118,14 +118,6 @@ case "${1:-help}" in
         ./regression/run_regression.sh "$2"
         ;;
 
-    "serve")
-        info "Starting demo server..."
-        [ ! -f dist/cling.js ] && $0 wasm
-        command -v node >/dev/null || error "Node.js not found. Install Node.js to run demo server."
-        info "🚀 Starting server at http://localhost:8080"
-        node serve.js
-        ;;
-
     "clean")
         info "Cleaning..."
         rm -rf build/ build-wasm/ dist/
@@ -141,7 +133,6 @@ case "${1:-help}" in
         echo "  run [input] [output] - Transpile input .clg to C++"
         echo "                         Default output: build/generated_output.cpp"
         echo "  regression - Run regression tests"
-        echo "  serve      - Start demo server at http://localhost:8080"
         echo "  clean      - Clean build artifacts"
         echo "  help       - Show this help"
         echo ""
@@ -149,7 +140,6 @@ case "${1:-help}" in
         echo "  ./dev.sh setup    # First time setup"
         echo "  ./dev.sh build    # Build and test"
         echo "  ./dev.sh wasm     # Build for web"
-        echo "  ./dev.sh serve    # Start web demo"
         echo ""
         echo "Run examples:"
         echo "  ./dev.sh run tests/binary_tree.clg"

@@ -1,7 +1,7 @@
 {
   "name": "ceeling",
   "version": "0.1.0",
-  "description": "CeeLing - C-like Language",
+  "description": "CeeLing: a restricted, memory-safe dialect of C++ that transpiles to C++",
   "main": "dist/index.js",
   "scripts": {
     "build": "cmake --build build --parallel && (if not exist dist mkdir dist) && (if exist build\\cling.exe copy build\\cling.exe dist\\) && (if exist build\\test_cling.exe copy build\\test_cling.exe dist\\) && (if exist build\\cling_test.exe copy build\\cling_test.exe dist\\cling_test_suite.exe)",
@@ -30,7 +30,7 @@
     "parser",
     "evaluator"
   ],
-  "author": "",
+  "author": "AI4Engr",
   "license": "MIT",
   "devDependencies": {
     "rimraf": "^6.0.1",

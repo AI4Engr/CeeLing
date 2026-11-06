@@ -7,7 +7,7 @@
 
 namespace cling {
 
-// Library facts as data (TODO.md "Third-party library facts", PLAN_third_party_inference.md).
+// Library facts as data (TODO.md "Third-party library facts", docs/design/third-party-inference.md).
 //
 // A pack is a plain-text `.clfacts` file: header lines `@pack`, `@version`, `@origin`, then one fact per line,
 //     <kind> <subject> [flag ...] [key=value ...] source=<declared|inferred> [review=<state>]

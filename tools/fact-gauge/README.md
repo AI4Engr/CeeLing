@@ -1,6 +1,6 @@
 # fact-gauge
 
-Do the library facts and the checker agree, and do the facts agree with the C++ standard? (`PLAN_third_party_inference.md` section 7, "the gauge".)
+Do the library facts and the checker agree, and do the facts agree with the C++ standard? (`docs/design/third-party-inference.md` section 7, "the gauge".)
 
 ```
 python -I tools/fact-gauge/gauge.py --cling build/cling.exe [--report report.md]
@@ -27,7 +27,7 @@ a CeeLing program through the compiler and the same probe as plain C++ against t
 conf file (`tests/fact-scan/probe/eigen_vectorxd.conf`): how to build an object, a call that makes a view of it, how to read the view.
 
 ```
-python -I tools/fact-gauge/probe_pack.py --cling build/cling.exe --pack vx.clfacts --conf tests/fact-scan/probe/eigen_vectorxd.conf -I C:/project/eigen
+python -I tools/fact-gauge/probe_pack.py --cling build/cling.exe --pack vx.clfacts --conf tests/fact-scan/probe/eigen_vectorxd.conf -I <path to eigen>
 ```
 
 * `fresh`/`borrow` (the pack says the call leaves the receiver alone): the compiler must accept the program, and in the C++ probe the **lazy** view (`auto view = obj.head(2)`; CeeLing no longer lets you write that,
