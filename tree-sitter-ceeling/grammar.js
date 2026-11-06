@@ -263,6 +263,7 @@ module.exports = grammar({
     generic_type: $ => prec(10, seq(
       $.scoped_identifier,
       '<',
+      optional('const'),   // std::span<const int>: a read-only view (the only generic that means anything by it; validated downstream)
       $.type,
       optional(seq(',', $.type)),
       '>'

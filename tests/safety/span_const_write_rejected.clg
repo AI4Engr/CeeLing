@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: assignment through a read-only span
+//@ reason: the elements of a std::span<const int> cannot be written.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::span<const int> s = v;
+    s[0] = 5;
+    std::cout << v[0] << std::endl;
+    return 0;
+}

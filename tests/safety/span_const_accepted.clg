@@ -1,0 +1,31 @@
+//@ expect: accept
+//@ run: 66 8 4 6
+//@ reason: std::span<const T> is a read-only view: made from a vector, from a read-only vector parameter (which a writable span cannot be made from), and from a writable span (const is added, never dropped).
+//@ reason: It follows the vector like any span, and a vector passed to a span<const int> parameter is viewed, not moved (used again right after).
+
+int sum(std::span<const int> s) {
+    int t = 0;
+    int i = 0;
+    while (i < s.size()) {
+        t = t + s[i];
+        i = i + 1;
+    }
+    return t;
+}
+
+int viaParam(std::vector<int> v) {
+    std::span<const int> s = v;
+    return s.size() + s.front() + s.back();
+}
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    std::span<const int> s = v;
+    std::span<int> w = v;
+    w[0] = 4;
+    std::span<const int> r = w;
+    std::cout << sum(s) << sum(v) << " " << viaParam(v) << " " << r.size() + s.size() << " " << sum(r.subspan(1, 1)) + sum(s.first(1)) << std::endl;
+    return 0;
+}

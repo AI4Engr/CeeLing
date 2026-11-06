@@ -1,0 +1,13 @@
+//@ expect: reject
+//@ error: it would drop the `const`
+//@ reason: a writable view cannot be made from a read-only one (it would be a way to write through it).
+
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::span<const int> r = v;
+    std::span<int> w = r;
+    w[0] = 5;
+    std::cout << v[0] << std::endl;
+    return 0;
+}

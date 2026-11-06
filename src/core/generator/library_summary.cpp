@@ -1,3 +1,4 @@
+#include <cctype>
 #include "library_summary.h"
 
 #include <set>
@@ -268,7 +269,20 @@ std::string spanElementType(const std::string& type) {
     const std::string t = stripStdPrefix(type);
     std::string elem = t.substr(5, t.size() - 6);
     size_t a = elem.find_first_not_of(" 	"), b = elem.find_last_not_of(" 	");
-    return a == std::string::npos ? std::string{} : elem.substr(a, b - a + 1);
+    elem = a == std::string::npos ? std::string{} : elem.substr(a, b - a + 1);
+    if (elem.rfind("const", 0) == 0 && elem.size() > 5 && !(std::isalnum(static_cast<unsigned char>(elem[5])) || elem[5] == '_')) {
+        a = elem.find_first_not_of(" 	", 5);
+        elem = a == std::string::npos ? std::string{} : elem.substr(a);
+    }
+    return elem;
+}
+
+bool isSpanConstType(const std::string& type) {
+    if (!isSpanType(type)) return false;
+    const std::string t = stripStdPrefix(type);
+    size_t a = t.find_first_not_of(" 	", 5);
+    return a != std::string::npos && t.compare(a, 5, "const") == 0 && a + 5 < t.size() &&
+           !(std::isalnum(static_cast<unsigned char>(t[a + 5])) || t[a + 5] == '_');
 }
 
 bool isSpanElementAllowed(const std::string& elem) {
@@ -300,6 +314,7 @@ std::string spanHelperDefinition() {
 #define CLING_SPAN_DEFINED
 #include <cstdio>
 #include <cstdlib>
+#include <type_traits>
 namespace cling {
 // A non-owning view of a vector's elements (CeeLing's span<T>). Every way to narrow it is range-checked; subscripts go through cling::at.
 template <typename T>
@@ -307,7 +322,12 @@ class span {
 public:
     using size_type = size_t;
     span() : p_(nullptr), n_(0) {}
-    span(std::vector<T>& v) : p_(v.data()), n_(v.size()) {}
+    span(std::vector<std::remove_const_t<T>>& v) : p_(v.data()), n_(v.size()) {}
+    // span<const T>: a read-only view may also be made of a vector that is only readable here (an inferred `const&` parameter), and from a span<T>
+    template <typename U = T, typename = std::enable_if_t<std::is_const<U>::value>>
+    span(const std::vector<std::remove_const_t<T>>& v) : p_(v.data()), n_(v.size()) {}
+    template <typename U, typename = std::enable_if_t<std::is_const<T>::value && std::is_same<const U, T>::value && !std::is_const<U>::value>>
+    span(const span<U>& o) : p_(o.p_), n_(o.n_) {}
     size_t size() const { return n_; }
     bool empty() const { return n_ == 0; }
     T& operator[](size_t i) const { return p_[i]; }
@@ -322,6 +342,7 @@ private:
         std::fprintf(stderr, "cling: span::%s out of range (offset %zu, count %zu, size %zu)\n", what, off, count, n_);
         std::abort();
     }
+    template <typename> friend class span;
     T* p_;
     size_t n_;
 };

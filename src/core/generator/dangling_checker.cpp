@@ -1224,6 +1224,15 @@ void DanglingChecker::bindSpan(const std::string& name, const Expression* init, 
         fail("it has no initializer", "Initialize the span from a vector variable of this function.");
         return;
     }
+    // a read-only view cannot become a writable one
+    auto dropsConst = [&](const std::string& sourceType) {
+        if (isSpanConstType(sourceType) && !(localType_.count(name) && isSpanConstType(localType_.at(name)))) {
+            fail("it would drop the `const` of `" + sourceType + "`",
+                 "A `std::span<const T>` is read-only; a `std::span<T>` could write through it. Declare the new view as `std::span<const T>`.");
+            return true;
+        }
+        return false;
+    };
     auto memberCall = [](const Expression* e) -> const MemberAccess* {
         auto c = dynamic_cast<const FunctionCall*>(e);
         return c != nullptr && c->callee != nullptr ? dynamic_cast<const MemberAccess*>(c->callee.get()) : nullptr;
@@ -1238,6 +1247,7 @@ void DanglingChecker::bindSpan(const std::string& name, const Expression* init, 
             }
             owner = id->name;
         } else if (typeIt != localType_.end() && isSpanType(typeIt->second)) {
+            if (dropsConst(typeIt->second)) return;
             auto o = observerOf_.find(id->name);          // a copy of a span follows the same vector
             if (o != observerOf_.end()) owner = o->second;
         } else {
@@ -1251,6 +1261,7 @@ void DanglingChecker::bindSpan(const std::string& name, const Expression* init, 
                localType_.count(static_cast<const Identifier*>(mc->object.get())->name) > 0 &&
                isSpanType(localType_.at(static_cast<const Identifier*>(mc->object.get())->name)) && spanMethodReturnsView(mc->member)) {
         // `s.subspan(a, n)` / `s.first(n)` / `s.last(n)` on a span: another view of the SAME vector
+        if (dropsConst(localType_.at(static_cast<const Identifier*>(mc->object.get())->name))) return;
         auto o = observerOf_.find(static_cast<const Identifier*>(mc->object.get())->name);
         if (o != observerOf_.end()) owner = o->second;
     } else if (dynamic_cast<const FunctionCall*>(init) != nullptr) {

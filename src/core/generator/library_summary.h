@@ -115,7 +115,8 @@ bool stringViewMethodReturnsView(const std::string& methodName);
 // cling::span (spanHelperDefinition). std::span itself is C++20 and the generated code is C++17, so there is nothing to scan. T is a number, bool,
 // char, byte or int64. Like a string_view it is an observer of the vector it was made from, and only a local or a parameter may have this type.
 bool isSpanType(const std::string& type);
-std::string spanElementType(const std::string& type);
+std::string spanElementType(const std::string& type);      // the element type without a `const`
+bool isSpanConstType(const std::string& type);                // `std::span<const int>`: a read-only view
 bool isSpanElementAllowed(const std::string& elem);
 bool isKnownSpanMethod(const std::string& methodName);
 std::string spanMethodRefusal(const std::string& methodName);

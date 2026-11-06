@@ -1161,7 +1161,7 @@ bool AstEmitter::isBareValueReturningSpecializationCall(const Expression* expr) 
 std::string AstEmitter::cppTypeFor(const std::string& ceelingType, const std::string& varName) const {
     if (isStringType(ceelingType)) return "std::string";
     if (isStringViewType(ceelingType)) return "std::string_view";
-    if (isSpanType(ceelingType)) return "cling::span<" + cppTypeFor(spanElementType(ceelingType), "") + ">";
+    if (isSpanType(ceelingType)) return std::string("cling::span<") + (isSpanConstType(ceelingType) ? "const " : "") + cppTypeFor(spanElementType(ceelingType), "") + ">";
     if (isOptionalType(ceelingType)) return "std::optional<" + cppTypeFor(optionalElementType(ceelingType), "") + ">";
     // `byte`/`int64` are the two primitives whose CeeLing spelling is NOT
     // identical to their C++ spelling (every other primitive --

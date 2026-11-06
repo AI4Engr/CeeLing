@@ -916,6 +916,15 @@ void EscapeHatchChecker::checkStatement(const Statement* stmt) {
         rejectThisEscapeInConstructor(assign->expression.get(), stmt);
         checkExpression(assign->expression.get());
         if (auto sub = dynamic_cast<const SubscriptExpression*>(assign->target.get())) {
+            if (isSpanConstType(resolveDeclaredType(sub->object.get()))) {
+                EscapeHatchError e;
+                e.line = stmt->loc.line;
+                e.column = stmt->loc.column;
+                e.message = "assignment through a read-only span";
+                e.help = "`" + sub->object->toString() + "` is a `" + resolveDeclaredType(sub->object.get()) + "`: its elements cannot be written. "
+                         "Use a `std::span<T>` for a view that writes, or assign to the vector itself.";
+                errors_.push_back(e);
+            }
             // `n[key] = value;` on a CLASS-typed (not container) receiver needs a
             // REFERENCE-returning `operator[]` to mean anything in real C++ (the
             // reference is what the subsequent `= value` actually assigns through).

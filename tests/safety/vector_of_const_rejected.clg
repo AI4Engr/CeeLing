@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: unknown type
+//@ reason: `const` is accepted inside std::span<...> only; a vector of const ints is not a CeeLing type.
+
+int main() {
+    std::vector<const int> v;
+    return 0;
+}
