@@ -6,7 +6,7 @@
 //@ reason: the cheaper escape-by-construction route instead (same design as the
 //@ reason: observer-parameter ban): this is a parse error, not a semantic reject.
 //
-// Container-held observers (CLAUDE.md Phase 2.6 slice 2 follow-up) are forbidden by
+// Container-held observers (the design notes Phase 2.6 slice 2 follow-up) are forbidden by
 // construction, not by analysis: `generic_type`'s single type argument is `$.type`,
 // and `observer_qualifier` (`ref`) is only reachable from `variable_declaration` and
 // `parameter_list` in the grammar -- it can never appear inside a `<...>` type

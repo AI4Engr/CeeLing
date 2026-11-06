@@ -497,7 +497,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
             e.column = expr->loc.column;
             e.message = "C++-style casts are forbidden in CeeLing (found `" + id->name + "`)";
             e.help = "casting is a type-confusion / const-bypass escape hatch with no "
-                     "safe equivalent (CLAUDE.md hatch #13/#16); there is no cast "
+                     "safe equivalent (guide chapter 13, hatch #13/#16); there is no cast "
                      "syntax in the language.";
             errors_.push_back(e);
         }
@@ -514,7 +514,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                 e.message = "'.get()' is forbidden on a CeeLing object ('" +
                             member->object->toString() + "' is a " + objClass + ")";
                 e.help = "'.get()' would extract a raw pointer, which has no legal use "
-                         "in CeeLing (CLAUDE.md hatch #14) -- use the object directly, "
+                         "in CeeLing (guide chapter 13, hatch #14) -- use the object directly, "
                          "or add a named accessor method to the class if you need a "
                          "specific field.";
                 errors_.push_back(e);
@@ -538,7 +538,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
             e.message = "call to unknown function/method `" + calleeName + "`";
             e.help = "CeeLing has no borrow/ownership summary for anything it did not "
                      "compile itself; unknown calls are rejected by default rather than "
-                     "silently trusted (CLAUDE.md \"default-reject, never default-allow\"). "
+                     "silently trusted (the default-reject rule). "
                      "Define `" + calleeName + "` in CeeLing source, or call an existing "
                      "CeeLing function/method instead.";
             if (call->callee == nullptr && isPrimitiveConversionName(call->function_name)) {
@@ -546,7 +546,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                             "the argument here is not a single primitive";
                 e.help = "Primitive conversions take exactly one int/float/double/char/byte/int64 "
                          "(or bool) value. A class, container or string cannot be cast to a "
-                         "primitive -- that would be a type-confusion hatch (CLAUDE.md #13).";
+                         "primitive -- that would be a type-confusion hatch (guide chapter 13, #13).";
             }
             // A method of std::vector / string that exists but is not admitted: say why (the rule is in library_summary.cpp).
             if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get())) {
@@ -620,7 +620,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
             errors_.push_back(e);
         }
 
-        // Virtual call from a constructor (CLAUDE.md Phase 2.7). In C++ this does NOT
+        // Virtual call from a constructor (the design notes Phase 2.7). In C++ this does NOT
         // dispatch to the derived override -- the vtable still points at the base
         // while the base's constructor runs -- so the code silently does something
         // other than what it visually says. Purely structural: no provenance or
@@ -720,7 +720,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                 e.column = expr->loc.column;
                 e.message = "raw pointer types (`T*`) are forbidden (found `" +
                             leftId->name + "*`)";
-                e.help = "pointers have no legal path through CeeLing (CLAUDE.md hatch "
+                e.help = "pointers have no legal path through CeeLing (the design notes hatch "
                          "#15); declare a plain object variable and let the compiler "
                          "choose the smart-pointer type.";
                 errors_.push_back(e);
@@ -928,7 +928,7 @@ void EscapeHatchChecker::checkStatement(const Statement* stmt) {
             // `n[key] = value;` on a CLASS-typed (not container) receiver needs a
             // REFERENCE-returning `operator[]` to mean anything in real C++ (the
             // reference is what the subsequent `= value` actually assigns through).
-            // CeeLing has no `ref`-return capability yet (see TODO.md/Ch. 9), so
+            // CeeLing has no `ref`-return capability yet (see the internal notes/Ch. 9), so
             // this is rejected outright regardless of whether `operator[]` itself
             // exists -- read position (`x = n[key];`) has no such problem and stays
             // supported; only the write-through-subscript shape is unsupported.

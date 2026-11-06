@@ -5,7 +5,7 @@
 //@ smart-pointer-backed `T` and does not even compile for a value type (`.get()`
 //@ doesn't exist on it) -- rejected at the dangling-check stage instead of surfacing
 //@ as a g++ compile error, and instead of silently registering unprovable observer
-//@ state, per CLAUDE.md's default-reject rule.
+//@ state, per the design notes' default-reject rule.
 
 struct Point {
 public:

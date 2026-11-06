@@ -1675,7 +1675,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             // decl->type, which does not even compile for a value type (`.get()`
             // doesn't exist on it). Reject outright rather than silently registering
             // observer state that has no corresponding safe codegen -- matches
-            // CLAUDE.md's default-reject rule (unprovable safety is rejected, not
+            // The design notes' default-reject rule (unprovable safety is rejected, not
             // passed through).
             if (analyzer_ != nullptr && analyzer_->isValueTypeClass(decl->type)) {
                 DanglingError e;
@@ -1923,7 +1923,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         // branch holds after the `if` (a use after the `if` can't know which branch
         // ran), and if the branches actively disagree about what an observer points
         // at, that observer is treated as dangling rather than guessed at (same
-        // "ambiguous -> conservative reject" rule CLAUDE.md specifies elsewhere). See
+        // "ambiguous -> conservative reject" rule the design notes specify elsewhere). See
         // mergeBranchStates for the exact per-field rules.
         const BranchState before = snapshotBranchState();
         BranchState thenState = before;
@@ -2006,7 +2006,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         checkExpressionUses(throwStmt->expression.get());
         applyCallArgMoves(throwStmt->expression.get());
         // `throw` is restricted to string-typed operands this slice (CeeLing has no
-        // exception-class hierarchy without inheritance -- see CLAUDE.md/TODO.md).
+        // exception-class hierarchy without inheritance -- see the design notes/the internal notes).
         // A string literal, a string-typed identifier, or a `+` concatenation of
         // such (recursively) is fine; anything else (a class object, a container, a
         // numeric expression, an unresolvable expression) is rejected, per the

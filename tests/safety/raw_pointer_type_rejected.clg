@@ -1,5 +1,5 @@
 //@ expect: reject
-//@ reason: raw pointer types (`T*`) are forbidden (CLAUDE.md hatch #15) -- pointers
+//@ reason: raw pointer types (`T*`) are forbidden (guide chapter 13, hatch #15) -- pointers
 //@ reason: have no legal path through CeeLing.
 // Phase 1 escape-hatch fixture. `Node* p` has no grammar production in CeeLing; the
 // nearest thing that parses (`Node * p`, multiplication) is semantically rejected

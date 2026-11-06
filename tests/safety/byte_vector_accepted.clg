@@ -6,7 +6,7 @@
 //@ reason: primitive whose CeeLing spelling differs from its C++ spelling.
 //@ reason: This is the container shape zlib-cling's input/output buffers
 //@ reason: would use if migrated from vector<int> to vector<byte> (a
-//@ reason: separate, not-yet-done follow-up -- see CeeLing's TODO.md).
+//@ reason: separate, not-yet-done follow-up -- see CeeLing's the internal notes).
 //@ run: 3 72 101
 
 int main() {

@@ -2,7 +2,7 @@
 //@ reason: `pick`'s auto-derived summary says its return value aliases its first
 //@ reason: parameter; the returned reference is used safely while that object is alive.
 //
-// Exercises auto-derived function borrow summaries (CLAUDE.md component A). CeeLing
+// Exercises auto-derived function borrow summaries (the design notes component A). CeeLing
 // bans `ref` function parameters, so every object-typed parameter is unconditionally
 // moved into the callee -- the only thing a summary needs to capture is whether the
 // return value aliases one of its own parameters (a passthrough) or is always fresh.

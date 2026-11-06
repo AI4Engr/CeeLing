@@ -16,7 +16,7 @@ struct EscapeHatchError {
     std::string help;
 };
 
-// Phase 1 (CLAUDE.md threat model #13-18): seal the escape hatches that would let a
+// Phase 1 (guide chapter 13 threat model #13-18): seal the escape hatches that would let a
 // user route around the smart-pointer/dangling analysis entirely. Most hatches (raw
 // pointer types, reinterpret_cast/const_cast, raw union, raw delete) have no grammar
 // production at all, so they already fail to parse; this checker covers the one hatch
@@ -28,7 +28,7 @@ struct EscapeHatchError {
 // legally define its own `get()` (e.g. `Box.get()`); that is an ordinary method call,
 // not the smart-pointer back door, and is not touched by this checker.
 //
-// Also enforces CLAUDE.md's "default-reject unknown library calls" rule: a call whose
+// Also enforces the design notes' "default-reject unknown library calls" rule: a call whose
 // target is not a CeeLing-defined free function or method is rejected outright. Today
 // CeeLing has no mechanism to learn a real signature for anything reached via
 // `#include` (include lines are passed through as opaque text, never parsed for

@@ -70,7 +70,7 @@ int main() {
 ```
 
 **Where it stops.** `int` is 32 bits. CeeLing adds **no** overflow check, no narrowing check and no division-by-zero check: `2147483647 + 1` wraps (it is undefined behaviour in C++, and
-the generated code is C++), `int x = 3.7;` truncates, and `5 / 0` crashes the program. These were verified by running them, and `CLAUDE.md` does not list them among the run-time
+the generated code is C++), `int x = 3.7;` truncates, and `5 / 0` crashes the program. These were verified by running them, and the design notes do not list them among the run-time
 checks. If you write `long` or `size_t`, the compiler does not know the name and passes it through to C++ unchecked; do not rely on that, use `int` or `int64`.
 
 ## `byte` and `char`
@@ -189,7 +189,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: `int(...)` converts one primitive to another; the argument here is not a single primitive
   --> 03_cast_string.clg:3:13
-  help: Primitive conversions take exactly one int/float/double/char/byte/int64 (or bool) value. A class, container or string cannot be cast to a primitive -- that would be a type-confusion hatch (CLAUDE.md #13).
+  help: Primitive conversions take exactly one int/float/double/char/byte/int64 (or bool) value. A class, container or string cannot be cast to a primitive -- that would be a type-confusion hatch (guide chapter 13, #13).
 ```
 
 <!-- example: 03_cast_object.clg -->
@@ -210,7 +210,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: `int(...)` converts one primitive to another; the argument here is not a single primitive
   --> 03_cast_object.clg:9:13
-  help: Primitive conversions take exactly one int/float/double/char/byte/int64 (or bool) value. A class, container or string cannot be cast to a primitive -- that would be a type-confusion hatch (CLAUDE.md #13).
+  help: Primitive conversions take exactly one int/float/double/char/byte/int64 (or bool) value. A class, container or string cannot be cast to a primitive -- that would be a type-confusion hatch (guide chapter 13, #13).
 ```
 
 For text to number there is `std::stoi` (below). **Where it stops.** There is no `bool(x)`; write a comparison. The primitive casts do not check range: `byte(300)` is 44 on purpose, and
@@ -291,7 +291,7 @@ cling: index out of bounds at line 4 (index 9, size 5)
 ```
 
 **Where it stops.** The check covers `[]`. `substr` with a position past the end is not checked by CeeLing: the C++ library throws `std::out_of_range`, and `catch (string e)` does not catch
-it, so the program terminates (this is what `CLAUDE.md` lists as not covered):
+it, so the program terminates (this is what the design notes list as not covered):
 
 <!-- example: 03_string_substr.clg -->
 ```cpp
@@ -466,7 +466,7 @@ int countChars(const std::string& s) {
 ```
 
 `shout` appends to its parameter, so it keeps a by-value `std::string`; `text` printed `hello` afterwards. The read-only case is skipped for constructors, `virtual` and `override`
-methods and classes in an inheritance hierarchy (their signatures must stay identical), which keep the copy. This inference is described in `TODO.md`, not in `CLAUDE.md`.
+methods and classes in an inheritance hierarchy (their signatures must stay identical), which keep the copy. This inference is described in the internal notes, not in the design notes.
 
 ## The library functions a program may call
 
@@ -542,7 +542,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `std::sort`
   --> 03_unknown_call.clg:5:5
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `std::sort` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `std::sort` in CeeLing source, or call an existing CeeLing function/method instead.
 error[semantic/forbidden-construct]: `begin` is not available on `std::vector<int>`: it returns an iterator, and iterators are not tracked yet, so nothing would stop one from dangling
   --> 03_unknown_call.clg:5:15
   help: CeeLing admits a method of the standard library only when the checker can follow what it hands back; the rule and the scanned facts are in library_summary.cpp and facts/std-*.clfacts.
@@ -662,7 +662,7 @@ error[semantic/use-after-move]: use of moved-from value `a`
 (If the object is already shared with something else, `push_back` shares it instead and the local stays usable; whether it is shared is decided by the analysis of
 [chapter 4](04-ownership.md).) A reference into a vector is invalidated by `push_back`, `pop_back` and `resize`: that is chapter 1 section 2 and [chapter 6](06-dangling-references.md).
 
-**Where it stops.** `pop_back()` on an empty vector, and iterators past `end()`, are not checked (`CLAUDE.md`). Element types seen in the tests are primitives, `string` and objects.
+**Where it stops.** `pop_back()` on an empty vector, and iterators past `end()`, are not checked (the design notes). Element types seen in the tests are primitives, `string` and objects.
 
 ### `resize`, `reserve` and `copyWithin`: primitive elements only
 
@@ -905,7 +905,7 @@ int sumAll(const std::vector<int>& data) {
 ```
 
 (The call site in the generated code still says `std::move(v)`; a `const&` parameter takes nothing from it, which is why `v.size()` prints 3.) The rule's motivating case is
-zlib-cling's `decodeSymbol`, which copied four tables of about 512 entries per symbol: passing them by `const&` measured 9.7 times faster decompression (`CLAUDE.md`).
+zlib-cling's `decodeSymbol`, which copied four tables of about 512 entries per symbol: passing them by `const&` measured 9.7 times faster decompression (the design notes).
 
 <!-- example: 03_vector_moved.clg -->
 ```cpp

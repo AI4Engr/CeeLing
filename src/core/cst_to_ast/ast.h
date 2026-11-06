@@ -194,7 +194,7 @@ public:
 
 // A container declared without an initializer, e.g. `std::vector<int> v;` --
 // default-constructs to empty. The one exception to CeeLing's definite-
-// initialization rule (see CLAUDE.md hatch #18): a container's default (empty)
+// initialization rule (see guide chapter 13, hatch #18): a container's default (empty)
 // state is always well-defined and safe to read, unlike a bare scalar or class
 // declaration. `type` is always a generic-type string (e.g. "std::vector<int>");
 // the grammar restricts this production to $.generic_type, never a plain type.
@@ -351,7 +351,7 @@ public:
     // by value). ext_fn-only: `ref` stays hard-rejected in every other
     // parameter list (rejectObserverParams). A container ref lowers to
     // `const T&` (read-only borrow); a primitive ref lowers to `T&` (mutable
-    // out-param) -- see the type-decides-meaning table in TODO.md's ext_fn entry.
+    // out-param) -- see the type-decides-meaning table in the internal notes' ext_fn entry.
     std::set<size_t> refParams;
 
     ExternFunctionDeclaration(const std::string& retType,
@@ -666,7 +666,7 @@ public:
 // An unscoped enum: `enum Name { A, B, C };`. Deliberately unscoped -- enumerators
 // implicitly convert to `int`, matching how CeeLing users store an enum tag in a
 // plain `int` field (Java-like: no `static_cast` escape hatch exists to convert
-// an `enum class` value, and CeeLing forbids casts entirely -- see CLAUDE.md hatch
+// an `enum class` value, and CeeLing forbids casts entirely -- see the design notes hatch
 // #13). Not registered as a class type: DanglingChecker::isObjectType only matches
 // classNames_/vector/map, so an enum-typed value is automatically a plain value
 // (like int/bool/string), participating in zero move/observer tracking.
@@ -731,7 +731,7 @@ public:
     // C++ (CeeLing reuses the C++ compiler's vtable rather than building its own).
     bool isVirtual = false;    // `virtual` before the return type
     bool isOverride = false;   // `override` after the parameter list
-    // Return-type-generic method support (narrowly scoped -- see CLAUDE.md/TODO.md
+    // Return-type-generic method support (narrowly scoped -- see the design notes/the internal notes
     // and Chapter 18's implementation notes for exactly what this does and does not
     // cover). A method is at most ONE of: ordinary (both empty), a PRIMARY generic
     // (`typeParameter` set, e.g. "T" for `<T> T as()`), or a SPECIALIZATION

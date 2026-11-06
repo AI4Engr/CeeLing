@@ -1,7 +1,7 @@
 //@ expect: accept
 //@ run: 1 2
 //@ reason: direct minimal reproduction of the bug found building imgui-cling's
-//@ reason: colorEdit3 widget (see TODO.md's "value-type nested as a field"
+//@ reason: colorEdit3 widget (see the internal notes' "value-type nested as a field"
 //@ reason: entry): a value-type class (`Point`) with ONLY a multi-arg
 //@ reason: constructor (no zero-arg constructor at all), used as a FIELD
 //@ reason: inside another value-type class (`Wrapper`). Before AstEmitter

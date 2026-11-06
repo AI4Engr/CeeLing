@@ -1866,7 +1866,7 @@ std::string AstEmitter::buildFunctionSignature(const std::string& returnType, co
             // externs. Lowered exactly like an ext_fn `ref` container:
             // `const T&`, never a mutable `T&` (a mutable container
             // reference stays forbidden everywhere -- reallocation would
-            // invalidate every existing observer, CLAUDE.md threat #4).
+            // invalidate every existing observer, guide chapter 13, threat #4).
             // Call-site emission (emitMovedArg) must NOT move this argument
             // even when the callee is "not heap-pure" for a NON-local
             // argument -- that impurity gate controls whether the CALL SITE

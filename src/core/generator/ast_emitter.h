@@ -343,7 +343,7 @@ private:
     // than moved/smart-pointer-wrapped -- both the primary's own `T out` and
     // every concrete specialization's `Point out` share this SAME index and
     // SAME non-owning lowering, since a specialization's parameter list must
-    // structurally match its primary. NOTE: unrelated to CLAUDE.md's roadmap
+    // structurally match its primary. NOTE: unrelated to the design notes' roadmap
     // `borrow<T>` item -- see outParamIndex_'s own comment in dangling_checker.h.
     std::map<std::string, size_t> outParamIndex_;
     static std::string outParamKey(const std::string& ownerClass, const std::string& methodName) {

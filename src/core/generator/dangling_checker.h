@@ -26,7 +26,7 @@ struct DanglingError {
 //   * "move" events: passing an object-typed local as a function-call argument, and
 //     assigning one object-typed local from another (`Node b = a;` moves a).
 //   * "use" check: any later use of a moved-from variable is an error.
-// Auto-derived return-provenance summaries (CLAUDE.md component A) are also
+// Auto-derived return-provenance summaries (the design notes component A) are also
 // implemented: CeeLing bans `ref` function parameters, so every object-typed
 // parameter is unconditionally moved into the callee -- there is no per-parameter
 // borrow/move case to summarize. The only thing that varies per-function is whether
@@ -57,7 +57,7 @@ public:
     std::vector<DanglingError> check(const Program& program, const SmartPointerAnalyzer& analyzer);
 
 private:
-    // Auto-derived per-function/method borrow contract (CLAUDE.md component A).
+    // Auto-derived per-function/method borrow contract (the design notes component A).
     // CeeLing bans `ref` parameters, so every object-typed parameter is always moved
     // by the callee -- the only thing that varies per-function is what the return
     // value aliases, if anything.
@@ -177,8 +177,8 @@ private:
     // two string-valued operands is (string concatenation has no ownership/
     // dangling implications -- it always produces a fresh value, same as any other
     // primitive arithmetic). Recursive so `a + b + c` (left-associative chains)
-    // resolves correctly. Used by ThrowStatement's operand check -- see CLAUDE.md/
-    // TODO.md on why `throw` is restricted to string payloads at all.
+    // resolves correctly. Used by ThrowStatement's operand check -- see the design notes/
+    // The internal notes on why `throw` is restricted to string payloads at all.
     bool isStringValuedExpr(const Expression* expr) const;
 
     // Walk an expression; for every use of a moved-from variable, emit an error.
@@ -344,13 +344,13 @@ private:
     // OUT-PARAMETER, not moved into the callee -- populated for a method
     // whose PRIMARY generic uses its type parameter T as a parameter type
     // (`<T> bool decodeInto(T out)`, see ASTBuilder::buildMethodDeclaration's
-    // T-in-param-position support and CLAUDE.md's convert<T> section). Every
+    // T-in-param-position support and the design notes' convert<T> section). Every
     // concrete specialization of such a primary (`bool decodeInto<Point>(Point
     // out)`) shares the SAME out-parameter contract at the SAME index by
     // construction -- an explicit specialization's parameter list must match
     // the primary's shape, so there is exactly one out-parameter index per
     // (class, method name), independent of which concrete specialization a
-    // given call resolves to. NOTE: this is unrelated to CLAUDE.md's
+    // given call resolves to. NOTE: this is unrelated to the design notes'
     // roadmap `borrow<T>` item (a future, optional, general user-facing
     // ownership annotation, not yet designed) -- this mechanism is a much
     // narrower, mechanical special case that only ever arises from this one

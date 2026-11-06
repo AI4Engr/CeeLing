@@ -6,7 +6,7 @@
 //@ reason: std::bad_weak_ptr unconditionally when called before the object's
 //@ reason: shared_ptr control block exists -- and inside a constructor, it
 //@ reason: never does yet (make_shared hasn't finished constructing). Per
-//@ reason: CLAUDE.md's "default-reject, never default-allow", this is a hard
+//@ reason: the design notes' "default-reject, never default-allow", this is a hard
 //@ reason: compile-time rejection (EscapeHatchChecker::
 //@ reason: rejectThisEscapeInConstructor), mirroring the existing
 //@ reason: virtual-call-from-constructor check's same inConstructor_-gated

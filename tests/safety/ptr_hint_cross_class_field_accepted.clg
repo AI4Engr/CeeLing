@@ -5,7 +5,7 @@
 //@ reason: (`Listener.owner`), so it only matched when the two coincide (`Node prev;` inside Node).
 //@ reason: Every explicit hint on a cross-class field was silently ignored, `shared` as well as
 //@ reason: `weak`. Run: the program still behaves (4 emits, 5 hits); the lowering itself is
-//@ reason: asserted by the lowering probe recorded in TODO.md (live-object count after release).
+//@ reason: asserted by the lowering probe recorded in the internal notes (live-object count after release).
 
 class Listener {
 public:

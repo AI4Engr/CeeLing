@@ -686,7 +686,7 @@ int main() {
 101
 ```
 
-This is a known limitation of the implementation (it is listed in `TODO.md`), not a safety rule.
+This is a known limitation of the implementation (it is listed in the internal notes), not a safety rule.
 
 ## What a closure becomes
 

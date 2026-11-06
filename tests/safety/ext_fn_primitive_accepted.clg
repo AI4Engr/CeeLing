@@ -1,6 +1,6 @@
 //@ expect: accept
 //@ reason: an ext_fn declared with primitive parameter/return types (the
-//@ sqrt/sin/cos/fabs-shaped gap TODO.md records -- the allow-list before this
+//@ sqrt/sin/cos/fabs-shaped gap the internal notes record -- the allow-list before this
 //@ feature had none of those) compiles to a bare forward declaration, no body.
 //@ CeeLing trusts the caller-supplied signature; the real implementation is
 //@ hand-written C++ linked in separately (not exercised here -- this fixture

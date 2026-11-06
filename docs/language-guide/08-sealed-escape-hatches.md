@@ -90,7 +90,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: raw pointer types (`T*`) are forbidden (found `Node*`)
   --> 08_raw_pointer.clg:9:5
-  help: pointers have no legal path through CeeLing (CLAUDE.md hatch #15); declare a plain object variable and let the compiler choose the smart-pointer type.
+  help: pointers have no legal path through CeeLing (the design notes hatch #15); declare a plain object variable and let the compiler choose the smart-pointer type.
 ```
 
 (`Node * p;` parses as a multiplication, and a class name is never a legal operand of one, which is how the checker knows what was meant.) The other spellings have no grammar rule at all:
@@ -174,7 +174,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: '.get()' is forbidden on a CeeLing object ('p' is a Node)
   --> 08_get.clg:9:13
-  help: '.get()' would extract a raw pointer, which has no legal use in CeeLing (CLAUDE.md hatch #14) -- use the object directly, or add a named accessor method to the class if you need a specific field.
+  help: '.get()' would extract a raw pointer, which has no legal use in CeeLing (guide chapter 13, hatch #14) -- use the object directly, or add a named accessor method to the class if you need a specific field.
 ```
 
 This is the smallest example of "one hole voids the contract". If `.get()` were allowed, one call would give back a raw pointer, the pointer could be stored anywhere, and nothing in
@@ -278,7 +278,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `reinterpret_cast`
   --> 08_reinterpret_cast.clg:3:13
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `reinterpret_cast` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `reinterpret_cast` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 <!-- example: 08_const_cast.clg -->
 ```cpp
@@ -298,7 +298,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `const_cast`
   --> 08_const_cast.clg:9:16
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `const_cast` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `const_cast` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 `static_cast` and `dynamic_cast` are refused the same way. The C-style cast has no grammar rule:
@@ -357,7 +357,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: `int(...)` converts one primitive to another; the argument here is not a single primitive
   --> 08_class_cast.clg:9:13
-  help: Primitive conversions take exactly one int/float/double/char/byte/int64 (or bool) value. A class, container or string cannot be cast to a primitive -- that would be a type-confusion hatch (CLAUDE.md #13).
+  help: Primitive conversions take exactly one int/float/double/char/byte/int64 (or bool) value. A class, container or string cannot be cast to a primitive -- that would be a type-confusion hatch (guide chapter 13, #13).
 ```
 <!-- example: 08_string_cast.clg -->
 ```cpp
@@ -371,7 +371,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: `int(...)` converts one primitive to another; the argument here is not a single primitive
   --> 08_string_cast.clg:3:13
-  help: Primitive conversions take exactly one int/float/double/char/byte/int64 (or bool) value. A class, container or string cannot be cast to a primitive -- that would be a type-confusion hatch (CLAUDE.md #13).
+  help: Primitive conversions take exactly one int/float/double/char/byte/int64 (or bool) value. A class, container or string cannot be cast to a primitive -- that would be a type-confusion hatch (guide chapter 13, #13).
 ```
 
 For text to number there is a library function on the allow-list, which reports bad input by throwing a string:
@@ -468,7 +468,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `c_str`
   --> 08_c_str.clg:6:13
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `c_str` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `c_str` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 ## Uninitialized variables
@@ -874,7 +874,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `mysteryFunction`
   --> 08_unknown_call.clg:10:14
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `mysteryFunction` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `mysteryFunction` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 There is no hole through qualified names, through `try` bodies, or through a `throw` expression:
@@ -891,7 +891,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `std::notARealFunction`
   --> 08_unknown_qualified.clg:3:13
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `std::notARealFunction` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `std::notARealFunction` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 <!-- example: 08_unknown_in_try.clg -->
 ```cpp
@@ -909,7 +909,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `mysteryUnknownFunction`
   --> 08_unknown_in_try.clg:3:17
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `mysteryUnknownFunction` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `mysteryUnknownFunction` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 <!-- example: 08_unknown_in_throw.clg -->
 ```cpp
@@ -926,7 +926,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `mysteryUnknownMessage`
   --> 08_unknown_in_throw.clg:3:15
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `mysteryUnknownMessage` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `mysteryUnknownMessage` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 **Where it stops.** The table decides how much real library code compiles; growing it (and the declaration packs of chapter 11) is how more libraries become usable. The price of default-reject
@@ -1150,7 +1150,7 @@ int main() {
 ```
 <!-- error: 08_ext_fn_class.clg -->
 ```
-Error: error[semantic/forbidden-construct]: ext_fn parameter `n` type `Node` is not supported (line 7, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see TODO.md's ext_fn entry).
+Error: error[semantic/forbidden-construct]: ext_fn parameter `n` type `Node` is not supported (line 7, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see the internal notes' ext_fn entry).
 ```
 <!-- example: 08_ext_fn_other_call.clg -->
 ```cpp
@@ -1166,7 +1166,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `myCube`
   --> 08_ext_fn_other_call.clg:4:16
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `myCube` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `myCube` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 The syntax in full (`ref` parameters, `borrows`, the shim pattern), and what the contract says about the C++ behind it, is [chapter 11](11-talking-to-cpp.md). The contract's wording keeps the

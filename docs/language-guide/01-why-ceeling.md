@@ -314,7 +314,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: '.get()' is forbidden on a CeeLing object ('p' is a Node)
   --> 01_back_door.clg:9:13
-  help: '.get()' would extract a raw pointer, which has no legal use in CeeLing (CLAUDE.md hatch #14) -- use the object directly, or add a named accessor method to the class if you need a specific field.
+  help: '.get()' would extract a raw pointer, which has no legal use in CeeLing (guide chapter 13, hatch #14) -- use the object directly, or add a named accessor method to the class if you need a specific field.
 ```
 
 Raw pointer types are rejected as well, and the full list is [chapter 8](08-sealed-escape-hatches.md):
@@ -337,7 +337,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: raw pointer types (`T*`) are forbidden (found `Node*`)
   --> 01_raw_pointer.clg:9:5
-  help: pointers have no legal path through CeeLing (CLAUDE.md hatch #15); declare a plain object variable and let the compiler choose the smart-pointer type.
+  help: pointers have no legal path through CeeLing (the design notes hatch #15); declare a plain object variable and let the compiler choose the smart-pointer type.
 ```
 
 ### 7. A closure that captures a frame that is gone

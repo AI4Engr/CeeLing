@@ -3,7 +3,7 @@
 //@ reason: program must be rejected, not silently accepted -- CeeLing cannot
 //@ reason: desugar a closure into `class __closure_0 : public NoSuchThing`
 //@ reason: when `NoSuchThing` doesn't exist (the generated C++ wouldn't even
-//@ reason: parse). Matches CLAUDE.md's "default-reject, never default-allow":
+//@ reason: parse). Matches the design notes' "default-reject, never default-allow":
 //@ reason: an unknown interface gets the same treatment
 //@ reason: validateInheritance already gives an unknown ordinary base class
 //@ reason: (inherit_unknown_base_rejected.clg), just from

@@ -3,7 +3,7 @@
 //@ reason: enclosing scope at the closure's own source position -- a name
 //@ reason: that was never declared (typo, or declared later/in an unrelated
 //@ reason: scope) must be REJECTED, never silently ignored or defaulted to
-//@ reason: some guessed type. This is CLAUDE.md's "ambiguous inference ->
+//@ reason: some guessed type. This is the design notes' "ambiguous inference ->
 //@ reason: conservative reject" rule applied to the one genuinely new lookup
 //@ reason: this feature introduces (resolving a capture's declared type).
 

@@ -7,7 +7,7 @@
 namespace cling {
 
 // Hand-written borrow/ownership summaries for a minimal std::vector<T> allow-list
-// (Phase 2.6 slice 1). This is the first real entry in CLAUDE.md's library-summary
+// (Phase 2.6 slice 1). This is the first real entry in the design notes' library-summary
 // allow-list mechanism -- the same one EscapeHatchChecker's default-reject-unknown-
 // calls check (Phase 1) demands for anything CeeLing didn't compile itself. Grows
 // incrementally; only std::vector<T>'s push_back/size/begin/end are covered here.
@@ -82,7 +82,7 @@ bool isKnownVectorMethod(const std::string& methodName);
 bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex);
 
 // Does calling `methodName` on a vector potentially reallocate its backing store,
-// invalidating every existing reference/iterator into the container (CLAUDE.md
+// invalidating every existing reference/iterator into the container (the design notes
 // threat #4)? `push_back` and `resize` may reallocate; `pop_back` and a
 // shrinking `resize` destroy elements. `insert`/`erase` will extend this set
 // once they exist. `size`/`begin`/`end` are read-only and never invalidate.
@@ -158,7 +158,7 @@ bool isStringType(const std::string& type);
 
 // Is `methodName` a known std::string method this allow-list covers? Deliberately
 // excludes `c_str()` (and `data()`): both extract a raw `const char*`, the same
-// escape-hatch shape CLAUDE.md's `.get()` ban closes for smart pointers (#14) -- a
+// escape-hatch shape the design notes' `.get()` ban closes for smart pointers (#14) -- a
 // raw pointer has nowhere legal to go once raw pointers are otherwise forbidden.
 bool isKnownStringMethod(const std::string& methodName);
 
@@ -242,7 +242,7 @@ bool isKnownQualifiedFreeFunction(const std::string& qualifiedName);
 // `& 255`.
 bool isKnownRuntimeHelper(const std::string& qualifiedName);
 
-// EXPLORATORY Eigen spike (see CeeLing/TODO.md's Eigen entry) -- a narrow,
+// EXPLORATORY Eigen spike (see CeeLing/the internal notes' Eigen entry) -- a narrow,
 // hardcoded allow-list proving Eigen::MatrixXd can be CALLED from CeeLing at
 // all, taken as the "whitelist first" step before the real, general
 // third-party-borrow-summary mechanism (Part B, still just a plan) exists.
@@ -364,7 +364,7 @@ std::string vectorAlgorithmHelperDefinition();
 // `Channel<T>`: a built-in handle to a queue through which threads hand each other PLAIN VALUES (the same element types a `spawn` may
 // capture: primitives, string, vectors of primitives, structs of those). Copying the handle -- by assignment, as an argument, into a
 // `spawn` capture -- gives another handle to the SAME queue; the queue itself is guarded by a mutex, and what goes through it is
-// copies. It is the one sanctioned piece of state that a spawned job shares with its creator (CLAUDE.md, spawn).
+// copies. It is the one sanctioned piece of state that a spawned job shares with its creator (the design notes, spawn).
 
 // Is `type` a `Channel<...>` shape?
 bool isChannelType(const std::string& type);

@@ -259,7 +259,7 @@ int main() {
 ```
 
 **Expression templates (row 6).** `auto e = a * b;` over Eigen matrices is refused (`auto` has no known type); it used to be accepted, and the danger needs a matrix that dies before `e` is used. The Eigen view
-methods listed in the table are the narrow exception (from `TODO.md`; I did not re-run those fixtures, and I found none for them in `tests/safety`).
+methods listed in the table are the narrow exception (from the internal notes; I did not re-run those fixtures, and I found none for them in `tests/safety`).
 
 **Reference cycles (row 12).** A class whose field points back at its owner leaks if the compiler infers `shared_ptr` for it. The inference gives `weak_ptr` to fields named `prev`, `previous`,
 `parent`, `back` or `owner` in classes with several members of their own type, or when a `//@ptr weak Class.field` hint says so. It does not look for cycles:
@@ -298,7 +298,7 @@ public:
 ```
 
 `boss` became `shared_ptr` and the emitter holds the listener, so both stay alive forever. This is a leak, not a corruption: it is outside the contract, and it is the reason `owner` and `parent`
-are good names to use. A probe with a counting destructor, recorded in `TODO.md`, found all three listeners of a similar program still alive after the last outside handle was released.
+are good names to use. A probe with a counting destructor, recorded in the internal notes, found all three listeners of a similar program still alive after the last outside handle was released.
 
 **`variant` (row 17).** `std::variant` is accepted as any other library type. Reading the wrong alternative is the type confusion the row is about; `std::get` throws `std::bad_variant_access`, which
 `catch (string e)` does not catch, so the program terminates rather than misreads. The row's "guard variant" part was never built.
@@ -320,8 +320,8 @@ int main() {
 }
 ```
 
-The compiler accepts it, and the generated constructor body is empty. Object-typed fields are safe (an empty handle, which the null check catches). `CLAUDE.md` lists row 18 as "static, require
-definite-init" without this qualification; `TODO.md` says the same for fields ("safe: the emitter always default-constructs the smart pointer"), which is true for handles and not for
+The compiler accepts it, and the generated constructor body is empty. Object-typed fields are safe (an empty handle, which the null check catches). The design notes lists row 18 as "static, require
+definite-init" without this qualification; the internal notes say the same for fields ("safe: the emitter always default-constructs the smart pointer"), which is true for handles and not for
 primitives. I report it as a gap.
 
 **Smaller gaps, all documented where they live.**

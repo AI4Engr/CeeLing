@@ -96,7 +96,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `std::sqrt`
   --> 11_unknown_std_call.clg:2:16
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `std::sqrt` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `std::sqrt` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 One declaration trusts one name, not its neighbours:
@@ -114,7 +114,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `myCube`
   --> 11_ext_fn_other_rejected.clg:4:16
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `myCube` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `myCube` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 ### A header as the shim
@@ -165,7 +165,7 @@ int main() {
 ```
 <!-- error: 11_ext_fn_class_rejected.clg -->
 ```
-Error: error[semantic/forbidden-construct]: ext_fn parameter `n` type `Node` is not supported (line 7, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see TODO.md's ext_fn entry).
+Error: error[semantic/forbidden-construct]: ext_fn parameter `n` type `Node` is not supported (line 7, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see the internal notes' ext_fn entry).
 ```
 
 <!-- example: 11_ext_fn_void_rejected.clg -->
@@ -179,7 +179,7 @@ int main() {
 ```
 <!-- error: 11_ext_fn_void_rejected.clg -->
 ```
-Error: error[semantic/forbidden-construct]: ext_fn return type `void` is not supported (line 1, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see TODO.md's ext_fn entry).
+Error: error[semantic/forbidden-construct]: ext_fn return type `void` is not supported (line 1, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see the internal notes' ext_fn entry).
 ```
 
 (A `Channel` is refused in an `ext_fn` signature too: [chapter 10](10-threads.md).) Return an `int` status and put any other result in a `ref` parameter.
@@ -244,7 +244,7 @@ int fillText(std::string& out) {
 ```
 
 **A known bug, shown by this example.** The call `sumAll(v)` is emitted as `sumAll(std::move(v))`, though the parameter is a `const&`. It compiles and the call is correct, but the local `v` is left in the standard's "valid
-but unspecified" state, and the checker does not mark it moved, so reading `v` afterwards compiles and gives nothing reliable. The bug is recorded in `TODO.md` ("Known bug: `ext_fn ref` container arguments wrongly `std::move`d at
+but unspecified" state, and the checker does not mark it moved, so reading `v` afterwards compiles and gives nothing reliable. The bug is recorded in the internal notes ("Known bug: `ext_fn ref` container arguments wrongly `std::move`d at
 the call site"); passing a *field* is not affected. Until it is fixed, do not read a local vector after handing it to an `ext_fn ref`.
 
 ### A container is moved in by default
@@ -387,7 +387,7 @@ experiment, `gfx_init` and its relatives, used to be built in; imgui-cling now k
 `diagonal`, which are treated as borrowing their receiver. That is [chapter 6](06-dangling-references.md) (a `block` that dangles is rejected; an unlisted method such as `topRows` is refused). The machine this guide
 was checked on has no Eigen installed, so no Eigen program is compiled here; only the rejections, which need no Eigen headers, are shown there.
 
-**Not built:** vendor-maintained declaration files for other libraries. `TODO.md` records the format (a table of borrow, invalidate and move facts plus an accepted and a rejected test per contentious line), and says
+**Not built:** vendor-maintained declaration files for other libraries. The internal notes records the format (a table of borrow, invalidate and move facts plus an accepted and a rejected test per contentious line), and says
 nothing was built. Until it exists, a library other than the ones above is reached through `ext_fn` shims over primitives, not directly.
 
 ## The generated C++ is an ordinary library

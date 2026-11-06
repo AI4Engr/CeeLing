@@ -1,5 +1,5 @@
 > **History, not documentation.** The build diary and roadmap of the compiler as they stood during development; much of it is out of date. The current description of the language is the
-> [Language Guide](../language-guide/README.md) (chapter 18 is the status); the authoritative status is `CLAUDE.md` and `TODO.md`.
+> [Language Guide](../language-guide/README.md) (chapter 18 is the status); the authoritative status is the design notes and the internal notes.
 
 # 9. Status & Roadmap
 
@@ -41,7 +41,7 @@ real.
   `std::cout << ...` stream output. The old regex `CppGenerator` remains available via
   `--legacy-cpp` for comparison/debugging only — it does not offer the Phase 1
   guarantee, since it builds output from raw source text rather than the AST.
-- **Auto-derived return-provenance summaries** (CLAUDE.md component A) — the only
+- **Auto-derived return-provenance summaries** (the design notes component A) — the only
   thing a return-provenance summary needs to capture is whether a function's return
   value aliases one of its own parameters (`T f(T a){ return a; }`) or is always
   fresh. Computed once per function/method before the dangling check runs; a call
@@ -49,7 +49,7 @@ real.
   (alias → observer of the argument, same machinery as `ref`; fresh → new owner)
   instead of assuming every call returns something brand new. See
   `tests/safety/summary_return_aliases_param.clg` / `summary_return_alias_dangles.clg`.
-- **Parameter borrowed/moved summaries** (CLAUDE.md component A's other half) —
+- **Parameter borrowed/moved summaries** (the design notes component A's other half) —
   CeeLing bans `ref` function parameters, but that alone does NOT mean every
   object-typed parameter must be consumed: a method/constructor that stores its own
   parameter into an already-shared field (`link = other;`) does not consume that
@@ -74,7 +74,7 @@ real.
   `unique_ptr<Base>` is undefined behavior without it), and a `protected` no-arg
   base constructor (CeeLing has no base-initializer-list syntax; a derived
   constructor just assigns inherited fields in its own body). A virtual call from a
-  constructor is rejected (CLAUDE.md Phase 2.7's threat — it silently does not
+  constructor is rejected (the design notes Phase 2.7's threat — it silently does not
   dispatch to the override). See `tests/safety/inherit_virtual_dispatch_accepted.clg`
   and siblings, and Chapter 18's implementation notes.
 - **Return-local-reference** (#2) — CeeLing has no `ref` return type, so a function's
@@ -168,7 +168,7 @@ real.
 - **Return-type-generic methods with specializations (`.as<T>()`)** — narrowly
   scoped to the shape yaml-cpp needs: a primary generic `<T> T method() {...}`
   plus concrete specializations `ConcreteType method<ConcreteType>() {...}`,
-  called as `n.as<int>()`. Not general C++ templates (see TODO.md's "light
+  called as `n.as<int>()`. Not general C++ templates (see the internal notes' "light
   generics" item for the larger, unscoped feature). The only real risk was a
   grammar-level ambiguity between `x.as<int>()` and an ordinary comparison chain
   at the same expression position, resolved with a `conflicts:` entry; the
@@ -199,7 +199,7 @@ real.
   automatically classified to return `shared_ptr<T>` (aliasing the object
   graph) instead of the default `unique_ptr<T>` (ownership transfer) — no
   annotation, purely structural inference over the method body, matching
-  CLAUDE.md's "ownership is inferred, not annotated" rule. This is what
+  the design notes' "ownership is inferred, not annotated" rule. This is what
   actually closes the reference-return need above: yaml-cpp's
   `Node::operator[]` returns an alias into the tree by construction (every
   return in its body matches the rule), so `node["a"]` mutating the tree
@@ -388,7 +388,7 @@ real.
   unconditionally (the correct conservative default). Still missing: a GENERAL
   per-library declaration mechanism (the allow-list entries are individually
   hand-added to CeeLing's own source today, not declared in a project-local file
-  — see `docs/design/eigen-views.md`'s "out of scope for v1" section and TODO.md's Part
+  — see `docs/design/eigen-views.md`'s "out of scope for v1" section and the internal notes' Part
   A/B plan for the un-implemented general version).
 - `insert`/`erase`/`resize` as additional invalidating mutators, class-typed map
   keys/values, container-held observers precise tracking (currently just banned),
@@ -411,7 +411,7 @@ Without a red/green baseline none of the later phases can be verified.
 - ✅ **New-syntax fixtures** — `tests/safety/*.clg` use the intended surface syntax:
   **plain move** (`Node b = a;`) and **`ref` observers** (`ref Node n = ...;`), no
   `owned<>`/`borrowed<>`. The legacy annotated `borrow_*.clg` fixtures have since been
-  removed (see Phase 2's "Migrate/retire" item in `TODO.md`).
+  removed (see Phase 2's "Migrate/retire" item in the internal notes).
 - ✅ **Baseline snapshot** — `tests/safety/BASELINE.md` (Phase 0 frozen at PASS=2,
   XFAIL=9, FAIL=0; see the file for the full current count as later phases landed).
 - ✅ **CTest integration** — `cling_safety_contract_baseline`.
@@ -433,7 +433,7 @@ specific std/Eigen calls through is tracked under Phase 2.
 ### Phase 2 — Dangling-reference analysis (core)  ✅ done except library summaries
 Provenance table, death events, use-site check are implemented and cover all 5
 new-syntax dangling fixtures (owner moved/reassigned/scope-exited, observer-parameter
-ban), plus auto-derived return-provenance summaries (CLAUDE.md component A — scoped to
+ban), plus auto-derived return-provenance summaries (the design notes component A — scoped to
 return-value aliasing, since parameters are always-moved by construction),
 return-local-reference (#2), reference-stored-in-field escape (#3, sealed by
 construction — no `ref`-qualified field production exists), branch-merge
@@ -629,7 +629,7 @@ The minimum for the single-threaded 99.99% contract:
 > escape hatches (#13–#18).**
 
 Language expressiveness (light/general generics, range-for, general
-operator overloading, multiple inheritance) is tracked separately in `TODO.md`
+operator overloading, multiple inheritance) is tracked separately in the internal notes
 — safety is the foundation, expressiveness is the house built on top. `enum`,
 `namespace`, the narrow return-type-generic-method slice of templates,
 qualified free-function calls, `operator[]`/`operator=` overloading,

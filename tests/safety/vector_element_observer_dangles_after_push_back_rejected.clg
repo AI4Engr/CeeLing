@@ -1,6 +1,6 @@
 //@ expect: reject
 //@ reason: `push_back` may reallocate the vector's backing store, invalidating every
-//@ reason: existing reference into it (CLAUDE.md threat #4). `n` observes `v[0]` at
+//@ reason: existing reference into it (guide chapter 13, threat #4). `n` observes `v[0]` at
 //@ reason: the time of the ref declaration; the later push_back may move that
 //@ reason: storage elsewhere, so using `n` afterward is a real dangling-reference risk.
 //

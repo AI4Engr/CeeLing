@@ -1525,7 +1525,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `fetch`
   --> 02_derived_only_method_rejected.clg:16:18
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `fetch` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `fetch` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 (The message is the general "unknown call" message; the method does exist, on the derived class.) There is no multiple inheritance, no pure virtual (`= 0`), no `protected`, and no way to
@@ -2253,7 +2253,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `as`
   --> 02_generic_unspecialized_rejected.clg:11:16
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `as` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `as` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 `a < b` and `x.length() < 5` are still comparisons: the parser takes the `<` as a type argument only when the whole `name<Type>(...)` shape follows.
@@ -2437,7 +2437,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `size`
   --> 02_no_chain_on_library_result.clg:3:13
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `size` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `size` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 **Default arguments.** Write the overloads (they are supported):

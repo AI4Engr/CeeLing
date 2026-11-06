@@ -248,7 +248,7 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     // needs SHARED (because some method returns it as an alias) writes into
     // explicitHints, which secondPass's applyExplicitHints call then picks up
     // through the exact same lookup path a real //@ptr hint would use --
-    // ownership is INFERRED here, never user-annotated (CLAUDE.md), but reuses
+    // ownership is INFERRED here, never user-annotated (the design notes), but reuses
     // the hint mechanism's plumbing rather than adding a parallel one.
     inferAliasReturningMethods(program);
     secondPassDeterminePointerTypes();
@@ -821,7 +821,7 @@ std::optional<std::pair<std::string, std::string>> resolveInnerFieldChain(
 
 void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
     // A method M is ALIAS_RETURNING (return type shared_ptr<T>, inferred, no
-    // annotation -- CLAUDE.md's "ownership is inferred, not annotated" applies
+    // annotation -- the design notes' "ownership is inferred, not annotated" applies
     // to method returns exactly as it does to fields) iff EVERY return in its
     // body is one of:
     //   (a) `return this;`
@@ -2876,7 +2876,7 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
     // still consuming its argument, matching every other CeeLing function).
     // Requiring at least one GENUINE read of `paramName.field` (or a falsy/
     // non-null check on the bare parameter) before granting read-only status
-    // keeps the classification positive evidence-based, matching CLAUDE.md's
+    // keeps the classification positive evidence-based, matching the design notes'
     // "ambiguous -> conservative reject" spirit: no read at all is exactly as
     // ambiguous as a disqualifying use, so it defaults to the ordinary
     // move-by-value behavior instead.
@@ -3251,7 +3251,7 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnlyContainer(
                     // even called on a body-local copy of paramName's contents
                     // makes no sense since paramName IS the receiver here) or
                     // is begin()/end() (an iterator can outlive a reallocation
-                    // -- see CLAUDE.md threat #4 -- so treated conservatively
+                    // -- see guide chapter 13, threat #4 -- so treated conservatively
                     // as disqualifying too, not modeled as a form of read).
                     // `reserve` falls in here too (not modeled as a read) --
                     // conservative, not a safety requirement (it changes

@@ -62,5 +62,5 @@ python -I tools/fact-gauge/probe_pack.py --cling build/cling.exe --pack vx.clfac
 * The seeds cover a local vector with a whole-vector observer and an element observer. An observer of a FIELD container is refused outright by the checker ("whose owner cannot be tracked"), which says nothing about
   the facts. `std::vector` is also seeded through a `std::span<int>` (CeeLing's own view type, context "span observer") since 2026-11-04: every mutator kills the span, every reader leaves it. `std::string` is seeded through a `string_view` since 2026-11-03 (an observer of its characters): all 41 names, every mutator kills the view, every reader leaves it.
 * "0 false accepts" is a statement about these programs, one per method and context. It is not a proof, and no program shows that an inferred fact is true of the library's behaviour: that needs the sanitiser probes
-  of phase 3 (TODO.md).
+  of phase 3 (the internal notes).
 * Methods needing an iterator or initializer_list argument (`insert`, `erase`, `emplace`) cannot be written in CeeLing at all, so they are `UNREACHABLE`, not tested.

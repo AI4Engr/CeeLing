@@ -95,11 +95,11 @@ returns a pointer into someone else's memory (`cjson-cling/GAPS.md` lists every 
 Equivalence is measured, not assumed. These figures are as the project's own documents state them (`cjson-cling/TODO.md`, `PERFORMANCE.md`, the scripts in `cjson-cling/tests/`); I did not re-run them for this chapter.
 
 * **Differential test, core.** The port and upstream parse the same bytes (upstream's own inputs, the 115 files of `tests/diff/corpus`, and 1.5 million mutations); success, error position, end offset and every
-  printed byte must match. `TODO.md`: no divergence.
-* **Differential test, Utils.** Pointer lookup, sorting, patch generation and application, merge patches, against the RFC 6902 suites shipped with upstream: about 620,000 comparisons, no divergence (`TODO.md`).
-* **Upstream's own unit tests**, ported to CeeLing programs: 20 programs, 776 checks, all pass (`TODO.md`; skipped cases are marked in the files).
+  printed byte must match. The internal notes: no divergence.
+* **Differential test, Utils.** Pointer lookup, sorting, patch generation and application, merge patches, against the RFC 6902 suites shipped with upstream: about 620,000 comparisons, no divergence (the internal notes).
+* **Upstream's own unit tests**, ported to CeeLing programs: 20 programs, 776 checks, all pass (the internal notes; skipped cases are marked in the files).
 * **Under sanitizers** (AddressSanitizer and UBSan, in WSL, with the pooled allocator off so a use-after-free is visible): the 776 unit checks, 756 thousand differential parses, 350 thousand Utils comparisons
-  and the 20 memory-class triggers give no report except the two stack overflows that are documented below as still open (06b and 09b) (`TODO.md`). Upstream's own C is not sanitized in that run; the claim
+  and the 20 memory-class triggers give no report except the two stack overflows that are documented below as still open (06b and 09b) (the internal notes). Upstream's own C is not sanitized in that run; the claim
   under test is about the port.
 
 A sanitizer run shows no error on the inputs it saw. It is evidence, not proof, and the fuzzer is mutation-based: it never builds a cyclic tree by hand.
@@ -1505,7 +1505,7 @@ int main() {
 }
 ```
 
-**Verdict: partly.** The direct form is refused, by library code. The indirect cycle is still there; the sanitizer run reports `AddressSanitizer: stack-overflow` for this program (`TODO.md`).
+**Verdict: partly.** The direct form is refused, by library code. The indirect cycle is still there; the sanitizer run reports `AddressSanitizer: stack-overflow` for this program (the internal notes).
 
 ### Issue 8: `cJSON_Duplicate` cap too high for the stack
 

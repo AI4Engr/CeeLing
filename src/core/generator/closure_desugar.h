@@ -34,7 +34,7 @@ namespace cling {
 // inner closure's scope simply never contains the outer's captured names.
 //
 // Throws std::runtime_error (matching EscapeHatchChecker/ASTBuilder's own
-// convention -- see rejectObserverParams) for every case CLAUDE.md's
+// convention -- see rejectObserverParams) for every case the design notes'
 // "default-reject, never default-allow" rule requires closing off:
 //   - a captured name that isn't in scope at the closure's own position
 //     (this is also what rejects a nested closure trying to capture its

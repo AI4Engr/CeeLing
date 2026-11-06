@@ -118,7 +118,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: '.get()' is forbidden on a CeeLing object ('p' is a Node)
   --> 14_hatch_check.clg:9:13
-  help: '.get()' would extract a raw pointer, which has no legal use in CeeLing (CLAUDE.md hatch #14) -- use the object directly, or add a named accessor method to the class if you need a specific field.
+  help: '.get()' would extract a raw pointer, which has no legal use in CeeLing (guide chapter 13, hatch #14) -- use the object directly, or add a named accessor method to the class if you need a specific field.
 ```
 
 The rule for calls is the important one, and it has its own section below: a call to anything the compiler has no fact about is an error.
@@ -351,7 +351,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `std::swap`
   --> 14_unknown_call.clg:4:5
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `std::swap` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `std::swap` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 This is **default-reject**. The alternative, default-allow, would make every unlisted library call a hole in the guarantee, and the list of holes would grow with the library. With default-reject

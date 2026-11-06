@@ -17,7 +17,7 @@
 // generics, but neither contains a shift, so neither pins the interaction.
 //
 // Deliberately does NOT reach through the outer container (`grid[0].size()`):
-// `v[i].method()` is a separate, already-recorded open bug (see TODO.md's
+// `v[i].method()` is a separate, already-recorded open bug (see the internal notes'
 // "call to unknown function/method 'typeName'" entry -- EscapeHatchChecker
 // resolves a receiver class by NAME and a SubscriptExpression has none). Pulling
 // it in here would make this fixture fail for a reason that has nothing to do

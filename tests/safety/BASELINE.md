@@ -127,7 +127,7 @@ PASS=24, XFAIL=0, FAIL=0.
 - `branch_merge_ambiguous_rejected.clg` — the two branches rebind the same observer to
   *different* owners. Positive control proving the fix doesn't over-correct: this case
   is genuinely ambiguous (a later use can't know which branch ran) and must stay
-  rejected, per CLAUDE.md's conservative-reject rule.
+  rejected, per the design notes' conservative-reject rule.
 
 The `ref` observer `T*` lowering fix (Ch. 18, Step 12) added 1 more fixture:
 **PASS=25, XFAIL=0, FAIL=0.**
@@ -351,7 +351,7 @@ Single inheritance + `virtual`/`override` (Ch. 18, Step 20) added 6 more fixture
 - `inherit_cycle_rejected.clg` — `A : B`, `B : A`. A correctness prerequisite, not
   politeness: a cycle has no valid base-before-derived order for the flattening
   pass to use.
-- `inherit_virtual_call_in_constructor_rejected.clg` — CLAUDE.md Phase 2.7's
+- `inherit_virtual_call_in_constructor_rejected.clg` — the design notes Phase 2.7's
   virtual-call-from-constructor threat, landed on day one of inheritance support as
   that entry prescribed. Only constructors are checked because CeeLing has no
   destructor syntax, so the other half of the classic trap cannot be written.
@@ -517,7 +517,7 @@ field, or a call to another already-classified alias-returning method (never
 `new T(...)`) is automatically classified to return `shared_ptr<T>` instead
 of the default `unique_ptr<T>` — purely structural inference over the method
 body, no annotation (a `//@ptr shared Class.method` hint was prototyped
-first and explicitly rejected: CLAUDE.md's "ownership is inferred, not
+first and explicitly rejected: the design notes' "ownership is inferred, not
 annotated" rule applies to method returns exactly as it does to fields).
 This closes the reference-return need noted above WITHOUT a `ref` return
 type ever being built — yaml-cpp's `operator[]` returning an alias into the

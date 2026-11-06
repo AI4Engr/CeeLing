@@ -26,7 +26,7 @@ The output is ordinary C++ (`std::unique_ptr<Node>`, `std::make_unique`, `->`). 
 
 plus two run-time checks that print the `.clg` line and abort: out-of-bounds `v[i]` / `s[i]` and a null object handle (both on by default, `--no-bounds-checks` / `--no-null-checks` turn them off).
 
-What it does **not** claim: Rust-equivalent safety, thread safety (only `spawn` of plain values and `Channel<T>` are checked), or anything about the caller's C++, `ext_fn` shims and the libraries it calls (those are trusted boundaries, and `--report-facts` lists every library fact a program relied on). The full contract, the threat table with what is closed and what is open, and the reasoning are in [CLAUDE.md](CLAUDE.md) and the [Language Guide](docs/language-guide/README.md). [TODO.md](TODO.md) is the itemised status.
+What it does **not** claim: Rust-equivalent safety, thread safety (only `spawn` of plain values and `Channel<T>` are checked), or anything about the caller's C++, `ext_fn` shims and the libraries it calls (those are trusted boundaries, and `--report-facts` lists every library fact a program relied on). The full contract, the threat table with what is closed and what is open, and the reasoning are in the [Language Guide](docs/language-guide/README.md), chapters 13 (contract and threats) and 18 (status).
 
 Positioning: safer than hand-written C++ while keeping the C++ ecosystem (std, Eigen, your own libraries) and requiring no annotations; not a replacement for Rust where the strongest guarantee is needed.
 

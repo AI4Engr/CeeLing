@@ -5,7 +5,7 @@
 //@ reason: check (isVectorType(paramType) && isPrimitiveType(vectorElementType
 //@ reason: (paramType))) is itself type-name-agnostic. The argument is a
 //@ reason: FIELD (`this->buf`), not a local -- deliberately, not the
-//@ reason: byte_vector precedent's local-variable shape: see TODO.md's
+//@ reason: byte_vector precedent's local-variable shape: see the internal notes'
 //@ reason: "Known bug -- ext_fn ref container arguments wrongly std::move'd
 //@ reason: at the call site" entry, found while building this fixture's
 //@ reason: sibling. A field-argument call site is a genuinely different,

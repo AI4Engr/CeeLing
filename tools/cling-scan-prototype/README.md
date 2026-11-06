@@ -25,4 +25,4 @@ and returns an empty specialization; reading return types straight from the JSON
 unexpanded aliases (`CwiseCbrtReturnType`, `Scalar`) and ~58% "unclassified";
 explicit instantiation (`template class Matrix<double,-1,-1>`) trips Eigen's own
 static asserts.
-Results and caveats are recorded in TODO.md ("cling-scan feasibility measurement").
+Results and caveats are recorded in the internal notes ("cling-scan feasibility measurement").

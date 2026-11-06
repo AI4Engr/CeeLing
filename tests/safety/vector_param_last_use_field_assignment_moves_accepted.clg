@@ -22,7 +22,7 @@
 // data instead of the real elements would be a distinct, more severe bug this
 // assertion also catches); the sibling test
 // vector_field_assignment_still_usable_accepted.clg is what pins "still used
-// afterward must not move" specifically, and CLAUDE.md/TODO.md's own commit
+// afterward must not move" specifically, and the design notes/the internal notes' own commit
 // records confirm via inspecting `this->data = std::move(bytes);` in the
 // generated C++ that this fixture's underlying shape does move (a compiling,
 // correct-output accept fixture cannot on its own distinguish a real move

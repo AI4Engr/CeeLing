@@ -675,7 +675,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `decodeThing`
   --> 12_decode_class_rejected.clg:11:15
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `decodeThing` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `decodeThing` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 <!-- example: 12_decode_without_item_rejected.clg -->

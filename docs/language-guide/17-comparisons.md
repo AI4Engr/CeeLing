@@ -1,12 +1,12 @@
 # 16. CeeLing, Rust, Circle and C++ profiles
 
 CeeLing is not the first attempt at a safer way to write C++-shaped programs, and it is not the strongest. This chapter says what CeeLing chose not to be, where that leaves it behind Rust, and how it
-sits among the other approaches. Everything that is a statement about CeeLing's design is checked against the compiler or `CLAUDE.md`. Statements about other projects are from general knowledge, are kept short,
+sits among the other approaches. Everything that is a statement about CeeLing's design is checked against the compiler or the design notes. Statements about other projects are from general knowledge, are kept short,
 and were **not re-verified** for this chapter; read them as orientation, not as citations.
 
 ## The position
 
-The goal, settled in `CLAUDE.md`, is **measurably safer than hand-written C++ while keeping the C++ ecosystem and requiring no lifetime annotations.** Compatibility matters more than guarantee
+The goal, settled in the design notes, is **measurably safer than hand-written C++ while keeping the C++ ecosystem and requiring no lifetime annotations.** Compatibility matters more than guarantee
 strength. CeeLing is deliberately not trying to match Rust:
 
 - Rust-style safety for C++ exists as a path already (Circle and the "Safe C++" proposal, P3390): lifetime-annotated references, borrow checking and a rewritten standard library. It gives a stronger guarantee
@@ -157,7 +157,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `std::max`
   --> 17_unknown_call_rejected.clg:3:13
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `std::max` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `std::max` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 Rust's crates are safe by default; CeeLing's reach is safe by curation, and what is covered today is `std` containers and strings, a few Eigen calls, and primitive-only `ext_fn` shims.
@@ -212,7 +212,7 @@ None of the following is verified against current sources for this chapter. It i
 | | Syntax | C++ libraries | How dangling is handled | Status (as recalled, not re-verified) |
 |---|---|---|---|---|
 | **Rust** | its own: `&`, `&mut`, lifetimes | by `unsafe extern` for C; no route for C++ templates | borrow checker, lifetimes in signatures | shipped, mature |
-| **Circle / "Safe C++" (P3390)** | C++ superset plus a `safe` context | usable; in my understanding calling legacy C++ from `safe` requires `unsafe` | Rust-style lifetimes and exclusivity | not adopted by the ISO committee; neither it nor profiles made C++26 (per `CLAUDE.md`) |
+| **Circle / "Safe C++" (P3390)** | C++ superset plus a `safe` context | usable; in my understanding calling legacy C++ from `safe` requires `unsafe` | Rust-style lifetimes and exclusivity | not adopted by the ISO committee; neither it nor profiles made C++26 (per the design notes) |
 | **C++ profiles** | unchanged C++ | all of it | rules checked on existing code; the committee's lifetime paper aims at catching common dangling | the committee's chosen direction; not in C++26 |
 | **cppfront / Cpp2** | a new syntax that transpiles to C++ | all of it | bounds, null and initialisation checks; per its own documentation it does not aim for 100 percent | experimental |
 | **Carbon** | a new syntax | via C++ interop | memory safety is a design effort | experimental |

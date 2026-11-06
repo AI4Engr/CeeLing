@@ -3,7 +3,7 @@
 //@ reason: rejected even though `operator[]` itself exists and works fine in
 //@ reason: READ position (see operator_subscript_read_accepted.clg). Real C++
 //@ reason: needs operator[] to return a REFERENCE for the subsequent `=` to
-//@ reason: assign through, and CeeLing has no `ref` return type yet (TODO.md/
+//@ reason: assign through, and CeeLing has no `ref` return type yet (the internal notes/
 //@ reason: Ch. 9) -- rejected with a targeted diagnostic pointing at the real
 //@ reason: limitation, not silently emitted as something that fails to
 //@ reason: compile or (worse) compiles into the wrong thing.

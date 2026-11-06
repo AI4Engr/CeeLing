@@ -4,7 +4,7 @@
 //@ reason: initializer list, no crash/malformed syntax from the hoisting pass
 //@ reason: finding zero hoistable statements. Regression guard for
 //@ reason: AstEmitter's new constructor-body member-initializer-list emission
-//@ reason: (see TODO.md's "value-type nested as a field" entry): a
+//@ reason: (see the internal notes' "value-type nested as a field" entry): a
 //@ reason: zero-statement body must be a genuinely empty prefix scan, not an
 //@ reason: off-by-one that emits `: {` or similar.
 

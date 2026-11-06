@@ -1,7 +1,7 @@
 //@ expect: accept
 //@ reason: a method whose body ONLY returns a same-class field (never `new T(...)`)
 //@ reason: is INFERRED to return an ALIAS, not an independent copy -- no annotation
-//@ reason: needed (CLAUDE.md: "ownership is inferred, not annotated"). Mutating the
+//@ reason: needed (the design notes: "ownership is inferred, not annotated"). Mutating the
 //@ reason: result mutates the field itself (yaml-cpp's Node::operator[] needs
 //@ reason: exactly this to make `node["a"]["b"] = "c"`-style chaining meaningful).
 //@ reason: A method whose return doesn't match this shape keeps today's

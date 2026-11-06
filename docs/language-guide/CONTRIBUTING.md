@@ -36,12 +36,12 @@ A feature that has no C++ problem behind it (a convenience such as `enum` or `na
 
 ## Honesty rules (the project's, not optional)
 
-* Never write "Rust-equivalent", "thread-safe" or "memory-safe" without the exact scope. The scope is in `CLAUDE.md` ("The Safety Contract", "Current status"): the static half (dangling,
+* Never write "Rust-equivalent", "thread-safe" or "memory-safe" without the exact scope. The scope is in chapter 13 and in the README: the static half (dangling,
   use-after-move, sealed hatches), the run-time half (bounds, null), `spawn` and `Channel`; trusted: `ext_fn`, shims, libraries.
 * **Verify before you write.** Anything older than the compiler is suspect: planning words ("Phase", "design target", "intended syntax"), `owned<T>`/`borrowed<T>` notation, features listed as
-  missing that now exist, or the reverse. The compiler and `CLAUDE.md` are the authority. If a claim cannot be shown by an example or found in `CLAUDE.md` or `TODO.md`, leave it out or say it is
+  missing that now exist, or the reverse. The compiler and chapter 13 are the authority. If a claim cannot be shown by an example or found in the chapters, leave it out or say it is
   not verified. When the compiler and the documents disagree, say so; do not smooth it over.
-* Numbers only with their source (a measurement in `CLAUDE.md` or `TODO.md`, or something that was run). No dates, no "now", no version diaries: the guide describes the language as it is.
+* Numbers only with their source (a measurement in the guide, or something that was run). No dates, no "now", no version diaries: the guide describes the language as it is.
   Development history belongs in `docs/internals/`.
 * No marketing, no emojis, short sentences. Tables when comparing; prose when explaining.
 

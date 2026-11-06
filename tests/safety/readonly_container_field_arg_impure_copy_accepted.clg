@@ -10,7 +10,7 @@
 //@ reason: growing push_back on `this->data` (the SAME underlying vector)
 //@ reason: could reallocate its backing store out from under `snapshot`
 //@ reason: before the read loop ever runs -- exactly the iterator/reference
-//@ reason: invalidation CLAUDE.md threat #4 exists to prevent, which is why
+//@ reason: invalidation guide chapter 13, threat #4 exists to prevent, which is why
 //@ reason: the heap-purity gate exists at all.
 //@ run: 3
 

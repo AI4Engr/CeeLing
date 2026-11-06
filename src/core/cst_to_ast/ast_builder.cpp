@@ -14,7 +14,7 @@ namespace cling {
 namespace {
 
 // If `snippet` contains a construct that CeeLing deliberately forbids (Phase 1 escape
-// hatches, CLAUDE.md threat model #13-18), return an explanatory suggestion naming
+// hatches, guide chapter 13 threat model #13-18), return an explanatory suggestion naming
 // *why* it's forbidden. These constructs have no grammar production, so they always
 // surface as an unbuildable node -- this turns that into a legible, intentional
 // rejection instead of a bare "syntax error".
@@ -22,7 +22,7 @@ std::string forbiddenConstructSuggestion(const std::string& snippet) {
     if (snippet.find("reinterpret_cast") != std::string::npos ||
         snippet.find("const_cast") != std::string::npos ||
         snippet.find("static_cast") != std::string::npos) {
-        return " Suggestion: C++-style casts are forbidden in CeeLing (CLAUDE.md hatch "
+        return " Suggestion: C++-style casts are forbidden in CeeLing (the design notes hatch "
                "#13/#16) -- casting is a type-confusion / const-bypass escape hatch "
                "with no safe equivalent, so there is no cast syntax in the language.";
     }
@@ -283,7 +283,7 @@ ProgramPtr ASTBuilder::buildProgram(const std::string& source) {
     // returns (confirmed via probe: the cross-file case genuinely can't be
     // resolved at this point in the pipeline). main.cpp calls
     // spliceExternalSpecializations again post-merge, where "still not
-    // found" really does mean unknown and is a hard error (CLAUDE.md's
+    // found" really does mean unknown and is a hard error (the design notes'
     // "default-reject, never default-allow", same as validateInheritance's
     // unknown-base-class rule below) -- a specialization that silently
     // vanished would be far more confusing than a clear error.
@@ -510,7 +510,7 @@ StatementPtr ASTBuilder::buildContainerDeclaration(TSNode node, const std::strin
     // sidestep the question entirely (always plain-copy values), so this is a
     // conservative reject of anything else -- including class names, which this
     // builder cannot even distinguish from a typo, so any non-primitive value is
-    // rejected the same way, per CLAUDE.md's "ambiguous -> conservative reject" rule.
+    // rejected the same way, per the design notes' "ambiguous -> conservative reject" rule.
     if (isMapType(type)) {
         const std::string keyType = mapKeyType(type);
         const std::string valueType = mapValueType(type);
@@ -842,7 +842,7 @@ StatementPtr ASTBuilder::buildExternFunctionDeclaration(TSNode node, const std::
         } else if (strcmp(childType, "parameter_list") == 0) {
             // Unlike every other parameter_list site, ext_fn deliberately
             // accepts `ref` here (see the type-decides-meaning table in
-            // TODO.md's ext_fn entry) -- rejectObserverParams is skipped only
+            // The internal notes' ext_fn entry) -- rejectObserverParams is skipped only
             // for this declaration kind; the other five call sites keep the
             // global `ref`-as-parameter ban intact.
             uint32_t paramCount = ts_node_child_count(child);
@@ -873,7 +873,7 @@ StatementPtr ASTBuilder::buildExternFunctionDeclaration(TSNode node, const std::
         }
     }
 
-    // v1 scope boundary (see TODO.md/CLAUDE.md's ext_fn design record): an
+    // v1 scope boundary (see the internal notes/the design notes' ext_fn design record): an
     // external function's parameters/return must be primitive or
     // std::vector<primitive> -- never a bare class name. Object-typed ext_fn
     // signatures need a real hand-written borrow-summary syntax beyond a
@@ -896,7 +896,7 @@ StatementPtr ASTBuilder::buildExternFunctionDeclaration(TSNode node, const std::
                "types (int, float, double, bool, string, char) and "
                "std::vector<primitive> for now -- a class-typed ext_fn parameter or "
                "return needs a hand-written borrow-summary annotation that isn't "
-               "designed yet (see TODO.md's ext_fn entry).";
+               "designed yet (see the internal notes' ext_fn entry).";
         throw std::runtime_error(oss.str());
     };
     rejectUnsupportedType(returnType, "return");
@@ -1706,7 +1706,7 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
     // falls through to a bare, verbatim emission), OR, when T is NOT the
     // return type, in exactly one parameter's type (`<T> bool decodeInto(T
     // out)`, added for yaml-cpp's convert<T>::decode out-param shape -- see
-    // CLAUDE.md/TODO.md; that one parameter becomes a mutable out-parameter,
+    // The design notes/the internal notes; that one parameter becomes a mutable out-parameter,
     // see DanglingChecker::outParamIndex_/AstEmitter::outParamIndex_). T is
     // never checked as a real generic type anywhere else in the pipeline
     // (EscapeHatchChecker only tracks callable names/arities, never param
@@ -1717,7 +1717,7 @@ StatementPtr ASTBuilder::buildMethodDeclaration(TSNode node, const std::string& 
     // supportable with no further core changes -- but T appearing in
     // NEITHER the return type nor any parameter, or in more than one
     // parameter when it's not also the return type, has no single,
-    // unambiguous meaning and is rejected per CLAUDE.md's "ambiguous ->
+    // unambiguous meaning and is rejected per the design notes' "ambiguous ->
     // conservative reject" rule.
     if (!typeParameter.empty()) {
         size_t paramTCount = 0;

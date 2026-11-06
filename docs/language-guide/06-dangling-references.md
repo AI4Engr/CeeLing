@@ -1850,7 +1850,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `topRows`
   --> 06_eigen_unlisted.clg:6:25
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `topRows` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `topRows` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 Now the limits, which are larger than the feature:

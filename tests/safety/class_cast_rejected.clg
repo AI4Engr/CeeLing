@@ -1,6 +1,6 @@
 //@ expect: reject
 //@ reason: int(x) is a conversion between primitives only. Applied to an object it would be a
-//@ reason: reinterpretation of a smart pointer as a number (CLAUDE.md escape hatch #13).
+//@ reason: reinterpretation of a smart pointer as a number (the design notes escape hatch #13).
 
 class Node {
 public:

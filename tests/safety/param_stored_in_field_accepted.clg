@@ -1,7 +1,7 @@
 //@ expect: accept
 //@ reason: a method that stores its parameter into a field (`link = other;`) does
 //@ reason: not consume the caller's argument -- the same "storing links, doesn't
-//@ reason: consume" precedent CLAUDE.md already applies to `a.b = obj;` extends to
+//@ reason: consume" precedent the design notes already applies to `a.b = obj;` extends to
 //@ reason: a store one call deep. `a.attach(b); b.attach(a);` compiles and runs.
 //@ run: 2
 //

@@ -674,7 +674,7 @@ int main() {
 ```
 <!-- error: 10_channel_ext_fn_rejected.clg -->
 ```
-Error: error[semantic/forbidden-construct]: ext_fn parameter `c` type `Channel<int>` is not supported (line 1, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see TODO.md's ext_fn entry).
+Error: error[semantic/forbidden-construct]: ext_fn parameter `c` type `Channel<int>` is not supported (line 1, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see the internal notes' ext_fn entry).
 ```
 
 <!-- example: 10_channel_unknown_method_rejected.clg -->
@@ -690,7 +690,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: call to unknown function/method `peek`
   --> 10_channel_unknown_method_rejected.clg:4:13
-  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (CLAUDE.md "default-reject, never default-allow"). Define `peek` in CeeLing source, or call an existing CeeLing function/method instead.
+  help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `peek` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
 **Where it stops.** The checker proves that threads share only channel state and that a channel carries copies. It cannot see that a reply is never sent, that nobody closes a channel, or that every consumer waits on a producer that will never run.

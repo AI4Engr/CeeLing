@@ -1,18 +1,18 @@
 # Plan: Eigen view/borrow tracking (replace the exploratory allow-list)
 
-> **STATUS: v1 IMPLEMENTED.** See `TODO.md`'s "Eigen view/borrow tracking —
+> **STATUS: v1 IMPLEMENTED.** See the internal notes' "Eigen view/borrow tracking —
 > v1 IMPLEMENTED" section for the final outcome, what changed, and the
 > verification record. This file is kept as-is for its design rationale
 > (especially the "why Eigen is different" section below) — the steps below
-> describe what was planned; TODO.md describes what actually landed. No
+> describe what was planned; the internal notes describes what actually landed. No
 > steps were skipped; Step 3b's flagged risk (receiver-vs-argument
 > distinction) was real and is exactly what got resolved during
-> implementation, documented in TODO.md.
+> implementation, documented in the internal notes.
 
 ## Status before this plan (verified empirically, not assumed)
 
 Move/copy tracking for third-party value types (Eigen::MatrixXd) is **already
-fixed and shipped** (see TODO.md's "`struct`/value-type move tracking — FIXED"
+fixed and shipped** (see the internal notes' "`struct`/value-type move tracking — FIXED"
 section). Confirmed by direct probe, all passing:
 
 - `sink(a); use(a);` on `Eigen::MatrixXd` → correctly REJECTED (use-after-move)
@@ -121,7 +121,7 @@ own classes) does not directly apply.
    CeeLing structurally cannot express this — the user must always write
    `Eigen::MatrixXd e = A + B;`, and a `Eigen::MatrixXd`-typed destination
    FORCES evaluation into an owned copy regardless of what lazy expression
-   type the RHS would otherwise produce in real C++. This is CLAUDE.md's
+   type the RHS would otherwise produce in real C++. This is the design notes'
    threat #6 (`auto`-vs-concrete-type provenance) — already closed by
    construction, not something this plan needs to solve. What THIS plan
    handles is the narrower remaining case: a user explicitly writing a VIEW
@@ -149,7 +149,7 @@ own classes) does not directly apply.
   (`operator+(a, b)` borrowing both `a` and `b` — needed for the `auto e =
   A+B` case, which is moot per point 4 above since CeeLing has no `auto`);
   a general per-library declaration file format (defer to the separately
-  planned Part B mechanism in TODO.md if/when a second library beyond Eigen
+  planned Part B mechanism in the internal notes if/when a second library beyond Eigen
   needs this); nested/chained views (`a.block(...).transpose()`) — reject
   these for now rather than trying to compose provenance through a chain.
 - **Non-goal**: do not try to make CeeLing understand Eigen's *storage*
@@ -246,7 +246,7 @@ the RECEIVER (`self`), not a parameter — there is no
 `classMethodParams_`/`summaries_` (that map assumes a real parsed
 `ClassDeclaration` backs it — several other call sites may implicitly rely
 on that; do not special-case around it, per the earlier plan's own
-"Part B" risk note in TODO.md).
+"Part B" risk note in the internal notes).
 
 Instead, add a SEPARATE, parallel check, e.g. a new method
 `DanglingChecker::resolveBorrowingMethodReceiver(const Expression* expr)`:
@@ -314,10 +314,10 @@ Add to `tests/safety/`:
 Run the full `bash tests/safety/run_safety_tests.sh` (expect 96 + 4 = 100
 PASS, 0 regressions) and `ctest` (expect 13/13) after landing.
 
-## Step 5 — update TODO.md
+## Step 5 — update the internal notes
 
 Mark this plan's outcome in the same section the move-tracking fix was
-documented in (`TODO.md`'s Eigen spike section) — note explicitly which
+documented in (the internal notes' Eigen spike section) — note explicitly which
 methods are covered (`block`/`row`/`col`/`transpose`/`segment`/`head`/
 `tail`/`diagonal`), which are NOT (anything not in `isKnownBorrowingMethod`'s
 set falls through to the pre-existing default-reject, which is the safe
@@ -342,7 +342,7 @@ mechanism is still future work, not done by this pass.
 ## If something in Step 0 or Step 3b doesn't hold
 
 Stop and report the specific finding rather than working around it with a
-special case — per this project's established discipline (see TODO.md's
+special case — per this project's established discipline (see the internal notes'
 "Part B" risk note making the same point about not patching around a
 found architectural mismatch). This plan's confidence is high on the
 type-name-classification idea (verified against real Eigen source) and

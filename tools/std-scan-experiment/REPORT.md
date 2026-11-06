@@ -37,12 +37,12 @@ Method (all in this directory; rerun with the commands at the end):
    "at or after the point of insertion" precision is not in any signature).
 3. **Disagreements with the hand tables** (the useful output):
    * **`vector::reserve` is a mutator the standard says invalidates references (when capacity grows), but `vectorMethodInvalidatesReferences` leaves
-     it out** (`library_summary.cpp`; the reasoning in `CLAUDE.md` is that no *observer of the vector* can see a reallocation, which is true, but
+     it out** (`library_summary.cpp`; the reasoning in the design notes are that no *observer of the vector* can see a reallocation, which is true, but
      an observer of an *element* can). Today this cannot be exploited: `reserve` is only admitted on primitive-element vectors, and `ref int x = v[0];`
      is accepted by `cling` but generates C++ that does not compile (see 5). It is safe by the accident of two other limits, not by a rule.
    * **The string has no invalidation table at all.** `append`, `clear`, `push_back` and `reserve` are admitted and the scan marks all four as
      mutators; the standard says they invalidate references, pointers and iterators into the string. Unobservable today because views of a string
-     (`string_view`, character references) are not tracked (TODO.md, "not tracked"). It becomes a hole the day views are tracked unless the table is
+     (`string_view`, character references) are not tracked (the internal notes, "not tracked"). It becomes a hole the day views are tracked unless the table is
      added with them.
    * The hand tables admit 7 of 31 vector names (22.6%) and 9 of 46 string names (19.6%); everything else they do not admit is "not yet" by policy.
      The scan finds no admitted name whose receiver-mutation the hand table gets wrong in the unsafe direction other than the two items above.
@@ -62,7 +62,7 @@ Method (all in this directory; rerun with the commands at the end):
    three by construction; the fourth needs the witness instantiation either way. Text parsing of `-ast-dump` is enough for an experiment and
    should not be the product.
 5. **Already-known bug, met again:** `int a = 1; ref int x = a;` is accepted by `cling` and emits `int* x = (a).get();`, which g++ rejects
-   (`request for member 'get' ... of non-class type 'int'`). TODO.md lists it under "Accepted by CeeLing, rejected by g++ afterwards" (`ref` on a
+   (`request for member 'get' ... of non-class type 'int'`). The internal notes lists it under "Accepted by CeeLing, rejected by g++ afterwards" (`ref` on a
    primitive or a vector). It matters here only because it is what keeps the `reserve` hole in item 3 closed.
 
 ## Addendum 2026-11-02: what happened next
@@ -71,7 +71,7 @@ Method (all in this directory; rerun with the commands at the end):
 * Unwrapping libstdc++'s `_If_sv<_Tp, X>` alias (its string_view-convertible overloads; X is the result when the overload is enabled) in `classify.py` resolves the 13 string names that came out UNRESOLVED: **all 46 string
   names and all 30 vector names are now identical across the two implementations.**
 * `gen_pack.py` turns the two scans into `facts/std-vector.clfacts` and `std-string.clfacts`, and the compiler now computes which `vector`/`string` methods are admitted from them (no hand list). Result: `vector` admits
-  11 callable names (was 8, of which `begin` and `end` are now refused), `string` 23 (was 9). The classic `auto it = v.begin(); v.push_back(2); *it` is rejected where it used to be accepted. Details: CLAUDE.md, TODO.md.
+  11 callable names (was 8, of which `begin` and `end` are now refused), `string` 23 (was 9). The classic `auto it = v.begin(); v.push_back(2); *it` is rejected where it used to be accepted. Details: the design notes, the internal notes.
 * The raw-pointer count in the table above (33/35 overloads "sealed by rule") overstated what is sealed: a `const char *` PARAMETER is how a string literal arrives and is harmless; only a raw-pointer RESULT (`data`,
   `c_str`) is sealed, plus a parameter that points to writable memory (`copy`, one `replace` overload), which keeps those methods out.
 

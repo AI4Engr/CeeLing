@@ -1,5 +1,5 @@
 > **History, not documentation.** This is the development log of the compiler, written while it was being built; parts of it are out of date. The current description of the language is the
-> [Language Guide](../language-guide/README.md); the authoritative status is `CLAUDE.md` and `TODO.md`.
+> [Language Guide](../language-guide/README.md); the authoritative status is the design notes and the internal notes.
 
 # 18. Implementation Notes — How It Actually Works
 
@@ -396,7 +396,7 @@ conservative, "can't know which branch ran" answer).
 
 ## Step 8 — Auto-derived function summaries, and the pointer-type bug they surfaced
 
-CLAUDE.md's component A calls for per-function borrow summaries: which parameters are
+The design notes' component A calls for per-function borrow summaries: which parameters are
 borrowed, which are moved, and what the return value borrows from. Before writing this,
 it's worth noticing that CeeLing already answers the parameter half by construction —
 `ref` is banned as a function parameter (Step 4), so every object-typed parameter is
@@ -590,7 +590,7 @@ replaces the old "just restore and move on" flow:
   keep it. If the branches disagree — rebound to different owners, e.g. `obs = b;` in
   one arm and nothing in the other where `obs` was already bound to something else —
   the merge can't know which binding survives, so it's marked dangling. This is the
-  same "ambiguous → conservative reject" principle CLAUDE.md states for the analysis
+  same "ambiguous → conservative reject" principle the design notes state for the analysis
   generally, just applied to observer bindings specifically. `while` loops get the
   same treatment, modeled as a two-way branch against "the loop body never runs".
 
@@ -1023,7 +1023,7 @@ guaranteed primitive this slice (a plain copy, no move/factory/weak_ptr logic).
 
 ## Step 18 — `throw`/`catch`: less new machinery than expected, and a runtime-only bug
 
-TODO.md had already pre-scoped this from an earlier planning pass: model `throw`
+The internal notes had already pre-scoped this from an earlier planning pass: model `throw`
 as an early-exit triggering the same scope-exit death events as `return`. Reading
 the actual `if`/`while`/`for` code before implementing anything overturned part of
 that framing: block-exit (`endBlockScope`) already runs **unconditionally** after
@@ -1105,13 +1105,13 @@ b.attach(a);   // ERROR: b was moved into a.attach(b)
 `a.link = b;` (a direct field store at the call site) was already correctly a
 link/share, not a move — the existing `AssignmentStatement` `target`-is-set path
 in `dangling_checker.cpp` handled that from Phase 2's earliest version. Going
-through a method didn't get the same treatment, because CLAUDE.md's component-A
+through a method didn't get the same treatment, because the design notes' component-A
 summary — "which parameters are borrowed, which are moved" — had only ever been
 implemented for the RETURN half (Step 8's `returnBorrowsParam`); every parameter
 had been unconditionally-moved since the checker's first version, on the
 reasonable-at-the-time assumption that banning `ref` parameters meant there was
 nothing else to summarize. That assumption held right up until a method's body
-could itself perform the exact same store-into-field CLAUDE.md already treats as
+could itself perform the exact same store-into-field the design notes already treats as
 non-consuming at the call site.
 
 ### A prerequisite bug hiding inside the summary's own precondition
@@ -1275,7 +1275,7 @@ one's isolated logic looks locally correct.
 ## Step 20 — Inheritance: flattening beats chain-walking, and two things users can't write
 
 CeeLing had no inheritance at all: no base clause, no `virtual`/`override`, no
-`ClassDeclaration::baseClass`. TODO.md had carried a designed-but-unimplemented
+`ClassDeclaration::baseClass`. The internal notes had carried a designed-but-unimplemented
 entry for it since early on. Without it most real class hierarchies are
 inexpressible — a hard blocker for the YAML-parser milestone (a YAML node is
 naturally a polymorphic scalar/sequence/mapping hierarchy) and for the language
@@ -1334,7 +1334,7 @@ That reads like a gap; it's an advantage. Because CeeLing generates every destru
 itself, it can unconditionally emit `virtual ~Base() = default;` for any class used
 as a base — closing the classic UB of deleting a Derived through a base pointer
 **by construction**, with no user-facing syntax and no way to forget it. That's a
-genuine memory-safety hole (exactly the kind CLAUDE.md's contract must not have),
+genuine memory-safety hole (exactly the kind the design notes' contract must not have),
 not a style nicety. It also removes half of Phase 2.7's virtual-call trap: there are
 no destructor bodies to check, only constructor bodies.
 
@@ -1343,7 +1343,7 @@ found only by compiling the first working output: a derived constructor implicit
 calls the base's *no-arg* constructor, but declaring any constructor (e.g.
 `Animal(int)`) suppresses C++'s implicit default one. Real C++ solves this with a
 base-initializer list (`Dog(int a) : Animal(a)`), which CeeLing has no syntax for —
-and deliberately still doesn't: adding one would grow the surface syntax CLAUDE.md
+and deliberately still doesn't: adding one would grow the surface syntax the design notes
 explicitly tries to keep small. Instead the emitter generates a `protected` no-arg
 constructor for every base, and a derived constructor simply assigns the inherited
 fields directly in its own body (`age = a;` already lowers to `this->age = a;`
@@ -1474,7 +1474,7 @@ only the exact shape yaml-cpp needs — a primary generic `<T> T method() {...}`
 (one type parameter, return type must equal it) plus concrete specializations
 `ConcreteType method<ConcreteType>() {...}`, called as `n.as<int>()`. Not generic
 free functions, not parameter-type genericity, not multiple type parameters —
-those stay filed under "light generics" in TODO.md as a separate, larger,
+those stay filed under "light generics" in the internal notes as a separate, larger,
 not-yet-scoped feature.
 
 **The only place this was genuinely risky was grammar, and only in expression
@@ -1701,7 +1701,7 @@ return `Node`, which lower to `unique_ptr<Node>` (move-only; cannot be
 returned as a copy, and `this` cannot be converted to one at all). This is the
 deferred reference-return capability, not a new surprise — stated here plainly
 rather than claiming the port succeeded. `ref`-returning methods are tracked as
-their own, unstarted `TODO.md` item.
+their own, unstarted the internal notes item.
 
 Full CTest (13/13) and safety-suite (65/65, compile-gated) sweeps after this
 step showed zero regressions elsewhere.
@@ -1713,7 +1713,7 @@ Step 22 stopped at a deliberately deferred, larger problem: yaml-cpp's
 *reference* into the object graph so `node["a"]["b"] = "c"` chains meaningfully
 — `return this;` / `return this->child;` from a method whose return lowers to
 `unique_ptr<T>` (move-only, cannot be returned as a copy, and `this` cannot
-convert to one at all) simply does not compile. The TODO.md item this left
+convert to one at all) simply does not compile. The the internal notes item this left
 behind assumed the fix would be a `ref` RETURN type — a real, separate design
 problem (what does a `ref`-returning method's borrow summary even mean; how
 does escape analysis stop the returned reference from outliving its
@@ -1736,7 +1736,7 @@ CeeLing has never had.
 The first working version used a `//@ptr shared Class.method` comment
 annotation (reusing the pre-existing `//@ptr shared Class.member` mechanism
 `smart_pointer_analyzer.cpp` already had for fields/locals) — mechanically it
-worked end-to-end. It was rejected on sight: CLAUDE.md's "ownership is
+worked end-to-end. It was rejected on sight: the design notes' "ownership is
 inferred, not annotated" is a hard design constraint, not a preference, and a
 per-method annotation the user has to write for every alias-returning method
 is exactly the `owned<>`/`borrowed<>`-style manual bookkeeping the whole
@@ -1908,7 +1908,7 @@ no `char` type and no `string[i]` at all. The user's instruction going in was
 explicit: add `char`, but do NOT let it become a route back to raw
 pointers — `char*` is THE classic C raw-pointer/string type, and reopening it
 would undermine the whole "no raw pointers" contract for one convenience
-feature. The fix matches CLAUDE.md's existing philosophy exactly: `char` is a
+feature. The fix matches the design notes' existing philosophy exactly: `char` is a
 pure VALUE type (`char_literal` token, `string[i]` returns `char`), and
 `char*`/`char[]` are grammatically INEXPRESSIBLE — no pointer/array
 declarator production exists anywhere in this grammar, the same "forbidden by
@@ -2614,7 +2614,7 @@ object-typed parameter defaults to move-by-value — so a naive port
 unconditionally consume `root`, rejecting the very next use as
 "moved-from." This is a real, if narrow, yaml-cpp API-compatibility bug, not
 a cosmetic inconvenience — confirmed by writing it into `yaml-cling`'s own
-`CLAUDE.md` as an explicit rule (constraint #1): parameter-passing semantics
+The design notes as an explicit rule (constraint #1): parameter-passing semantics
 must match yaml-cpp's declared reference-ness, not just names/return types,
 and the general fix (extend CeeLing's inference) is preferred over a
 function-specific workaround.
@@ -2672,7 +2672,7 @@ baseline, not something written into a new fixture. Root cause: an
 empty-bodied function has ZERO disqualifying uses of `n` by construction,
 so "no evidence it's consumed" was being read as "read-only" — the wrong
 inference. An unused parameter provides no positive evidence of anything;
-CLAUDE.md's "ambiguous → conservative reject" spirit applies here too:
+The design notes' "ambiguous → conservative reject" spirit applies here too:
 no read at all is exactly as ambiguous as a disqualifying use, and should
 default to ordinary move-by-value, not a new looser behavior. Fixed by
 adding a second, independent walk (`bodyHasGenuineRead`, mirroring
@@ -2937,7 +2937,7 @@ green throughout.
 ## Step 31 — `==`/`!=` identity comparison: a discovery, not a feature
 
 yaml-cling wanted `Node::operator==`/`operator!=`, next in line on
-`notes/API_COMPATIBILITY.md`'s Medium bucket. yaml-cling's own `TODO.md` had
+`notes/API_COMPATIBILITY.md`'s Medium bucket. yaml-cling's own the internal notes had
 a wrong assumption about the target semantics: it claimed real yaml-cpp's
 `operator==` compares STRUCTURE/scalar VALUE, contradicting its own note two
 sentences later that it "matches yaml-cpp's `is()` semantics" — `is()` is
@@ -3050,7 +3050,7 @@ one struct handling both call shapes — the same structural split CeeLing's
 
 Before trusting the accept case, a companion probe checked the REJECT
 case: calling `b.as<int>(99)` on a class declaring ONLY `as<int>()` (no
-fallback overload at all). This should be rejected — CLAUDE.md's
+fallback overload at all). This should be rejected — the design notes'
 "default-reject, never default-allow" contract demands it — but `cling.exe`
 exited 0, silently allowing it through. The generated C++ then failed to
 compile (`no matching function for call to 'Box::as<int>(int)'`), exactly
@@ -3481,7 +3481,7 @@ The one parameter whose PRIMARY declares as literal `T` (in the
 param-position slice above) needs to be WRITTEN to by the callee but
 SURVIVE at the caller — the opposite of CeeLing's default move-in-by-value
 parameter semantics. Initially implemented and internally named around the
-word "borrow" before a mid-session correction: CLAUDE.md's roadmap lists a
+word "borrow" before a mid-session correction: the design notes' roadmap lists a
 general, user-facing `borrow<T>` ownership annotation as a **future,
 optional** feature that has never been designed — this mechanism is NOT
 that. It is narrow and purely mechanical: it only ever fires for a
@@ -3643,7 +3643,7 @@ Driven by `imgui-cling`'s recurring need for a Begin/End-shaped API
 maps to a real egui closure (`ui.group(|ui| {...})`) that CeeLing had no
 equivalent for. The actual design question was narrower and harder than
 "add lambda syntax": can a closure be added **without opening a new
-dangling-reference hole**, since CLAUDE.md's threat #7 is literally "lambda
+dangling-reference hole**, since the design notes' threat #7 is literally "lambda
 captures `[&]` local, then escapes."
 
 ### Step 0: a mandatory probe, run BEFORE any implementation, that surfaced a real bug

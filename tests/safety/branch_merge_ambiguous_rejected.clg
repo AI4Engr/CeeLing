@@ -5,7 +5,7 @@
 //
 // Positive control for branch_merge_no_false_positive_accepted.clg's fix: proves the
 // branch-merge precision improvement doesn't over-correct into accepting genuinely
-// ambiguous cases. Per CLAUDE.md's "ambiguous inference -> conservative reject" rule,
+// ambiguous cases. Per the design notes' "ambiguous inference -> conservative reject" rule,
 // ANY disagreement between the two branches about what an observer points at must
 // still be rejected, not just the case where one branch definitely kills the owner.
 

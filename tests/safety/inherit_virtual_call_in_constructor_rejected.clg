@@ -1,5 +1,5 @@
 //@ expect: reject
-//@ reason: CLAUDE.md Phase 2.7's virtual-call-from-constructor threat. In C++ a
+//@ reason: the design notes Phase 2.7's virtual-call-from-constructor threat. In C++ a
 //@ reason: virtual call inside a constructor does NOT dispatch to the derived
 //@ reason: override -- the vtable still points at the base while the base's
 //@ reason: constructor runs -- so `speak()` here silently runs Animal's version even

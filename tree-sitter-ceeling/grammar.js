@@ -64,7 +64,7 @@ module.exports = grammar({
     // `#include`, exactly like imgui-cling's gfx_shim.h pattern -- see
     // library_summary.cpp's isKnownQualifiedFreeFunction doc comment). This
     // is CeeLing's escape hatch for "a little hand-written C++ at the
-    // bottom" (CLAUDE.md/TODO.md's "External primitive-only function
+    // bottom" (the design notes/the internal notes' "External primitive-only function
     // declarations" gap) -- the source-level-keyword design the project
     // owner chose over a project-local declaration file (`.ceeling_extern_fns`)
     // specifically so the trust boundary is visible at the call site, not
@@ -185,7 +185,7 @@ module.exports = grammar({
 
     // A container declared without an initializer, e.g. `std::vector<int> v;` --
     // default-constructs to empty. This is the ONE exception to CeeLing's definite-
-    // initialization rule (Phase 1, CLAUDE.md hatch #18): a container's default
+    // initialization rule (Phase 1, guide chapter 13, hatch #18): a container's default
     // state (empty) is always well-defined and safe to read from, unlike a bare
     // `int n;` (uninitialized scalar) or a bare `Node n;` (no legal empty-object
     // state), so there is no safety reason to force an explicit initializer here.
@@ -212,7 +212,7 @@ module.exports = grammar({
       'char',  // a pure VALUE type, like int/bool -- no char*/char[] production
                // exists anywhere in this grammar, so a raw C-string/char-array
                // shape is inexpressible by construction (the same escape-by-
-               // construction philosophy CLAUDE.md uses for raw pointers
+               // construction philosophy the design notes uses for raw pointers
                // generally), not something a checker rejects after the fact.
       'byte',  // a pure VALUE type, unsigned 8-bit -- the unsigned counterpart
                // to `char` (which is SIGNED in generated C++ on this project's
@@ -235,7 +235,7 @@ module.exports = grammar({
                // (bit 31 would be the sign bit), forcing a 4-byte refill
                // granularity instead of zlib-rs's 8.
       $.generic_type,        // std::vector<T> (Phase 2.6 containers)
-      $.channel_type,        // Channel<T>: the thread-safe queue of plain values (see CLAUDE.md, spawn)
+      $.channel_type,        // Channel<T>: the thread-safe queue of plain values (see the design notes, spawn)
       $.scoped_identifier,  // qualified names like std::vector (Phase 2.6 containers)
       $.identifier  // Add support for custom types (class names)
     ),
@@ -383,7 +383,7 @@ module.exports = grammar({
     // ClassDeclaration::isValueType. Deliberately NOT inferred structurally
     // (e.g. "all fields are primitives") -- a class with only primitive
     // fields could still be intentionally shared/mutable-reference (e.g. a
-    // Counter incremented from multiple call sites), so CLAUDE.md's
+    // Counter incremented from multiple call sites), so the design notes'
     // "ambiguous -> conservative reject, never guess" rule means this needs
     // an explicit keyword, not inference.
     class_declaration: $ => seq(
@@ -437,7 +437,7 @@ module.exports = grammar({
     // `operator++`/`operator!=` (the C++ iterator protocol -- dereference, prefix
     // increment only (no postfix), inequality only (no `operator==`, unneeded by
     // range-for's desugaring)). General operator overloading (operator+,
-    // operator<<, ...) beyond this fixed set is a separate, unstarted TODO.md item,
+    // operator<<, ...) beyond this fixed set is a separate, unstarted the internal notes item,
     // not this.
     method_declaration: $ => seq(
       optional($.method_type_parameter),
@@ -654,7 +654,7 @@ module.exports = grammar({
     //
     // Capture list is BARE IDENTIFIERS ONLY -- no `&`, no `=`. This is a
     // deliberate language-level decision, not a missing feature: by-reference
-    // capture is a new dangling-reference source (CLAUDE.md threat #7,
+    // capture is a new dangling-reference source (guide chapter 13, threat #7,
     // "lambda captures `[&]` local, then escapes") that this compiler's
     // scope-aware, per-body analysis cannot verify once a closure escapes its
     // creating function (see the design notes this fixture set's `closure_*`
