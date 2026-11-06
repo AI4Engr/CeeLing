@@ -160,7 +160,8 @@ error[semantic/forbidden-construct]: call to unknown function/method `std::max`
   help: CeeLing has no borrow/ownership summary for anything it did not compile itself; unknown calls are rejected by default rather than silently trusted (the default-reject rule). Define `std::max` in CeeLing source, or call an existing CeeLing function/method instead.
 ```
 
-Rust's crates are safe by default; CeeLing's reach is safe by curation, and what is covered today is `std` containers and strings, a few Eigen calls, and primitive-only `ext_fn` shims.
+Rust's crates are safe by default; CeeLing's reach is safe by curation, and what is covered today is `std` containers and strings, a few Eigen calls, and primitive-only `ext_fn` shims. Fact packs
+([chapter 11](11-talking-to-cpp.md)) are how that table is extended.
 
 ### 5. Move semantics: a patch, not the root fix
 
