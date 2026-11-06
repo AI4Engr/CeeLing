@@ -285,7 +285,11 @@ private:
     // If `expr` is a call, every object-typed-local argument is moved into the
     // callee (CeeLing bans `ref` parameters, so a call always consumes its object
     // arguments). No-op for non-call expressions.
+    // Applies the moves and invalidations of EVERY call inside `expr`, in evaluation order (operands and arguments before the call that
+    // takes them), however deep: `f(v) + g(v)`, `h(f(v))`, `std::cout << f(v)`. A call that moves an owner the same statement already moved
+    // is a use of a moved-from value.
     void applyCallArgMoves(const Expression* expr);
+    void applyOneCallMoves(const Expression* expr);      // the moves and invalidations of the single call `expr`
 
     // `cling::spawn(new __closure_N(captures...))`: decides which object captures may be MOVED into the
     // new thread and marks each one moved-from. Rejects the rest. See the rules in the .cpp.

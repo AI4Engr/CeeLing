@@ -691,6 +691,31 @@ std::string DanglingChecker::declaredTypeOf(const Expression* expr) const {
 }
 
 void DanglingChecker::applyCallArgMoves(const Expression* expr) {
+    if (expr == nullptr) return;
+    if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
+        if (call->callee == nullptr && call->function_name == "cling::spawn") {
+            applyOneCallMoves(expr);          // its arguments are a closure literal, checked as a whole
+            return;
+        }
+        if (call->callee) applyCallArgMoves(call->callee.get());
+        for (const auto& arg : call->arguments) applyCallArgMoves(arg.get());
+        applyOneCallMoves(expr);
+    } else if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
+        applyCallArgMoves(bin->left.get());
+        applyCallArgMoves(bin->right.get());
+    } else if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
+        applyCallArgMoves(un->operand.get());
+    } else if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+        applyCallArgMoves(member->object.get());
+    } else if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        applyCallArgMoves(sub->object.get());
+        applyCallArgMoves(sub->index.get());
+    } else if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
+        for (const auto& arg : neww->arguments) applyCallArgMoves(arg.get());
+    }
+}
+
+void DanglingChecker::applyOneCallMoves(const Expression* expr) {
     auto call = dynamic_cast<const FunctionCall*>(expr);
     if (call == nullptr) return;
 
@@ -738,6 +763,11 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
     if (!receiverType.empty()) {
         if (auto it = outParamIndex_.find(outParamKey(receiverType, methodName));
             it != outParamIndex_.end()) {
+            outParamIdx = it->second;
+        }
+    } else if (call->callee == nullptr && !currentClass_.empty()) {
+        // an unqualified call of a method of the CURRENT class (implicit `this`): `if (!decodeInto(out)) ...` inside YAML::Node::as<T>
+        if (auto it = outParamIndex_.find(outParamKey(currentClass_, call->function_name)); it != outParamIndex_.end()) {
             outParamIdx = it->second;
         }
     }
@@ -838,6 +868,16 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
         }
 
         if (std::string src = asObjectLocalName(call->arguments[i].get()); !src.empty()) {
+            if (movedFrom_.count(src) > 0) {
+                // checkExpressionUses ran over the whole statement before any move, so an owner that is already moved here was moved by an
+                // earlier call of this same statement (`f(v) + f(v)`)
+                DanglingError e;
+                e.line = call->arguments[i]->loc.line;
+                e.column = call->arguments[i]->loc.column;
+                e.message = "use of moved-from value `" + src + "`";
+                e.help = "`" + src + "` was moved by an earlier call in this same statement; split the statement or pass a copy";
+                errors_.push_back(e);
+            }
             movedFrom_.insert(src);
         }
     }
@@ -1734,6 +1774,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         checkReturnedReference(ret->expression.get());
     } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
         checkExpressionUses(ifs->condition.get());
+        applyCallArgMoves(ifs->condition.get());
         // A branch runs conditionally, so any effect inside it (a move, an observer
         // rebind, a scope-exit death) is not certain on the path after the `if` --
         // each branch is analyzed independently from the same starting snapshot, then

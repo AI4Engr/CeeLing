@@ -1,0 +1,19 @@
+//@ expect: accept
+//@ run: 4 2
+//@ reason: the counterpart: each call gets its own vector, and a call inside an expression is fine when the moved variable is not used afterward.
+
+int total(std::vector<int> v) {
+    v.push_back(1);
+    return v.size();
+}
+
+int main() {
+    std::vector<int> a;
+    a.push_back(5);
+    std::vector<int> b;
+    b.push_back(5);
+    int sum = total(a) + total(b);
+    std::vector<int> c;
+    std::cout << sum << " " << total(c) + 1 << std::endl;
+    return 0;
+}
