@@ -60,6 +60,7 @@ std::string AstEmitter::emit(const Program& program) {
     varKinds_.clear();
     usedRuntimeHelpers_.clear();
     usesCopyWithin_ = false;
+    usesVectorAlgorithms_ = false;
     usesBoundsCheck_ = false;
     collectClassNames(program);
     collectUsedRuntimeHelpers(program);
@@ -110,6 +111,9 @@ std::string AstEmitter::emit(const Program& program) {
     }
     if (usesCopyWithin_) {
         out << copyWithinHelperDefinition() << "\n";
+    }
+    if (usesVectorAlgorithms_) {
+        out << vectorAlgorithmHelperDefinition() << "\n";
     }
     if (programUsesChannel(program)) {
         out << channelHelperDefinition() << "\n";
@@ -594,6 +598,10 @@ void AstEmitter::collectUsedRuntimeHelpers(const Program& program) {
                 if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
                     member != nullptr && member->member == "copyWithin") {
                     usesCopyWithin_ = true;
+                }
+                if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+                    member != nullptr && isVectorAlgorithm(member->member)) {
+                    usesVectorAlgorithms_ = true;      // (a false positive costs one unused helper, never a missing one)
                 }
             } else if (isKnownRuntimeHelper(call->function_name)) {
                 usedRuntimeHelpers_.insert(call->function_name);
@@ -2939,6 +2947,12 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
             const std::string src = emitExpression(call->arguments[1].get());
             const std::string len = emitExpression(call->arguments[2].get());
             return "cling::copyWithin(" + recvText + ", " + dst + ", " + src + ", " + len + ")";
+        }
+        if (receiverIsVector && isVectorAlgorithm(methodName) && call->arguments.size() == vectorAlgorithmArity(methodName) &&
+            isPrimitiveType(vectorElementType(receiverContainerType))) {
+            std::string helper = "cling::v" + methodName + "(" + recvText;
+            if (!call->arguments.empty()) helper += ", " + emitExpression(call->arguments[0].get());
+            return helper + ")";
         }
         const bool elementIsShared = receiverIsVector && analyzer_.containerElementIsShared(receiverName);
         size_t argOutParamIdx = call->arguments.size();  // sentinel: no out-parameter

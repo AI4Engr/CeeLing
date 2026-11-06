@@ -770,6 +770,34 @@ std::string channelHelperDefinition() {
         "#endif\n";
 }
 
+bool isVectorAlgorithm(const std::string& m) {
+    return m == "sort" || m == "reverse" || m == "fill" || m == "indexOf" || m == "contains";
+}
+
+size_t vectorAlgorithmArity(const std::string& m) {
+    return (m == "sort" || m == "reverse") ? 0 : 1;
+}
+
+std::string vectorAlgorithmHelperDefinition() {
+    return R"CLINGALGO(#ifndef CLING_VECTOR_ALGO_DEFINED
+#define CLING_VECTOR_ALGO_DEFINED
+#include <algorithm>
+namespace cling {
+template <typename T> inline void vsort(std::vector<T>& v) {
+    std::sort(v.begin(), v.end(), [](const T& a, const T& b) { return a < b || (b != b && a == a); });   // NaN last: a strict weak order
+}
+template <typename T> inline void vreverse(std::vector<T>& v) { std::reverse(v.begin(), v.end()); }
+template <typename T, typename U> inline void vfill(std::vector<T>& v, U x) { std::fill(v.begin(), v.end(), static_cast<T>(x)); }
+template <typename T, typename U> inline int vindexOf(const std::vector<T>& v, U x) {
+    for (size_t i = 0; i < v.size(); ++i) if (v[i] == static_cast<T>(x)) return static_cast<int>(i);
+    return -1;
+}
+template <typename T, typename U> inline bool vcontains(const std::vector<T>& v, U x) { return vindexOf(v, x) >= 0; }
+} // namespace cling
+#endif
+)CLINGALGO";
+}
+
 std::string copyWithinHelperDefinition() {
     // See the header's doc comment for why this is a helper rather than a
     // bare std::memmove call, and why the SSE2 fast path's final chunk no

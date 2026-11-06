@@ -363,6 +363,7 @@ private:
     // `#include <cstring>` is only emitted when this is true -- matching
     // usedRuntimeHelpers_'s own "only include what's actually used" discipline.
     bool usesCopyWithin_ = false;
+    bool usesVectorAlgorithms_ = false;           // v.sort() / reverse() / fill() / indexOf() / contains() somewhere (cling::vsort...)
     // Does this file declare any std::weak_ptr field? If so, a read of that field goes through
     // lock(), and a member access THROUGH it is wrapped in cling::nn (null check), so the
     // helper (nullCheckHelperDefinition) and <cstdio>/<cstdlib> must be emitted.

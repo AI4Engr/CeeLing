@@ -352,6 +352,13 @@ std::string requiredRuntimeHelperDefinitions(const std::set<std::string>& used);
 // since the answer differs by platform.
 std::string copyWithinHelperDefinition();
 
+// CeeLing's own whole-vector algorithms, `v.sort()`, `v.reverse()`, `v.fill(x)`, `v.indexOf(x)` (-1 when absent), `v.contains(x)`, on a vector of
+// primitives. No iterators are involved, so nothing can dangle; none changes size(). `sort` orders NaN last (std::sort with NaN is undefined
+// behaviour). isVectorAlgorithm(name) names them, vectorAlgorithmArity(name) is their argument count, vectorAlgorithmHelperDefinition() the runtime.
+bool isVectorAlgorithm(const std::string& methodName);
+size_t vectorAlgorithmArity(const std::string& methodName);
+std::string vectorAlgorithmHelperDefinition();
+
 // ---- Channel<T> -----------------------------------------------------------------------------------------------
 // `Channel<T>`: a built-in handle to a queue through which threads hand each other PLAIN VALUES (the same element types a `spawn` may
 // capture: primitives, string, vectors of primitives, structs of those). Copying the handle -- by assignment, as an argument, into a

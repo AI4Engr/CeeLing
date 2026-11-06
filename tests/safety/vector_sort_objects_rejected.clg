@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: `sort` on `std::vector<Node>`: element type is not primitive
+//@ reason: ordering objects needs a comparison CeeLing cannot express; the method exists for numbers, bool, char, byte and string only.
+
+class Node {
+public:
+    int k;
+    Node(int k) { this->k = k; }
+};
+
+int main() {
+    std::vector<Node> v;
+    v.push_back(new Node(2));
+    v.sort();
+    return 0;
+}

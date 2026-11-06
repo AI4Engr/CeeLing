@@ -21,6 +21,13 @@
 # escape_hatch_checker.cpp; that is policy, not a fact.
 vector.note push_back shares-arg0 source=declared review=hand
 vector.own copyWithin source=declared review=hand
+# CeeLing's own whole-vector algorithms (no iterators): lowered to cling::vsort etc. Primitive elements only (language rule in escape_hatch_checker.cpp).
+# None changes size() or reallocates, so none invalidates a span or an element observer.
+vector.own sort source=declared review=hand
+vector.own reverse source=declared review=hand
+vector.own fill source=declared review=hand
+vector.own indexOf source=declared review=hand
+vector.own contains source=declared review=hand
 
 # Free functions. `std::to_string`: number to text, returns a fresh string (nothing to borrow).
 function std::stoi source=declared review=hand

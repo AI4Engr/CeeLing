@@ -1213,7 +1213,8 @@ that:
 | Call | Effect on observers of the vector |
 |---|---|
 | `push_back`, `pop_back`, `resize`, `reserve`, `assign`, `clear`, `shrink_to_fit` (every method the scan finds changes the receiver) | they die |
-| `copyWithin` | nothing |
+| `copyWithin`, `sort`, `reverse`, `fill` | nothing (size and storage stay) |
+| `indexOf`, `contains` | nothing |
 | `size`, `empty`, `capacity`, `max_size` | nothing |
 | `begin`, `end`, `insert`, `erase`, `front`, `back`, `at`, `emplace_back`, `data`, `swap`, anything else | not accepted: the call is an error, with the reason |
 

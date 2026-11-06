@@ -793,6 +793,31 @@ int main() {
 1 2 1 2 0 0 0
 ```
 
+### `sort`, `reverse`, `fill`, `indexOf`, `contains`: whole-vector algorithms
+
+C++ spells these with iterators (`std::sort(v.begin(), v.end())`), and CeeLing refuses iterators. So a vector of numbers, `bool`, `char`, `byte` or `string` has five methods of CeeLing's own that take the whole vector: `v.sort()` (ascending; NaN last),
+`v.reverse()`, `v.fill(x)`, `v.indexOf(x)` (the first position, or -1) and `v.contains(x)`. They take no comparator and no range, work on primitives only (ordering objects needs a comparison CeeLing cannot express), and change neither the size nor the
+storage, so a span of the vector survives them.
+
+<!-- example: 03_vector_algorithms.clg -->
+```cpp
+int main() {
+    std::vector<int> v;
+    v.push_back(5);
+    v.push_back(2);
+    v.push_back(9);
+    v.push_back(1);
+    v.sort();                              // no iterators, no comparator: the whole vector, ascending
+    std::cout << v[0] << " " << v[1] << " " << v[2] << " " << v[3] << " | ";
+    v.reverse();
+    std::cout << v[0] << " " << v[1] << " " << v[2] << " " << v[3] << " | ";
+    std::cout << v.indexOf(2) << " " << v.indexOf(7) << " | " << v.contains(9) << " " << v.contains(4) << std::endl;
+    return 0;
+}
+```
+x
+```
+
 ### Passing a vector to a function
 
 **The problem in C++.** A parameter declared `std::vector<int>` copies the whole vector on every call. The fix is `const std::vector<int>&`, and that reintroduces the reference:

@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ error: use of dangling observer `s`
+//@ reason: sort() keeps the span alive but a push_back after it still kills it: the algorithms did not weaken the invalidation table.
+
+int main() {
+    std::vector<int> v;
+    v.push_back(2);
+    v.push_back(1);
+    std::span<int> s = v;
+    v.sort();
+    v.push_back(3);
+    std::cout << s.size() << std::endl;
+    return 0;
+}

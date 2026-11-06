@@ -296,7 +296,8 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
             // resize/reserve/assign/copyWithin only on primitive-element vectors --
             // see isKnownVectorMethod's comment in library_summary.h. (`assign(n, x)` on an object vector would copy an owner.)
             if (member->member == "resize" || member->member == "reserve" ||
-                member->member == "assign" || member->member == "copyWithin") {
+                member->member == "assign" || member->member == "copyWithin" || isVectorAlgorithm(member->member)) {
+                if (isVectorAlgorithm(member->member) && call.arguments.size() != vectorAlgorithmArity(member->member)) return false;
                 return isPrimitiveType(vectorElementType(declaredType));
             }
             return isKnownVectorMethod(member->member);
@@ -590,6 +591,18 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                              "(int, byte, char, ...), matching `resize`'s own restriction -- "
                              "v1 has no motivating case for reserving capacity on an "
                              "object-element vector.";
+                }
+            }
+            if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get());
+                calleeMember != nullptr && isVectorAlgorithm(calleeMember->member)) {
+                const std::string recvType = resolveDeclaredType(calleeMember->object.get());
+                if (isVectorType(recvType)) {
+                    e.message = "`" + calleeMember->member + "` on `" + recvType + "`: " +
+                                (call->arguments.size() != vectorAlgorithmArity(calleeMember->member)
+                                     ? "wrong number of arguments (takes " + std::to_string(vectorAlgorithmArity(calleeMember->member)) + ")"
+                                     : "element type is not primitive");
+                    e.help = "`sort`, `reverse`, `fill`, `indexOf` and `contains` are CeeLing's own whole-vector methods and work on vectors of numbers, bool, char, byte and string, "
+                             "Comparing or ordering objects needs a comparison CeeLing cannot express yet; write the loop.";
                 }
             }
             if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get());
