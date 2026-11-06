@@ -1,0 +1,28 @@
+//@ expect: reject
+//@ error: a `span` parameter cannot view `data`
+//@ reason: peek() calls shrink(), which clears the very field the span views, then reads through the span: freed memory. A vector this function owns cannot be reached by the callee; a field can.
+
+class Holder {
+public:
+    std::vector<int> data;
+    Holder() {
+        data.push_back(7);
+    }
+    void shrink() {
+        data.clear();
+        data.shrink_to_fit();
+    }
+    int peek(std::span<int> s) {
+        shrink();
+        return s[0];
+    }
+    int go() {
+        return peek(data);
+    }
+};
+
+int main() {
+    Holder h = new Holder();
+    std::cout << h.go() << std::endl;
+    return 0;
+}

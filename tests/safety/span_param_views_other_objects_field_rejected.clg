@@ -1,0 +1,21 @@
+//@ expect: reject
+//@ error: a `span` parameter cannot view `h.data`
+//@ reason: the same through another object's field.
+
+class Holder {
+public:
+    std::vector<int> data;
+    Holder() {
+        data.push_back(7);
+    }
+};
+
+int first(std::span<int> s) {
+    return s[0];
+}
+
+int main() {
+    Holder h = new Holder();
+    std::cout << first(h.data) << std::endl;
+    return 0;
+}

@@ -814,9 +814,17 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
         // pass -- matching how outParamIdx/refParams are resolved above.
         if (analyzer_ != nullptr && i < call->arguments.size()) {
             const std::vector<std::pair<std::string, std::string>>* calleeParams = nullptr;
+            std::string implicitClass;     // an unqualified call of a method of the current class (implicit `this`)
             if (receiverType.empty()) {
                 if (auto it = functionParams_.find(call->function_name); it != functionParams_.end()) {
                     calleeParams = &it->second;
+                } else if (call->callee == nullptr && !currentClass_.empty()) {
+                    if (auto clsIt = classMethodParams_.find(currentClass_); clsIt != classMethodParams_.end()) {
+                        if (auto mIt = clsIt->second.find(call->function_name); mIt != clsIt->second.end()) {
+                            calleeParams = &mIt->second;
+                            implicitClass = currentClass_;
+                        }
+                    }
                 }
             } else if (auto clsIt = classMethodParams_.find(receiverType); clsIt != classMethodParams_.end()) {
                 if (auto mIt = clsIt->second.find(methodName); mIt != clsIt->second.end()) {
@@ -824,11 +832,32 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
                 }
             }
             if (calleeParams != nullptr && i < calleeParams->size()) {
-                if (isSpanType((*calleeParams)[i].first)) { reportMovedArgument(i); continue; }     // viewed for the call, not given away
+                if (isSpanType((*calleeParams)[i].first)) {
+                    // viewed for the call, not given away. A vector this function owns (a local or a parameter) cannot be reached by the callee, so
+                    // nothing can resize it while the span lives; a FIELD (or an element of a container) can: the callee may call a method that
+                    // clears that very field and then read through its span.
+                    const Expression* arg = call->arguments[i].get();
+                    const auto* argId = dynamic_cast<const Identifier*>(arg);
+                    const bool nonLocal = (argId != nullptr && localType_.count(argId->name) == 0 && isVectorType(declaredTypeOf(arg))) ||
+                                          dynamic_cast<const MemberAccess*>(arg) != nullptr || dynamic_cast<const SubscriptExpression*>(arg) != nullptr;
+                    if (nonLocal) {
+                        DanglingError e;
+                        e.line = arg->loc.line;
+                        e.column = arg->loc.column;
+                        e.message = "a `span` parameter cannot view `" + arg->toString() + "`, which is not a local vector";
+                        e.help = "The callee could change that field (or container) while it holds the span, and the span would then point at freed memory. "
+                                 "Copy the field into a local vector first and pass the local.";
+                        errors_.push_back(e);
+                    }
+                    reportMovedArgument(i);
+                    continue;
+                }
                 const std::string& pname = (*calleeParams)[i].second;
-                const bool isReadOnlyContainer = receiverType.empty()
-                    ? analyzer_->isReadOnlyContainerParam(call->function_name, pname)
-                    : analyzer_->isReadOnlyMethodContainerParam(receiverType, methodName, pname);
+                const bool isReadOnlyContainer = !implicitClass.empty()
+                    ? analyzer_->isReadOnlyMethodContainerParam(implicitClass, call->function_name, pname)
+                    : (receiverType.empty()
+                        ? analyzer_->isReadOnlyContainerParam(call->function_name, pname)
+                        : analyzer_->isReadOnlyMethodContainerParam(receiverType, methodName, pname));
                 if (isReadOnlyContainer) { reportMovedArgument(i); continue; }
             }
         }

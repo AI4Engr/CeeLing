@@ -1645,7 +1645,7 @@ error[semantic/use-after-move]: use of dangling observer `v` (its owner `s` is g
 
 **`span`.** `std::span<T>` (T a number, `bool`, `char`, `byte` or `int64`) is CeeLing's own type, not the standard one: `std::span` is C++20 and the generated code is built as C++17, so the compiler provides `cling::span` and `std::span<int>` is the
 spelling that lowers to it. It is a view of a vector's elements and is followed exactly like a `string_view`: the vector's reassignment, a method that may reallocate it (`push_back`, `resize`, `clear`, ...), its being moved away and the end of its scope kill the
-span. It can be made from a vector local or parameter, from another span, or from `subspan`, `first` or `last` of a span; it may only be a local variable or a parameter. A vector passed to a `span` parameter is viewed, not moved. Every way to narrow a
+span. It can be made from a vector local or parameter, from another span, or from `subspan`, `first` or `last` of a span; it may only be a local variable or a parameter. A vector passed to a `span` parameter is viewed, not moved, and it has to be a vector the caller owns, a local or a parameter: handing over a field is refused, because the callee could call a method that clears that field and then read through its span. Every way to narrow a
 span is range-checked at run time, and so is `s[i]` (`cling::at`, like a vector's subscript); `data()` and iterators do not exist on it. The facts are `facts/cling-span.clfacts`, written by hand because there is nothing to scan.
 
 <!-- example: 06_span_ok.clg -->
