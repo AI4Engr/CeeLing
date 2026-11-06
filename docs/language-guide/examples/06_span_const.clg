@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: assignment through a read-only span
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::span<const int> s = v;           // a read-only view of v
+    s[0] = 5;                             // cannot write through it
+    return 0;
+}

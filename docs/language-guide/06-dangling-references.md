@@ -1696,6 +1696,26 @@ error[semantic/use-after-move]: use of dangling observer `s` (its owner `v` is g
   help: `s` observes `v`, which no longer has a live owner
 ```
 
+**`std::span<const T>`** is the read-only form (since 2026-11-05): its elements cannot be written (`s[i] = x` is an error), it can be made from a vector, from a vector that is only readable in this function (an inferred `const&` parameter) and from a `std::span<T>`, but a writable
+span can never be made from it. It follows its vector exactly like a writable span.
+
+<!-- example: 06_span_const.clg -->
+```cpp
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::span<const int> s = v;           // a read-only view of v
+    s[0] = 5;                             // cannot write through it
+    return 0;
+}
+```
+x
+```
+
+**Why a span cannot be a field, and never will be.** A view stored in a field outlives the call that made it, and nothing in CeeLing follows a vector across calls: the owner could be reassigned, grow or die while the field still points into it. That is the same reason `ref` observers
+cannot be fields (chapter 6, above), and the answer is the same: a class that needs the bytes owns them (a `std::vector` field plus an index), or is handed them again at each call (a `std::span<const byte>` parameter). A view of a buffer the class owns is no help either, since the view
+and the buffer would have to be kept in step by every method; the position into the buffer is what a reader needs.
+
 A view is turned into an owning `string` by a copy, and the compiler writes the copy for you wherever a `string` is expected: a declaration (`string t = v;`), an assignment, an argument for a `string` parameter, a `return` from a function that
 returns `string`. The copy is a fresh owner, so it outlives the string the view was made from; reading a view that has died (to copy it) is still the use the checker rejects. Not converted: `s + v` (concatenation) and library functions that take a
 `string` (`std::stoi(v)`): copy first (`string t = v;`).
