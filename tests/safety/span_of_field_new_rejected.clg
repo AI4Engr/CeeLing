@@ -1,0 +1,28 @@
+//@ expect: reject
+//@ error: use of dangling observer `s`
+//@ reason: a constructor may run any code, so `new` ends the trust in a span of a field.
+
+class Other {
+public:
+    int k;
+    Other() { k = 1; }
+};
+
+class Buffer {
+public:
+    std::vector<int> data;
+    Buffer() {
+        data.push_back(1);
+    }
+    int run() {
+        std::span<int> s = data;
+        Other o = new Other();
+        return s[0] + o.k;
+    }
+};
+
+int main() {
+    Buffer b = new Buffer();
+    std::cout << b.run() << std::endl;
+    return 0;
+}

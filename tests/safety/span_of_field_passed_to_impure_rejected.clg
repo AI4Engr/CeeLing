@@ -1,0 +1,28 @@
+//@ expect: reject
+//@ error: a view of the field `data`, is passed to a call that may change that field
+//@ reason: the callee holds the span while it calls shrink(), which clears the field it views.
+
+class Buffer {
+public:
+    std::vector<int> data;
+    Buffer() {
+        data.push_back(1);
+    }
+    void shrink() {
+        data.clear();
+    }
+    int peek(std::span<int> s) {
+        shrink();
+        return s[0];
+    }
+    int run() {
+        std::span<int> s = data;
+        return peek(s);
+    }
+};
+
+int main() {
+    Buffer b = new Buffer();
+    std::cout << b.run() << std::endl;
+    return 0;
+}

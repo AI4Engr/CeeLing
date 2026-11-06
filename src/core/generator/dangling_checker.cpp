@@ -712,6 +712,7 @@ void DanglingChecker::applyCallArgMoves(const Expression* expr) {
         applyCallArgMoves(sub->index.get());
     } else if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
         for (const auto& arg : neww->arguments) applyCallArgMoves(arg.get());
+        killFieldObservers("");      // a constructor may run any code
     }
 }
 
@@ -729,6 +730,22 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
     // since both are driven by the exact same call expression, and every call
     // site in this file that calls applyCallArgMoves needs this too.
     invalidateContainerObservers(expr);
+    if (hasFieldObservers() && calleeHeapEffect(call) == 2) {
+        for (const auto& arg : call->arguments) {
+            auto aid = dynamic_cast<const Identifier*>(arg.get());
+            auto o = aid != nullptr ? observerOf_.find(aid->name) : observerOf_.end();
+            if (o != observerOf_.end() && !o->second.empty() && o->second[0] == '@') {
+                DanglingError e;
+                e.line = arg->loc.line;
+                e.column = arg->loc.column;
+                e.message = "`" + aid->name + "`, a view of the field `" + o->second.substr(1) + "`, is passed to a call that may change that field";
+                e.help = "The callee could clear or grow the field and then read through the span. Copy the field into a local vector and view that, or "
+                         "call something that only reads.";
+                errors_.push_back(e);
+            }
+        }
+        killFieldObservers("");
+    }
 
     // A known library method may SHARE an argument instead of moving it (e.g.
     // `v.push_back(x)` links x into the container, the same way storing into a
@@ -840,13 +857,14 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
                     const auto* argId = dynamic_cast<const Identifier*>(arg);
                     const bool nonLocal = (argId != nullptr && localType_.count(argId->name) == 0 && isVectorType(declaredTypeOf(arg))) ||
                                           dynamic_cast<const MemberAccess*>(arg) != nullptr || dynamic_cast<const SubscriptExpression*>(arg) != nullptr;
-                    if (nonLocal) {
+                    if (nonLocal && calleeHeapEffect(call) != 1) {
                         DanglingError e;
                         e.line = arg->loc.line;
                         e.column = arg->loc.column;
-                        e.message = "a `span` parameter cannot view `" + arg->toString() + "`, which is not a local vector";
+                        e.message = "a `span` parameter cannot view `" + arg->toString() + "`, which is not a local vector, for a callee that may change it";
                         e.help = "The callee could change that field (or container) while it holds the span, and the span would then point at freed memory. "
-                                 "Copy the field into a local vector first and pass the local.";
+                                 "It is accepted when the callee provably changes no container or field it does not own (a heap-pure function); otherwise "
+                                 "copy the field into a local vector first and pass the local.";
                         errors_.push_back(e);
                     }
                     reportMovedArgument(i);
@@ -930,16 +948,62 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
     }
 }
 
+void DanglingChecker::killFieldObservers(const std::string& field) {
+    for (const auto& [obs, owner] : observerOf_) {
+        if (!owner.empty() && owner[0] == '@' && (field.empty() || owner == "@" + field)) danglingObservers_.insert(obs);
+    }
+}
+
+bool DanglingChecker::hasFieldObservers() const {
+    for (const auto& [obs, owner] : observerOf_) {
+        if (!owner.empty() && owner[0] == '@' && danglingObservers_.count(obs) == 0) return true;
+    }
+    return false;
+}
+
+int DanglingChecker::calleeHeapEffect(const FunctionCall* call) const {
+    std::string name = call->function_name;
+    if (call->callee != nullptr) {
+        auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+        if (member == nullptr) return 2;
+        name = member->member;
+    }
+    if (name.empty()) return 2;
+    bool user = false, pure = true;
+    if (call->callee == nullptr && functionParams_.count(name) > 0) {
+        user = true;
+        pure = pure && analyzer_ != nullptr && analyzer_->isHeapPureFreeFunction(name);
+    }
+    for (const auto& [cls, methods] : classMethodParams_) {
+        if (methods.count(name) == 0) continue;
+        user = true;
+        pure = pure && analyzer_ != nullptr && analyzer_->isHeapPureMethod(cls, name);
+    }
+    if (!user) return 0;
+    return pure ? 1 : 2;
+}
+
 void DanglingChecker::invalidateContainerObservers(const Expression* callExpr) {
     auto call = dynamic_cast<const FunctionCall*>(callExpr);
     if (call == nullptr || !call->callee) return;
     auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
     if (member == nullptr) return;
     auto id = dynamic_cast<const Identifier*>(member->object.get());
-    if (id == nullptr) return;
+    if (id == nullptr) {
+        // `other.items.push_back(x)` / `this.items.clear()`: a mutator on a vector reached through a member -- it may be the very field a span views
+        if (auto inner = dynamic_cast<const MemberAccess*>(member->object.get());
+            inner != nullptr && isVectorType(declaredTypeOf(inner)) && vectorMethodInvalidatesReferences(member->member)) {
+            killFieldObservers(inner->member);
+        }
+        return;
+    }
 
     auto typeIt = localType_.find(id->name);
-    if (typeIt == localType_.end()) return;
+    if (typeIt == localType_.end()) {
+        // a field of the current class, named bare
+        if (isVectorType(declaredTypeOf(id)) && vectorMethodInvalidatesReferences(member->member)) killFieldObservers(id->name);
+        return;
+    }
     if (isVectorType(typeIt->second)) {
         if (!vectorMethodInvalidatesReferences(member->member)) return;
     } else if (isStringType(typeIt->second)) {
@@ -1131,7 +1195,7 @@ void DanglingChecker::checkExpressionUses(const Expression* expr) {
                 e.line = expr->loc.line;
                 e.column = expr->loc.column;
                 e.message = "use of dangling observer `" + id->name +
-                            "` (its owner `" + owner + "` is gone)";
+                            "` (" + (!owner.empty() && owner[0] == '@' ? "the field `" + owner.substr(1) + "` may have been changed" : "its owner `" + owner + "` is gone") + ")";
                 e.help = "`" + id->name + "` observes `" + owner +
                          "`, which no longer has a live owner";
                 errors_.push_back(e);
@@ -1279,10 +1343,17 @@ void DanglingChecker::bindSpan(const std::string& name, const Expression* init, 
             if (dropsConst(typeIt->second)) return;
             auto o = observerOf_.find(id->name);          // a copy of a span follows the same vector
             if (o != observerOf_.end()) owner = o->second;
+        } else if (typeIt == localType_.end() && !currentClass_.empty() && isVectorType(declaredTypeOf(id))) {
+            // a vector FIELD of this class: followed as the pseudo owner "@name" (see killFieldObservers)
+            if (vectorElementType(declaredTypeOf(id)) != myElem) {
+                fail("`" + id->name + "` is a `" + declaredTypeOf(id) + "`, not a vector of `" + myElem + "`",
+                     "A span views the elements of a vector of the same element type.");
+                return;
+            }
+            owner = "@" + id->name;
         } else {
             fail("`" + id->name + "` is not a vector local or parameter",
-                 "A span can be made from a vector variable of this function, or from another span. A field has no owner the checker follows, so the "
-                 "field could be reassigned or grow while the span lives: copy it into a local vector first.");
+                 "A span can be made from a vector variable of this function, a vector field of this class, or another span.");
             return;
         }
     } else if (const MemberAccess* mc = memberCall(init);
@@ -1755,6 +1826,9 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             if (assign->target) {
                 checkExpressionUses(assign->target.get());
             }
+            // a store into a field replaces what a span of that field points into (name-based: `h.items = ...` counts too)
+            if (auto m = dynamic_cast<const MemberAccess*>(assign->target.get())) killFieldObservers(m->member);
+            else if (!assign->target) killFieldObservers(assign->variable);
         } else if (observerNames_.find(assign->variable) != observerNames_.end()) {
             // Assigning to an observer rebinds what it observes: `b = inner;`. A
             // plain rebind is a real (non-alias) observation, so it no longer gets

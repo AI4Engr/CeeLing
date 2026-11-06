@@ -1,0 +1,24 @@
+//@ expect: reject
+//@ error: use of dangling observer `s` (the field `data` may have been changed)
+//@ reason: assigning the field replaces its storage.
+
+class Buffer {
+public:
+    std::vector<int> data;
+    Buffer() {
+        data.push_back(1);
+    }
+    int run() {
+        std::vector<int> other;
+        other.push_back(9);
+        std::span<int> s = data;
+        data = other;
+        return s[0];
+    }
+};
+
+int main() {
+    Buffer b = new Buffer();
+    std::cout << b.run() << std::endl;
+    return 0;
+}

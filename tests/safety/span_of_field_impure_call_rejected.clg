@@ -1,0 +1,25 @@
+//@ expect: reject
+//@ error: use of dangling observer `s` (the field `data` may have been changed)
+//@ reason: grow() is not heap-pure (it pushes into the field), so after calling it the span of the field cannot be trusted. Nothing follows a field across a call except the heap-purity of the callee.
+
+class Buffer {
+public:
+    std::vector<int> data;
+    Buffer() {
+        data.push_back(1);
+    }
+    void grow() {
+        data.push_back(2);
+    }
+    int run() {
+        std::span<int> s = data;
+        grow();
+        return s[0];
+    }
+};
+
+int main() {
+    Buffer b = new Buffer();
+    std::cout << b.run() << std::endl;
+    return 0;
+}

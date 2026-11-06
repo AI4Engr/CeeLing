@@ -692,8 +692,16 @@ std::string AstEmitter::calleeParamType(const FunctionCall& call, size_t argInde
         params = &paramIt->second;
     } else {
         auto paramIt = functionParams_.find(call.function_name);
-        if (paramIt == functionParams_.end()) return {};
-        params = &paramIt->second;
+        if (paramIt == functionParams_.end()) {
+            // an unqualified call of a method of the CURRENT class (implicit `this`)
+            auto clsIt = currentClass_.empty() ? classMethodParams_.end() : classMethodParams_.find(currentClass_);
+            if (clsIt == classMethodParams_.end()) return {};
+            auto mIt = clsIt->second.find(call.function_name);
+            if (mIt == clsIt->second.end()) return {};
+            params = &mIt->second;
+        } else {
+            params = &paramIt->second;
+        }
     }
     return argIndex < params->size() ? (*params)[argIndex].first : std::string{};
 }
@@ -740,8 +748,16 @@ std::pair<std::string, std::string> AstEmitter::calleeParam(const FunctionCall& 
     } else {
         // Plain call `f(args)`.
         auto paramIt = functionParams_.find(call.function_name);
-        if (paramIt == functionParams_.end()) return {};
-        params = &paramIt->second;
+        if (paramIt == functionParams_.end()) {
+            // an unqualified call of a method of the CURRENT class (implicit `this`)
+            auto clsIt = currentClass_.empty() ? classMethodParams_.end() : classMethodParams_.find(currentClass_);
+            if (clsIt == classMethodParams_.end()) return {};
+            auto mIt = clsIt->second.find(call.function_name);
+            if (mIt == clsIt->second.end()) return {};
+            params = &mIt->second;
+        } else {
+            params = &paramIt->second;
+        }
     }
     if (argIndex >= params->size()) return {};
     const auto& [ptype, pname] = (*params)[argIndex];

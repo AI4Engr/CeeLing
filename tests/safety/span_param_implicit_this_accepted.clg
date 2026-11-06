@@ -1,0 +1,20 @@
+//@ expect: accept
+//@ run: 2
+//@ reason: an unqualified call of a method of the current class with a span parameter views the local vector (it used to be emitted as std::move(v), which g++ refused) and v is used again.
+
+class Holder {
+public:
+    int total(std::span<int> s) {
+        return s.size();
+    }
+    int go() {
+        std::vector<int> v;
+        v.push_back(3);
+        return total(v) + v.size();
+    }
+};
+int main() {
+    Holder h = new Holder();
+    std::cout << h.go() << std::endl;
+    return 0;
+}

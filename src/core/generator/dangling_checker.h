@@ -243,6 +243,14 @@ private:
     // reusing the same danglingObservers_ set (already conservatively unioned
     // across branches by mergeBranchStates, so this needs no new BranchState field).
     void invalidateContainerObservers(const Expression* callExpr);
+    // A span of a FIELD vector of the current class (`std::span<int> s = items;` in a method) observes the pseudo owner "@items". Nothing follows
+    // a field across calls, so such a span dies at: an assignment to a field of that name, a vector mutator called on that field, and any call
+    // that may reach the heap (a user function or method that is not heap-pure, or a `new`). Passing such a span to a call that may change the
+    // field is refused.
+    void killFieldObservers(const std::string& field);      // "" = every field observer
+    bool hasFieldObservers() const;
+    // 0: not user code (a library call), 1: every user function/method of that name is heap-pure, 2: some is not
+    int calleeHeapEffect(const FunctionCall* call) const;
 
     // Resolve the CeeLing CLASS NAME of `expr`'s static type -- a bare identifier
     // (local/param/field, via localType_/classFields_) or a CHAINED call

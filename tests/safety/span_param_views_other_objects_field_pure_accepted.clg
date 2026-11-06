@@ -1,0 +1,21 @@
+//@ expect: accept
+//@ run: 7
+//@ reason: another object's field may be viewed by a span parameter when the callee is heap-pure: first() changes no container or field it does not own.
+
+class Holder {
+public:
+    std::vector<int> data;
+    Holder() {
+        data.push_back(7);
+    }
+};
+
+int first(std::span<int> s) {
+    return s[0];
+}
+
+int main() {
+    Holder h = new Holder();
+    std::cout << first(h.data) << std::endl;
+    return 0;
+}

@@ -1712,6 +1712,9 @@ int main() {
 x
 ```
 
+**A span of a field.** Inside a method, `std::span<int> s = items;` may view a vector field of the same class (by its bare name). Nothing follows a field across calls, so the span is trusted only until something that could change the field: assigning it, calling a mutator on it, `new`
+(a constructor runs any code), or calling a function or method that is not provably "heap-pure" (one that changes no container or field it does not own). A span of a field passed to such a call is rejected at the call; a field passed to a `span` parameter is accepted when the callee is heap-pure.
+
 **Why a span cannot be a field, and never will be.** A view stored in a field outlives the call that made it, and nothing in CeeLing follows a vector across calls: the owner could be reassigned, grow or die while the field still points into it. That is the same reason `ref` observers
 cannot be fields (chapter 6, above), and the answer is the same: a class that needs the bytes owns them (a `std::vector` field plus an index), or is handed them again at each call (a `std::span<const byte>` parameter). A view of a buffer the class owns is no help either, since the view
 and the buffer would have to be kept in step by every method; the position into the buffer is what a reader needs.

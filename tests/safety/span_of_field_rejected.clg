@@ -1,19 +1,24 @@
 //@ expect: reject
 //@ error: cannot tell what the `span` `s` would refer to
-//@ reason: a field has no owner the checker follows: it could be reassigned or grow while the span lives.
+//@ reason: only a vector of THIS class (a bare field name in a method) can be viewed: another object's field is reached through a handle the checker does not follow.
 
 class Holder {
 public:
     std::vector<int> items;
     Holder() { items.push_back(1); }
-    int count() {
-        std::span<int> s = items;
+};
+
+class User {
+public:
+    int count(Holder h) {
+        std::span<int> s = h.items;
         return s.size();
     }
 };
 
 int main() {
     Holder h = new Holder();
-    std::cout << h.count() << std::endl;
+    User u = new User();
+    std::cout << u.count(h) << std::endl;
     return 0;
 }

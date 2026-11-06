@@ -1,6 +1,6 @@
 //@ expect: reject
 //@ error: a `span` parameter cannot view `h.data`
-//@ reason: the same through another object's field.
+//@ reason: grow() pushes into the object it is given, so the callee is not heap-pure and may resize the field while holding the span.
 
 class Holder {
 public:
@@ -10,12 +10,13 @@ public:
     }
 };
 
-int first(std::span<int> s) {
+int first(std::span<int> s, Holder h) {
+    h.data.push_back(1);
     return s[0];
 }
 
 int main() {
     Holder h = new Holder();
-    std::cout << first(h.data) << std::endl;
+    std::cout << first(h.data, h) << std::endl;
     return 0;
 }
