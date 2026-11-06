@@ -1395,6 +1395,14 @@ void DanglingChecker::processLoop(const Expression* condition, const ForStatemen
             mergeBranchStates(before, nextHead, e);
             nextHead = snapshotBranchState();
         }
+        if (condition != nullptr) {
+            // the condition is evaluated again at the top of the next iteration, in the state this iteration ended in: a value its calls moved
+            // (applied once before the loop) and the body did not give back is used after the move
+            const BranchState current = snapshotBranchState();
+            restoreBranchState(nextHead);
+            checkExpressionUses(condition);
+            restoreBranchState(current);
+        }
         const bool settled = sameState(nextHead, head);
         head = nextHead;
         if (settled) break;
@@ -1771,6 +1779,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         }
     } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
         checkExpressionUses(ret->expression.get());
+        applyCallArgMoves(ret->expression.get());
         checkReturnedReference(ret->expression.get());
     } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
         checkExpressionUses(ifs->condition.get());
@@ -1826,6 +1835,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         }
     } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
         checkExpressionUses(whiles->condition.get());
+        applyCallArgMoves(whiles->condition.get());      // evaluated before the first iteration and again before each next one (processLoop re-checks it)
         // The body may run zero or more times, so any effect inside it is not certain on the path
         // after the loop (modeled as a branch against "never runs", reusing the `if` merge rules),
         // and it runs again from the state the last pass left -- see processLoop.
@@ -1861,6 +1871,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         }
     } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
         checkExpressionUses(throwStmt->expression.get());
+        applyCallArgMoves(throwStmt->expression.get());
         // `throw` is restricted to string-typed operands this slice (CeeLing has no
         // exception-class hierarchy without inheritance -- see CLAUDE.md/TODO.md).
         // A string literal, a string-typed identifier, or a `+` concatenation of

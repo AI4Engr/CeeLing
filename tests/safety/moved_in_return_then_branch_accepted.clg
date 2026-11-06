@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ run: 2 3
+//@ reason: a return that moves its argument ends that path: the code after the `if` is reached only without the move, so using v there is fine.
+
+int total(std::vector<int> v) {
+    v.push_back(1);
+    return v.size();
+}
+
+int pick(std::vector<int> v, bool early) {
+    if (early) {
+        return total(v);
+    }
+    v.push_back(2);
+    return total(v) + 0;
+}
+
+int main() {
+    std::vector<int> a;
+    a.push_back(5);
+    std::vector<int> b;
+    b.push_back(5);
+    std::cout << pick(a, true) << " " << pick(b, false) << std::endl;
+    return 0;
+}

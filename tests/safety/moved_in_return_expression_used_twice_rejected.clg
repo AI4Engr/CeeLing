@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ error: use of moved-from value `v`
+//@ reason: both calls of the returned sum take v by value; the second reads what the first moved away.
+
+int total(std::vector<int> v) {
+    v.push_back(1);
+    return v.size();
+}
+
+int both(std::vector<int> v) {
+    return total(v) + total(v);
+}
+
+int main() {
+    std::vector<int> a;
+    a.push_back(1);
+    std::cout << both(a) << std::endl;
+    return 0;
+}
