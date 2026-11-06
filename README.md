@@ -60,7 +60,7 @@ g++ -std=c++17 out.cpp -o program
 | `docs/language-guide/` | the guide; every example in it is compiled and checked by CTest |
 | `docs/internals/` | implementation notes and history |
 | `tools/` | fact scanners (`cling-scan`, `std-scan-experiment`), the fact gauge and probes |
-| `examples/`, `playground/`, `regression/` | small demos, a debugging playground, transpile regression runs |
+| `examples/`, `regression/` | small demos, transpile regression runs |
 
 Companion projects written in CeeLing live in their own repositories (a zlib port, a cJSON port, a yaml-cpp port, an app shell).
 
