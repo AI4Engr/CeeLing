@@ -1,13 +1,8 @@
 # Plan: Eigen view/borrow tracking (replace the exploratory allow-list)
 
-> **STATUS: v1 IMPLEMENTED.** See the internal notes' "Eigen view/borrow tracking —
-> v1 IMPLEMENTED" section for the final outcome, what changed, and the
-> verification record. This file is kept as-is for its design rationale
-> (especially the "why Eigen is different" section below) — the steps below
-> describe what was planned; the internal notes describes what actually landed. No
-> steps were skipped; Step 3b's flagged risk (receiver-vs-argument
-> distinction) was real and is exactly what got resolved during
-> implementation, documented in the internal notes.
+> **STATUS: v1 IMPLEMENTED.** The Eigen view methods are tracked as observers of their receiver (guide chapter 6, section on views). This file is kept for its
+> design rationale (especially the "why Eigen is different" section below); the steps below describe what was planned, not what the code does today.
+> Step 3b's flagged risk (receiver-vs-argument distinction) was real and was resolved during implementation.
 
 ## Status before this plan (verified empirically, not assumed)
 

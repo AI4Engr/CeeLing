@@ -1,7 +1,11 @@
-# Plan: inferring the safety facts of third-party C++ libraries (design only, nothing built)
+# Design: inferring the safety facts of third-party C++ libraries
 
-Status: **proposal for discussion.** It builds on what the internal notes already records (the three trust tiers, the `cling-scan` feasibility measurement, the declaration-pack idea) and on what writing
-the Language Guide showed about the compiler's current behaviour. No code is part of this document.
+> **Status: mostly implemented; this is the design record, not the current description.** Section 1 describes the compiler as it was before the work started (hard-coded
+> tables, unknown type names passing through): that is no longer true. What exists now: facts are data (`facts/*.clfacts`, [format](../internals/facts-format.md)); `std::vector`,
+> `string`, `string_view`, `optional`, `map` are admitted by rule from scans of the real library declarations; project packs (`--facts`), the `opaque` tier, `--report-facts`, `--strict`,
+> header hashes, the fact gauge, `cling-scan` (text, libclang and LibTooling backends) and the AddressSanitizer probes are built and tested; unknown type names are errors. What is not built:
+> downloadable packs with a lock file (section 13) and the LAPACK test (section 11). Read the sections for the reasoning behind these choices; for behaviour, read the Language Guide
+> ([chapter 11](../language-guide/11-talking-to-cpp.md), [chapter 18](../language-guide/18-status.md)) and the code.
 
 ## 1. The problem, stated by what the compiler does today
 

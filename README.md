@@ -58,7 +58,7 @@ g++ -std=c++17 out.cpp -o program
 | `facts/` | library facts shipped inside the compiler (`std::vector`, `string`, `map`, `optional`, `span`, Eigen...) |
 | `tests/safety/` | the safety contract as fixtures: each is accepted (and run, with its output asserted) or must be rejected |
 | `docs/language-guide/` | the guide; every example in it is compiled and checked by CTest |
-| `docs/internals/` | implementation notes and history |
+| `docs/design/`, `docs/internals/` | design records (Eigen views, inferring library facts) and the `.clfacts` format |
 | `tools/` | fact scanners (`cling-scan`, `std-scan-experiment`), the fact gauge and probes |
 | `examples/`, `regression/` | small demos, transpile regression runs |
 
