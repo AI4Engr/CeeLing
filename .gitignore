@@ -1,4 +1,3 @@
-node_modules/
 dist/
 build/
 build-wasm/
@@ -27,7 +26,6 @@ tools/cling-scan/libtooling/cling-scan-extract
 # local-only tool settings, scratch folders and run output
 .claude/settings.local.json
 tmp_*/
-regression/results/
 .claude/
 
 # internal working notes (kept locally, not published)

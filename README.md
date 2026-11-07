@@ -32,12 +32,13 @@ Positioning: safer than hand-written C++ while keeping the C++ ecosystem (std, E
 
 ## Build
 
-Requirements: CMake, a C++17 compiler (MinGW/GCC/Clang/MSVC), Git. The parser is generated with the tree-sitter CLI (`npm install -g tree-sitter-cli`) and `tree-sitter-ceeling/src/parser.c` is checked in, so regenerating is only needed after editing `tree-sitter-ceeling/grammar.js`.
+Requirements: CMake, a C++17 compiler (MinGW/GCC/Clang/MSVC) and Git. The generated parser (`tree-sitter-ceeling/src/parser.c`) is checked in, so the tree-sitter CLI is needed only after editing `tree-sitter-ceeling/grammar.js` (`cd tree-sitter-ceeling && tree-sitter generate`; `npm install -g tree-sitter-cli`). The tests also use Python 3 and bash.
 
 ```bash
 git clone --recursive <this repository>      # vendor/tree-sitter is a submodule
-./dev.sh setup && ./dev.sh build             # Windows: dev.bat init-submodules, dev.bat configure, dev.bat build
-./dev.sh test                                # CTest
+cmake -S . -B build                          # add -G Ninja for a faster build
+cmake --build build --parallel
+ctest --test-dir build                       # the whole suite; a few tests skip themselves when g++, WSL, Eigen or jsoncpp are missing
 ```
 
 Use it:
@@ -60,7 +61,7 @@ g++ -std=c++17 out.cpp -o program
 | `docs/language-guide/` | the guide; every example in it is compiled and checked by CTest |
 | `docs/design/`, `docs/internals/` | design records (Eigen views, inferring library facts) and the `.clfacts` format |
 | `tools/` | fact scanners (`cling-scan`, `std-scan-experiment`), the fact gauge and probes |
-| `examples/`, `regression/` | small demos, transpile regression runs |
+| `examples/` | one small program used by the debugging section of the guide |
 
 Companion projects written in CeeLing live in their own repositories (a zlib port, a cJSON port, a yaml-cpp port, an app shell).
 

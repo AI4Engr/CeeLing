@@ -184,7 +184,7 @@ if(NOT EMSCRIPTEN)
 
     # Basic function example in valid CeeLing syntax should transpile successfully.
     add_test(NAME cling_test_example_transpiles
-        COMMAND cling --cpp ${CMAKE_BINARY_DIR}/test_output_example.cpp ${CMAKE_SOURCE_DIR}/regression/fixtures/example.clg)
+        COMMAND cling --cpp ${CMAKE_BINARY_DIR}/test_output_example.cpp ${CMAKE_SOURCE_DIR}/tests/example_transpiles.clg)
 
     # AST-driven generator (--emit-ast): a factory function returning an object must
     # lower the return type to a smart pointer and std::move the owning local out, so
