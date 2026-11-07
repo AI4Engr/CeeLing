@@ -59,6 +59,9 @@ set(CORE_SOURCES
     src/facts/sha256.cpp
     ${CMAKE_BINARY_DIR}/generated/builtin_facts_data.cpp
     src/emit/ast_emitter.cpp
+    src/emit/ast_emitter_classes.cpp
+    src/emit/ast_emitter_statements.cpp
+    src/emit/ast_emitter_expressions.cpp
     src/emit/runtime_helpers.cpp
     src/emit/cpp_generator.cpp
 )

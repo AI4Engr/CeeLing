@@ -54,7 +54,10 @@ g++ -std=c++17 out.cpp -o program
 
 | path | what |
 |---|---|
-| `src/` | the compiler: AST builder, escape-hatch / dangling / move checkers, smart-pointer analyzer, C++ emitter |
+| `src/syntax/` | the AST and the tree-sitter based AST builder |
+| `src/passes/` | closure and struct-JSON desugaring, the escape-hatch, dangling / move and channel checks, smart-pointer inference |
+| `src/facts/` | what the compiler knows about library calls (fact tables, `library_summary`) |
+| `src/emit/` | the C++ emitter and the runtime helper code it adds to generated files |
 | `tree-sitter-ceeling/` | the grammar and the generated parser |
 | `facts/` | library facts shipped inside the compiler (`std::vector`, `string`, `map`, `optional`, `span`, Eigen...) |
 | `tests/safety/` | the safety contract as fixtures: each is accepted (and run, with its output asserted) or must be rejected |
