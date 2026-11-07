@@ -51,6 +51,9 @@ set(CORE_SOURCES
     src/passes/dangling_checker.cpp
     src/passes/pairing_checker.cpp
     src/passes/smart_pointer_analyzer.cpp
+    src/passes/smart_pointer_alias.cpp
+    src/passes/smart_pointer_promotion.cpp
+    src/passes/smart_pointer_params.cpp
     src/facts/fact_table.cpp
     src/facts/library_summary.cpp
     src/facts/sha256.cpp
