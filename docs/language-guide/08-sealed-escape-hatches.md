@@ -90,7 +90,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: raw pointer types (`T*`) are forbidden (found `Node*`)
   --> 08_raw_pointer.clg:9:5
-  help: pointers have no legal path through CeeLing (the design notes hatch #15); declare a plain object variable and let the compiler choose the smart-pointer type.
+  help: pointers have no legal path through CeeLing (guide chapter 13, hatch #15); declare a plain object variable and let the compiler choose the smart-pointer type.
 ```
 
 (`Node * p;` parses as a multiplication, and a class name is never a legal operand of one, which is how the checker knows what was meant.) The other spellings have no grammar rule at all:
@@ -1150,7 +1150,7 @@ int main() {
 ```
 <!-- error: 08_ext_fn_class.clg -->
 ```
-Error: error[semantic/forbidden-construct]: ext_fn parameter `n` type `Node` is not supported (line 7, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see the internal notes' ext_fn entry).
+Error: error[semantic/forbidden-construct]: ext_fn parameter `n` type `Node` is not supported (line 7, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see guide chapter 11).
 ```
 <!-- example: 08_ext_fn_other_call.clg -->
 ```cpp

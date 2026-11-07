@@ -351,9 +351,8 @@ template <typename T, typename U> inline bool vcontains(const std::vector<T>& v,
 }
 
 std::string copyWithinHelperDefinition() {
-    // See the header's doc comment for why this is a helper rather than a
-    // bare std::memmove call, and why the SSE2 fast path's final chunk no
-    // longer preserves bytes past dst+len (removed -- see git history).
+    // A helper rather than a bare memmove: the typical copy is short, where a library call is mostly overhead.
+    // The fast path's last chunk does not preserve bytes past dst+len (see the header).
     return
         "#ifndef CLING_COPY_WITHIN_DEFINED\n"
         "#define CLING_COPY_WITHIN_DEFINED\n"
@@ -395,9 +394,8 @@ std::string copyWithinHelperDefinition() {
 }
 
 std::string boundsCheckHelperDefinition() {
-    // The index is compared as unsigned so one test rejects both `i >= size` and `i < 0`.
-    // `if constexpr` picks the map-like branch at compile time: a type with a key_type is indexed
-    // by KEY (and inserts), so a size comparison would be wrong for it.
+    // The index is compared as unsigned, so one test rejects both `i >= size` and `i < 0`.
+    // A type with a key_type (map) is indexed by key, so `if constexpr` skips the size test for it.
     return
         "#ifndef CLING_BOUNDS_CHECK_DEFINED\n"
         "#define CLING_BOUNDS_CHECK_DEFINED\n"
@@ -425,12 +423,9 @@ std::string boundsCheckHelperDefinition() {
 }
 
 std::string poolAllocatorHelperDefinition() {
-    // A free-list allocator for the control-block-plus-object that std::allocate_shared requests.
-    // Blocks of one size share one free list PER THREAD (two threads building their own trees cannot
-    // corrupt each other; a block freed on another thread simply joins that thread's list). The list
-    // head is a plain pointer, so there is no destructor to run at thread or process exit while
-    // objects are still being released. Chunks are never returned to the system: the point is that a
-    // node costs a pointer pop instead of a malloc.
+    // A free-list allocator for the block std::allocate_shared requests. Blocks of one size share a free list
+    // per thread (a block freed on another thread joins that thread's list). The list head is a plain pointer,
+    // so no destructor runs at exit. Chunks are never returned to the system.
     return
         "#ifndef CLING_POOL_DEFINED\n"
         "#define CLING_POOL_DEFINED\n"
@@ -484,11 +479,9 @@ std::string poolAllocatorHelperDefinition() {
 }
 
 std::string nullCheckHelperDefinition() {
-    // cling::nn(p, where) passes p through unchanged when it is non-null, otherwise reports `where`
-    // (the .clg file:line of the dereference) on stderr and aborts. A forwarding reference in and
-    // out: an lvalue handle comes back as the same lvalue (no shared_ptr copy, so no reference-count
-    // traffic per dereference) and a temporary (a call result, weak_ptr::lock()) stays alive for the
-    // `->` that follows it in the same full-expression.
+    // cling::nn(p, where) returns p when it is non-null, otherwise reports `where` (the .clg line) and aborts.
+    // It takes and returns a forwarding reference, so an lvalue handle is not copied (no reference-count
+    // traffic) and a temporary stays alive for the `->` that follows.
     return
         "#ifndef CLING_NULL_CHECK_DEFINED\n"
         "#define CLING_NULL_CHECK_DEFINED\n"

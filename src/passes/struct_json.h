@@ -6,34 +6,26 @@ namespace cling {
 
 // Generates JSON-decoding functions for `struct`s, on request by name.
 //
-// A call to a free function `decodeX(item)` where `X` is a `struct` declared in THIS file and nobody
-// declared a function called `decodeX` makes the compiler write it:
+// A call to a free function `decodeX(item)`, where `X` is a `struct` declared in this file and no
+// function `decodeX` exists, makes the compiler write it: `decodeXAt(Item j, string path)` checks
+// every field and throws `invalid_argument: ...` on a missing or mistyped one, and `decodeX(Item j)`
+// calls it with an empty path.
 //
-//     struct Args { string root; int depth; std::vector<string> names; Args(string r, int d, std::vector<string> n) {...} };
-//     Args a = decodeArgs(item);
+// Field types: int, int64, double, float, bool, string, byte, std::vector of those, a `struct`,
+// std::vector of a `struct`. The struct needs a constructor taking its fields in declaration order;
+// the decoder ends in `return new X(v0, v1, ...)`. Extra JSON keys are ignored. The code uses the
+// cjson-cling names (Item, isObject, getObjectItem, ...), which must be visible through
+// `#include "cjson_api.clh"`.
 //
-// becomes (conceptually)
+// The generated functions are parsed from generated source text and checked like hand-written code.
+// Runs before desugarClosures and every checker. Only the file that declares the struct generates
+// its decoder.
 //
-//     Args decodeArgsAt(Item j, string path) { ...check each field, throw "invalid_argument: `root` must be a string"... }
-//     Args decodeArgs(Item j) { return decodeArgsAt(j, ""); }
+// Throws std::runtime_error with the usual "error[semantic/...]" text.
 //
-// Field types: int, int64, double, float, bool, string, byte, std::vector of those, a `struct` (decoded by its own
-// `decodeNAt`, generated too when the struct is in this file, or already declared), std::vector of a `struct`.
-// The struct needs a constructor whose parameter types are its field types in declaration order; the generated code
-// decodes every field into a local and ends with `return new X(v0, v1, ...)`. A missing field or a field of the wrong
-// type throws; an extra field in the JSON is ignored. The code uses the cjson-cling names (Item, isObject, isString,
-// isNumber, isBool, isTrue, isArray, getObjectItem, getArraySize, getArrayItem), which must be visible
-// (`#include "cjson_api.clh"`); a program that lacks them gets an error that says so.
-//
-// The generated functions are ordinary CeeLing: they are parsed from generated source text and go through the same
-// checks as hand-written code. Run before desugarClosures and every checker. Only the file that declares the struct
-// generates its decoder (a call from another file needs a function declared there, or a one-line wrapper).
-//
-// Throws std::runtime_error with the compiler's usual "error[semantic/...]" text.
-//
-// `included` is true for a file merged into another one through `.clh`: the pass writes its decoders so they are declared for the includer,
-// but does not demand cjson-cling here, because a diamond include may have merged it into a sibling instead (the file that emits the definition is
-// compiled on its own and checked there).
+// `included` is true for a file merged into another through `.clh`: the decoders are written so the
+// includer sees their declarations, but cjson-cling is not demanded here (a diamond include may
+// have merged it into a sibling).
 void desugarStructJson(Program& program, bool included = false);
 
 }  // namespace cling

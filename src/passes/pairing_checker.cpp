@@ -3,18 +3,8 @@
 namespace cling {
 
 namespace {
-// Count calls to `name` as a bare `f(...)` or `f();` expression statement
-// ANYWHERE within `body`, including nested inside if/else/while/for/try
-// blocks -- real widget code almost always lives inside a frame loop
-// (`while (!shouldClose()) { ... }`), so a checker that only looked at a
-// function body's OWN top-level statements would essentially never fire in
-// practice (confirmed by probe: it missed a real missing endGroup() call
-// nested two levels down inside `if (ok) { while (...) { ... } }` in
-// imgui-cling's own layout_demo.clg). Still deliberately simple: does not
-// track branch-specific balance (e.g. begin in the `if` arm, end in the
-// `else` arm nets to "balanced" here even though neither single execution
-// path is) -- acceptable per this checker's "false negatives are fine, this
-// is advisory, not a safety check" design (see pairing_checker.h).
+// Counts calls to `name` as `f(...)` expression statements anywhere in `body`, nested blocks included
+// (widget code lives inside a frame loop). Does not track balance per branch.
 int countCallsRecursive(const std::vector<StatementPtr>& body, const std::string& name) {
     int count = 0;
     for (const auto& stmt : body) {
@@ -49,9 +39,7 @@ void PairingChecker::checkBody(const std::vector<StatementPtr>& body) {
         const int ends = countCallsRecursive(body, endName);
         if (begins != ends) {
             PairingWarning w;
-            // Anchor to the first statement in the body -- good enough for an
-            // advisory message; per-call attribution isn't needed since this
-            // is a per-body imbalance, not a per-call error.
+            // Anchored to the first statement of the body.
             if (!body.empty()) {
                 w.line = body.front()->loc.line;
                 w.column = body.front()->loc.column;

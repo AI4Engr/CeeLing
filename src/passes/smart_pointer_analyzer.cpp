@@ -143,9 +143,8 @@ void SmartPointerAnalyzer::setDemands(const std::vector<std::string>& lines) {
 
 std::vector<std::string> SmartPointerAnalyzer::exportDemands(const Program& program) const {
     std::set<std::string> out;                      // (a set: sorted, no repeats, so the file is the same every time)
-    // What this file's OWN code reaches in other files' classes: `x.member` (a field, or a container field) and `x.method(...)`. A kind is demanded only for
-    // something that is reached. The analysis also promotes things by NAME alone (every field `gate` of class FileGate becomes shared because one `gate` is handed
-    // on), which says nothing about a field this file never touches; demanding it would change a class that is fine as it was.
+    // What this file's own code reaches in other files' classes: `x.member` (a field or container field) and `x.method(...)`. The analysis also promotes by
+    // name alone, which says nothing about a member this file never touches, so only reached members are demanded.
     std::set<std::string> reached;
     for (const auto& stmt : program.statements) {
         if (stmt->isExternalDeclaration) continue;
@@ -163,7 +162,6 @@ std::vector<std::string> SmartPointerAnalyzer::exportDemands(const Program& prog
                     const std::string key = buildKey(cls->name, field->type, field->identifier);
                     auto it = pointerDecisions.find(key);
                     if (it != pointerDecisions.end() && it->second == PointerType::SHARED) {
-                        // (the reason is a comment after the three words: it says WHY this file needs the member shared)
                         auto why = pointerReasons.find(key);
                         out.insert("shared field " + cls->name + "." + field->identifier + "  # " + (why != pointerReasons.end() ? why->second : std::string("no reason recorded")));
                     }
@@ -203,7 +201,7 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     diagnostics.clear();
     reportLines.clear();
 
-    // what the files that include a class of this file need from it (setDemands): the same plumbing as a written //@ptr hint, and a return kind
+    // what the files that include a class of this file need from it (setDemands); same plumbing as a written //@ptr hint
     for (const std::string& field : demandedFields_) explicitHints[field] = PointerType::SHARED;
 
     containerElementShared_.clear();
@@ -221,18 +219,7 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     lastUseFieldAssignedParams_.clear();
     lastUseMethodFieldAssignedParams_.clear();
 
-    // Independent of everything else below -- reads only the raw Program, writes
-    // only valueTypeClasses_/readOnlyFreeFunctionParams_/readOnlyMethodParams_/
-    // readOnlyContainerParams_/readOnlyMethodContainerParams_/
-    // heapPureFreeFunctions_/heapPureMethods_/lastUseFieldAssignedParams_/
-    // lastUseMethodFieldAssignedParams_ -- so they can run first with no
-    // ordering dependency between each other. classifyReadOnlyContainerParams
-    // does not depend on classifyHeapPureFunctions's result (they answer
-    // different questions -- "is this param never mutated through" vs. "can
-    // this function invalidate a caller's OWN container/object"), so order
-    // between the two does not matter. classifyLastUseFieldAssignedParams is
-    // likewise independent -- a pure per-function/method scan with no fixed
-    // point and no dependency on any other classification's result.
+    // Each classification reads only the raw Program and writes its own tables, so the order among them does not matter.
     classifyValueTypeClasses(program);
     classifyReadOnlyFreeFunctionParams(program);
     classifyReadOnlyContainerParams(program);
@@ -244,43 +231,22 @@ void SmartPointerAnalyzer::analyzeProgram(const Program& program, const std::str
     if (!source.empty()) {
         scanSource(source);
     }
-    // Runs BEFORE secondPassDeterminePointerTypes: a field this pass decides
-    // needs SHARED (because some method returns it as an alias) writes into
-    // explicitHints, which secondPass's applyExplicitHints call then picks up
-    // through the exact same lookup path a real //@ptr hint would use --
-    // ownership is INFERRED here, never user-annotated (the design notes), but reuses
-    // the hint mechanism's plumbing rather than adding a parallel one.
+    // Runs before secondPassDeterminePointerTypes: a field decided shared here is written into explicitHints and picked up through the same lookup a //@ptr hint uses.
     inferAliasReturningMethods(program);
     secondPassDeterminePointerTypes();
-    // `b = a;` followed by another use of `a` means two live handles to one object -- the documented
-    // "multiple live owners => shared_ptr" rule. Without this the assignment moves `a` and every
-    // later use is rejected, which makes ordinary Java-style aliasing (a `head` and a `current`
-    // walking the same list) unwritable.
+    // `b = a;` followed by another use of `a` means two live handles to one object (shared_ptr). Without this the assignment moves `a` and later uses are rejected.
     forceVirtualSignaturesShared(program);
     promoteAliasedLocals(program);
 
-    // Container element-kind scan runs AFTER the two-pass decision above, since it
-    // asks "what pointer kind did each push_back argument's OWN variable already
-    // get decided as" -- e.g. `v.push_back(a);` needs `a`'s pointer kind (decided
-    // from a's own non-container usages) to know whether this push forces v's
-    // element kind to shared_ptr.
+    // Needs the pointer kind each pushed variable already got from the two-pass decision.
     scanContainerElementKinds(program);
 
-    // Parameter-storage promotion runs after the two-pass decision (needs a
-    // field's own already-decided pointer kind to know whether storing a param
-    // into it forces the param to be shared), and call-site propagation runs
-    // after THAT (needs to know which parameters sub-pass 1 just promoted). See
-    // Chapter 18 for why this is a genuinely new third pass rather than an
-    // extension of the existing two.
+    // Parameter-storage promotion needs a field's decided kind; call-site propagation runs after it and needs the parameters it promoted (guide chapter 4).
     promoteParamsStoredInSharedFields(program);
     promoteSharedCallArguments(program);
-    // Must run LAST: needs every local's FINAL pointer-kind decision,
-    // including whatever promoteSharedCallArguments (immediately above) just
-    // changed.
+    // Runs last: needs every local's final pointer kind, including what promoteSharedCallArguments just changed.
     promoteReturnsOfSharedLocals(program);
-    // Genuinely last: needs every CLASS METHOD's final alias-return
-    // classification (including whatever promoteReturnsOfSharedLocals just
-    // set) to correctly classify a free function that calls one.
+    // Needs every class method's final alias-return classification to classify a free function that calls one.
     inferAliasReturningFreeFunctions(program);
 }
 
@@ -399,9 +365,7 @@ bool SmartPointerAnalyzer::classRequiresSharedRoot(const std::string& className)
 }
 
 bool SmartPointerAnalyzer::isWeakField(const std::string& enclosingClass, const std::string& fieldName) const {
-    // pointerDecisions keys are buildKey(containingScope, fieldTYPE, name) = "Scope|Type.name".
-    // For a field, the scope is the enclosing class; the type is whatever the field is declared
-    // as, which the caller does not need to know -- match on scope prefix and ".name" suffix.
+    // pointerDecisions keys are "Scope|Type.name"; for a field the scope is the enclosing class, so match on scope prefix and ".name" suffix.
     const std::string prefix = enclosingClass + "|";
     const std::string suffix = "." + fieldName;
     for (const auto& [key, decision] : pointerDecisions) {
@@ -432,15 +396,13 @@ void SmartPointerAnalyzer::scanContainerElementKinds(const Program& program) {
     pushedArgs_.clear();
     scanContainerElementKindsImpl(program);
     for (const std::string& name : demandedElements_) {
-        // only a container of OBJECTS that this program declares (containers are told apart by name alone, and another file may have a vector of strings by the same name)
+        // only a container of objects this program declares (containers are told apart by name alone)
         auto type = containerFieldTypes_.find(name);
         if (type != containerFieldTypes_.end() && isVectorType(type->second) && classNames.count(vectorElementType(type->second)) > 0) {
             containerElementShared_[name] = true;
         }
     }
-    // A value pushed into a container whose elements are shared must itself be shared -- decided only
-    // once every push and every element copy has been seen. (A parameter that is pushed then makes its
-    // callers pass a shared object, via the call-site promotion that runs after this.)
+    // A value pushed into a container whose elements are shared must itself be shared; decided once every push and element copy has been seen.
     for (const auto& p : pushedArgs_) {
         auto it = containerElementShared_.find(p[3]);
         if (it == containerElementShared_.end() || !it->second) continue;
@@ -515,10 +477,7 @@ void SmartPointerAnalyzer::scanContainerElementKindsImpl(const Program& program)
 }
 
 namespace {
-// Local helper: does `expr` name a bare identifier, and if so what is it? Used to
-// resolve both the push_back receiver (container variable) and argument (source
-// variable) without needing full expression evaluation -- this scan only needs the
-// direct, common shape `container.push_back(sourceVar)`.
+// The identifier named by `expr`, if it is a bare identifier (the shape `container.push_back(sourceVar)` needs).
 const Identifier* asIdentifier(const Expression* expr) {
     return dynamic_cast<const Identifier*>(expr);
 }
@@ -526,9 +485,7 @@ const Identifier* asIdentifier(const Expression* expr) {
 
 void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement& stmt,
                                                                   const std::string& scopeName) {
-    // Only need to find `<container>.push_back(<arg>)` call expressions, wherever
-    // they appear (as a bare expression statement or nested in an initializer) --
-    // recurse into every statement shape that can contain one.
+    // Find every `<container>.push_back(<arg>)`, wherever it appears.
     auto visitExpr = [this, &scopeName](const Expression* expr) {
         auto call = dynamic_cast<const FunctionCall*>(expr);
         if (call == nullptr || !call->callee) return;
@@ -536,25 +493,18 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
         if (member == nullptr || member->member != "push_back" || call->arguments.empty()) return;
         const Identifier* recvId = asIdentifier(member->object.get());
         const Identifier* arg = asIdentifier(call->arguments[0].get());
-        // the container is a variable (`v.push_back(x)`) or a field reached through an object (`obj.items.push_back(x)`,
-        // keyed by the field's name like every other container here)
+        // the container is a variable (`v.push_back(x)`) or a field reached through an object (`obj.items.push_back(x)`, keyed by the field's name)
         const MemberAccess* recvField = dynamic_cast<const MemberAccess*>(member->object.get());
         if ((recvId == nullptr && recvField == nullptr) || arg == nullptr) return;
         const std::string recvName = recvId != nullptr ? recvId->name : recvField->member;
 
-        // Resolve the argument's OWN already-decided pointer kind via its symbol
-        // type (registered the same way locals/parameters/fields already are).
-        // Precise scope first -- see scanContainerElementKindsInStatement's
-        // header comment for why the kGlobalScope fallback alone collides
-        // across unrelated functions/methods sharing a local's bare name.
+        // The argument's already-decided pointer kind, looked up by its symbol type (precise scope first, then the global fallback).
         auto typeIt = symbolTypesByScope.find(makeSymbolKey(scopeName, arg->name));
         if (typeIt == symbolTypesByScope.end() && scanLocals_.count(arg->name) == 0) {
             typeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, arg->name));
         }
         if (typeIt == symbolTypesByScope.end()) return;
-        // Only an OBJECT argument says anything about the container's element kind. getPointerType's not-found
-        // fallback is SHARED, so a string / int / vector variable (`parts.push_back(current)`) used to make a
-        // vector<string> look like a vector of shared objects and emit `std::shared_ptr<>(current)`.
+        // Only an object argument says anything about the element kind; the not-found fallback is shared, so a string or int would wrongly make a vector of shared objects.
         if (classNames.count(typeIt->second) == 0) return;
         pushedArgs_.push_back({scopeName, typeIt->second, arg->name, recvName});
         if (getPointerType(typeIt->second, arg->name) == PointerType::SHARED) {
@@ -568,8 +518,7 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
         visitExpr(exprStmt->expression.get());
     } else if (auto decl = dynamic_cast<const VariableDeclaration*>(&stmt)) {
         if (decl->expression) visitExpr(decl->expression.get());
-        // `Cmd c = items[i];` -- an owning local initialised from a container element: two owners of one
-        // object, so the elements must be shared (a unique_ptr element cannot be copied out).
+        // `Cmd c = items[i];`: two owners of one object, so the elements must be shared.
         if (!decl->isObserver && classNames.count(decl->type) > 0) {
             if (auto sub = dynamic_cast<const SubscriptExpression*>(decl->expression.get())) {
                 if (auto cid = dynamic_cast<const Identifier*>(sub->object.get())) {
@@ -581,9 +530,7 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
         }
     } else if (auto assign = dynamic_cast<const AssignmentStatement*>(&stmt)) {
         if (assign->expression) visitExpr(assign->expression.get());
-        // An element copied from an element, `v[i] = v[j];` (the swap-with-last removal), or into a variable, `x = v[i];`: two owners of one object, which only
-        // shared elements can be. The container is known to hold objects from its DECLARED type (`std::vector<Cmd>`), not from a push_back: a class in a file
-        // of its own may never push into its own vector (the callers do), and must still come out right when it is analysed alone.
+        // `v[i] = v[j];` or `x = v[i];`: two owners of one object, so shared elements. The container is known to hold objects from its declared type, not from a push_back.
         if (auto from = dynamic_cast<const SubscriptExpression*>(assign->expression.get())) {
             auto nameOf = [](const Expression* object) -> std::string {
                 if (auto id = dynamic_cast<const Identifier*>(object)) return id->name;
@@ -615,9 +562,7 @@ void SmartPointerAnalyzer::scanContainerElementKindsInStatement(const Statement&
 }
 
 namespace {
-// Every `return <expr>;` reachable from `body`, recursing through if/while/for
-// the same way bodyReturnsThis does. Collected once per method and re-tested
-// against the current partial classification on each fixed-point round below.
+// Every `return <expr>;` reachable from `body`, retested on each fixed-point round below.
 void collectReturnExpressions(const std::vector<StatementPtr>& body,
                               std::vector<const Expression*>& out) {
     for (const auto& stmtPtr : body) {
@@ -637,21 +582,8 @@ void collectReturnExpressions(const std::vector<StatementPtr>& body,
     }
 }
 
-// True if `this` (grammar.js's reserved `this_expression`, ast.h's
-// ThisExpression) appears ANYWHERE in `body` as a call argument, a
-// VariableDeclaration RHS, or an AssignmentStatement RHS -- the three
-// positions AstEmitter::emitMovedArg lowers to shared_from_this() (see
-// Chapter 18 Step 37; `return this;` is deliberately NOT one of these, since
-// it is already covered by the separate anyReturnsThis scan above, which
-// only looks at RETURN expressions).
-//
-// A call argument is checked at ANY nesting depth (`wrap(this)` inside a
-// bigger expression, inside an if/while/for/try body) -- not just when the
-// call is the top-level statement -- because emitMovedArg fires wherever
-// AstEmitter's own expression emission encounters a FunctionCall, at
-// whatever depth. Each argument is checked as being DIRECTLY `this` (not
-// merely containing it somewhere further inside), matching emitMovedArg's
-// own exact-shape check.
+// True if `this` appears in `body` as a call argument, a declaration RHS or an assignment RHS, at any nesting depth: the three positions AstEmitter::emitMovedArg
+// lowers to shared_from_this(). `return this;` is covered by the anyReturnsThis scan.
 bool methodPassesThisAsArgument(const std::vector<StatementPtr>& body) {
     std::function<bool(const Expression*)> exprHasThisArg = [&](const Expression* expr) -> bool {
         if (expr == nullptr) return false;
@@ -699,13 +631,7 @@ bool methodPassesThisAsArgument(const std::vector<StatementPtr>& body) {
             } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
                 if (exprHasThisArg(exprStmt->expression.get())) return true;
             } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
-                // NOT checking whether the return's own top-level expression
-                // IS `this` directly (`return this;`) -- that shape is the
-                // separate anyReturnsThis scan's job, above. This only needs
-                // to catch `this` NESTED inside a larger returned expression
-                // (`return r.readVal(this);`), which anyReturnsThis's own
-                // narrower `dynamic_cast<ThisExpression>` check on the whole
-                // return expression would miss entirely.
+                // `return this;` is the anyReturnsThis scan's job; this only catches `this` nested in a larger returned expression.
                 if (exprHasThisArg(ret->expression.get())) return true;
             } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
                 if (exprHasThisArg(ifs->condition.get())) return true;
@@ -728,20 +654,9 @@ bool methodPassesThisAsArgument(const std::vector<StatementPtr>& body) {
 } // namespace
 
 namespace {
-// Resolves an expression reached inside a `new SameClass(<expr>)` return
-// (case (d) of inferAliasReturningMethods, below) down to the (declaredType,
-// fieldName) pair it ultimately reads, crossing class boundaries via
-// classMembersByClass_ as needed (unlike cases (a)-(c), which stay within a
-// single class's own fieldTypes map). Handles exactly the shapes this
-// pattern's own recursive walkers produce: a bare field/`this->field` (the
-// base case), or `<chain>.<method>(...)` where <method> is already known
-// alias-returning on <chain>'s resolved class (methodReturnKinds_, populated
-// for every class processed earlier in program.statements' source order --
-// safe because a handle class wrapping a payload class is always declared
-// AFTER that payload class, the same "no forward references" constraint
-// this codebase's whole design already works within). Returns nullopt for
-// any shape it cannot resolve (conservative: case (d) then fails closed,
-// same as every other case here).
+// Resolves an expression inside `new SameClass(<expr>)` (case (d) of inferAliasReturningMethods) to the (declaredType, fieldName) it reads, crossing classes via
+// classMembersByClass_. Handles a bare field/`this->field`, or `<chain>.<method>(...)` with the method already alias-returning on the chain's class. nullopt for
+// anything else (fails closed).
 std::optional<std::pair<std::string, std::string>> resolveInnerFieldChain(
     const Expression* expr,
     const std::string& enclosingClass,
@@ -755,10 +670,7 @@ std::optional<std::pair<std::string, std::string>> resolveInnerFieldChain(
         return std::make_pair(fIt->second, id->name);
     }
     if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
-        // `this->field` / `recv.field`: resolve the receiver's class first
-        // (bare identifier receiver only -- matches this whole pass's
-        // existing conservatism elsewhere), then look up `member->member`
-        // in THAT class's field map.
+        // `this->field` / `recv.field`: resolve the receiver's class (bare identifier receiver only), then look up the member in that class.
         std::string receiverClass;
         if (dynamic_cast<const ThisExpression*>(member->object.get()) != nullptr) {
             receiverClass = enclosingClass;
@@ -770,7 +682,7 @@ std::optional<std::pair<std::string, std::string>> resolveInnerFieldChain(
                 }
             }
         } else if (auto innerMember = dynamic_cast<const MemberAccess*>(member->object.get())) {
-            // `a.b.c` -- resolve `a.b`'s class recursively first.
+            // `a.b.c`: resolve `a.b`'s class first.
             const auto inner = resolveInnerFieldChain(innerMember, enclosingClass, classMembersByClass,
                                                         methodReturnKinds);
             if (!inner.has_value()) return std::nullopt;
@@ -786,8 +698,7 @@ std::optional<std::pair<std::string, std::string>> resolveInnerFieldChain(
     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
         auto callMember = dynamic_cast<const MemberAccess*>(call->callee.get());
         if (callMember == nullptr) return std::nullopt;
-        // Resolve the receiver chain's class, then require the called method
-        // to already be classified alias-returning ON THAT CLASS.
+        // Resolve the receiver chain's class; the method must already be alias-returning on it.
         std::string receiverClass;
         if (dynamic_cast<const ThisExpression*>(callMember->object.get()) != nullptr) {
             receiverClass = enclosingClass;
@@ -808,10 +719,7 @@ std::optional<std::pair<std::string, std::string>> resolveInnerFieldChain(
         const std::string key = makeMemberKey(receiverClass, callMember->member);
         auto kindIt = methodReturnKinds.find(key);
         if (kindIt == methodReturnKinds.end() || kindIt->second != PointerType::SHARED) return std::nullopt;
-        // The call resolves to an alias of the RECEIVER's own class chain --
-        // the field ultimately being aliased is the receiver's OWN resolved
-        // field, so recurse into the receiver itself (same class, no field
-        // name to add beyond what the receiver already names).
+        // The result aliases the receiver's own resolved field, so recurse into the receiver.
         return resolveInnerFieldChain(callMember->object.get(), enclosingClass, classMembersByClass,
                                        methodReturnKinds);
     }
@@ -820,28 +728,17 @@ std::optional<std::pair<std::string, std::string>> resolveInnerFieldChain(
 } // namespace
 
 void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
-    // A method M is ALIAS_RETURNING (return type shared_ptr<T>, inferred, no
-    // annotation -- the design notes' "ownership is inferred, not annotated" applies
-    // to method returns exactly as it does to fields) iff EVERY return in its
-    // body is one of:
+    // A method is alias-returning (returns shared_ptr<T>) iff every return in its body is one of:
     //   (a) `return this;`
-    //   (b) `return <field>;` -- a bare identifier or `this->field` naming an
-    //       object-typed field of the SAME class (never `new T(...)`, never
-    //       any other expression shape)
-    //   (c) `return <recv>.<method>(...);` where <method> is ANOTHER method
-    //       already classified ALIAS_RETURNING (the recursive-walker call
-    //       shape yaml-cpp's Node::findOrAppendSibling/siblingAt use)
-    // This is a genuine small fixed-point: `operator[]` calls
-    // findOrAppendSibling/siblingAt (case c), so those two "leaf" methods
-    // (which only ever hit cases a/b) must be classified FIRST. Bounded by
-    // method count per class -- classification only ever flips
-    // undecided -> decided, never back, so this always terminates.
+    //   (b) `return <field>;` naming an object-typed field of the same class
+    //   (c) `return <recv>.<method>(...);` where the method is already alias-returning
+    //   (d) `return new SameClass(<inner>);` (see below)
+    // Case (c) makes this a fixed point: leaf methods (a/b) are classified first. Classification only goes from undecided to decided, so it terminates.
     for (const auto& stmt : program.statements) {
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
         if (cls == nullptr) continue;
 
-        // className.fieldName -> is this field object-typed (case (b) is only
-        // legal for an object-typed field; a primitive field is never an alias).
+        // className.fieldName -> is this field object-typed (case (b) needs an object-typed field).
         std::map<std::string, std::string> fieldTypes;
         for (const auto& member : cls->members) {
             if (auto var = dynamic_cast<const VariableDeclaration*>(member.get())) {
@@ -852,23 +749,8 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
         std::vector<const MethodDeclaration*> methods;
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                // A specialization (in-class OR spliced in externally, see
-                // ASTBuilder's isExternalSpecialization) is excluded: every
-                // set/map in this whole function (aliasReturning,
-                // notAliasReturning, and the methodReturnKinds_ write at the
-                // bottom) is keyed by BARE method NAME, with no notion of
-                // specializationKey -- a specialization sharing a name with
-                // its primary (or another specialization) would silently
-                // corrupt the PRIMARY's own classification (confirmed as a
-                // real bug via probe: `Point Node::as<Point>() { Point out
-                // = ...; return out; }`, an external specialization, flipped
-                // `Node::as`'s registered kind, which in turn corrupted an
-                // unrelated call chain -- YAML::Load -> Parser::
-                // parseDocument -- reading that same bare key). A
-                // specialization's return lowering is a wholly separate,
-                // already-correct concern (AstEmitter::
-                // currentSpecializationValueType_), so this pass has
-                // nothing to contribute for one.
+                // Specializations are skipped: the sets and maps here are keyed by bare method name, so a specialization sharing a name would corrupt the primary's
+                // classification. Their return lowering is handled elsewhere (AstEmitter::currentSpecializationValueType_).
                 if (!method->specializationArg.empty()) continue;
                 methods.push_back(method);
             }
@@ -877,12 +759,7 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
         std::set<std::string> aliasReturning;     // method names decided ALIAS_RETURNING this round
         std::set<std::string> notAliasReturning;  // method names decided NOT this round
         std::set<std::string> fieldsNeedingShared;
-        // Case (d)'s fields, resolved with their OWN (possibly different-class)
-        // declared type already attached -- see resolveInnerFieldChain. Kept
-        // separate from fieldsNeedingShared (whose entries are bare names
-        // resolved against THIS class's fieldTypes map at the write site
-        // below) since case (d)'s fields may belong to an entirely different
-        // class (NodeData, not Node).
+        // Case (d)'s fields carry their own declared type (possibly of another class), so they are kept apart from fieldsNeedingShared.
         std::vector<std::pair<std::string, std::string>> fieldsNeedingSharedTyped;
 
         bool progressed = true;
@@ -916,8 +793,7 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                         break;
                     }
                     if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
-                        // `this->field` / `this.field` (a bare-field-access, not
-                        // itself the whole return value -- that's case (a) above).
+                        // `this->field` / `this.field` (a field access, not the whole return value: that is case (a))
                         if (dynamic_cast<const ThisExpression*>(member->object.get()) != nullptr) {
                             auto fIt = fieldTypes.find(member->member);
                             if (fIt != fieldTypes.end() && classNames.count(fIt->second) > 0) {
@@ -929,29 +805,15 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                         break;
                     }
                     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
-                        // case (c): `<recv>.<method>(...)` (explicit receiver,
-                        // `call->callee` a MemberAccess) OR a bare `<method>(...)`
-                        // with an implicit `this` receiver (`call->callee` null,
-                        // name in call->function_name) -- either shape counts,
-                        // since the rule is about the CALLED method's own
-                        // classification, not which variable/field is calling it.
+                        // case (c): `<recv>.<method>(...)` or a bare `<method>(...)` with an implicit `this`; either way the called method's classification decides.
                         std::string calledName;
                         if (auto callMember = dynamic_cast<const MemberAccess*>(call->callee.get())) {
                             calledName = callMember->member;
                         } else if (!call->callee) {
                             calledName = call->function_name;
                         }
-                        // Direct or implicit-this self-recursion (`return
-                        // next.findOrAppend(k);` inside findOrAppend itself, or
-                        // `return findOrAppend(k);`) can never block its own
-                        // classification: if every OTHER return in this method
-                        // matches the alias-returning shape, the recursive call
-                        // is consistent with (never refutes) that conclusion.
-                        // Without this, a method that only ever calls itself
-                        // (the exact walker shape this rule exists for) would
-                        // wait forever on its own not-yet-decided classification
-                        // and default to NOT alias-returning -- confirmed as a
-                        // real bug via a direct probe before this fix.
+                        // Self-recursion cannot block its own classification: if every other return matches, the recursive call is consistent with it. Otherwise a method
+                        // that only calls itself would wait forever and default to not alias-returning.
                         if (!calledName.empty() && calledName == method->name) {
                             continue;
                         }
@@ -962,10 +824,7 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                             allResolved = false;
                             break;
                         }
-                        // Callee not yet classified -- retry this method on a
-                        // later round if it names a same-class method; otherwise
-                        // (calls something outside this class) this return can
-                        // never resolve to alias.
+                        // Callee not yet classified: retry on a later round if it names a same-class method; otherwise this return can never resolve to alias.
                         if (!calledName.empty()) {
                             bool calleeIsSameClassMethod = false;
                             for (const auto* m : methods) {
@@ -976,28 +835,8 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                         allResolved = false;
                         break;
                     }
-                    // case (d): `return new T(<inner>);` where T is the method's
-                    // OWN class (a HANDLE constructor wrapping an existing payload,
-                    // e.g. `Node::operator[]`'s `return new Node(data.child...);`
-                    // -- the RB18 handle/payload split's shape: a method on the
-                    // HANDLE class (Node) returns a FRESH handle wrapping a field
-                    // reached through a DIFFERENT class's field chain (NodeData's
-                    // `child`/`next`, via Node's own `data` field), not a field of
-                    // its own class the way cases (a)-(c) assume. `<inner>` is
-                    // resolved the SAME way a return value is (bare identifier /
-                    // `x.field` chain / a call to an already-alias-returning
-                    // method), but walks classMembersByClass_ across WHATEVER
-                    // class each step's field actually belongs to (not just this
-                    // method's own class), since the chain crosses the Node/
-                    // NodeData boundary. Whatever field the chain terminates in is
-                    // recorded in fieldsNeedingShared keyed by ITS OWN declared
-                    // type (resolveInnerFieldChain returns (fieldType, fieldName)
-                    // directly, unlike fieldsThisMethod's bare names which rely on
-                    // the current method's fieldTypes map) -- this is exactly what
-                    // makeMemberKey needs, and mirrors the existing invariant that
-                    // this map is keyed by "field's own type", not "containing
-                    // class" (see the real bug this same invariant fixed, in the
-                    // comment below at the explicitHints write site).
+                    // case (d): `return new T(<inner>);` where T is the method's own class (a handle wrapping a payload, e.g. `Node::operator[]`): the aliased field belongs to
+                    // another class's chain (resolveInnerFieldChain). It is recorded in fieldsNeedingShared under its own declared type, which is how explicitHints is keyed.
                     if (auto neww = dynamic_cast<const NewExpression*>(expr)) {
                         if (neww->className == cls->name && neww->arguments.size() == 1) {
                             const auto resolved = resolveInnerFieldChain(
@@ -1023,25 +862,12 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                     fieldsNeedingShared.insert(fieldsThisMethod.begin(), fieldsThisMethod.end());
                     progressed = true;
                 }
-                // else: still depends on an undecided sibling method -- leave
-                // unclassified, retry next round.
+                // still depends on an undecided sibling method: leave unclassified, retry next round.
             }
         }
-        // Anything still unclassified after the loop stabilizes (a genuine
-        // mutual-recursion cycle between two never-resolving methods) defaults
-        // to NOT alias-returning -- the same conservative "ambiguous -> safe
-        // default" CeeLing applies elsewhere, not a silent guess toward SHARED.
+        // Anything still unclassified after the loop stabilizes (a cycle of never-resolving methods) defaults to not alias-returning.
 
-        // Dual-register under the QUALIFIED name too (`YAML::Node` alongside
-        // `Node`), matching every other collection pass in this codebase --
-        // `exprObjectClass`/`resolveDeclaredType`-equivalent lookups in
-        // AstEmitter/DanglingChecker key by the RECEIVER's declared type
-        // string, which is "YAML::Node" for a `YAML::Node n;` local. Without
-        // this, `n["key"]`'s shared-return classification would silently miss
-        // for any namespaced class (confirmed as a real bug via the actual
-        // yaml_node.clg: `root["name"]` kept emitting unique_ptr because
-        // "YAML::Node" was never a key in methodReturnKinds_/explicitHints,
-        // only the bare "Node" was).
+        // Also register under the qualified name (`YAML::Node` as well as `Node`): lookups in AstEmitter/DanglingChecker key by the receiver's declared type string.
         std::vector<std::string> classKeys = {cls->name};
         if (!cls->namespaceName.empty()) {
             classKeys.push_back(cls->namespaceName + "::" + cls->name);
@@ -1051,41 +877,13 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                 methodReturnKinds_[makeMemberKey(classKey, name)] = PointerType::SHARED;
             }
         }
-        // A field returned by an alias-returning method needs the SAME SHARED
-        // decision every other field lookup already goes through
-        // (getPointerType consults this exact map) -- reuses explicitHints
-        // itself rather than adding a parallel map. CRITICAL: explicitHints'
-        // key convention is "<declared TYPE of the thing>.<variable name>"
-        // (confirmed via `//@ptr shared Node.a` in
-        // vector_push_back_shares_when_already_shared_accepted.clg, where `a`
-        // is a LOCAL of type Node -- "Node" there is a's TYPE, not some
-        // enclosing scope), matching VariableReference::className's own
-        // semantics (the field/local's TYPE, not its containing class) that
-        // secondPassDeterminePointerTypes's lookup (`makeMemberKey(ref.
-        // className, ref.variableName)`) actually queries. Keying by the
-        // CONTAINING class (classKey, same as methodReturnKinds_ correctly
-        // does -- but methodReturnKinds_'s query is genuinely
-        // (containingClass, methodName), a different lookup with different
-        // semantics) was a real bug: `Holder.cur` never matched anything,
-        // because getPointerType's real query for a `Box cur;` field is
-        // keyed "Box.cur", not "Holder.cur" -- confirmed via a direct probe
-        // (a field returned by an alias-returning method kept emitting
-        // unique_ptr while the method itself correctly emitted shared_ptr,
-        // a real return-type mismatch compile error). Fixed by keying on the
-        // field's own declared TYPE (fieldTypes[fieldName]) instead.
-        // Deliberately does NOT touch explicitHintLines (no source line
-        // exists for an inferred decision): nothing reads explicitHintLines
-        // except applyExplicitHints's own "did every USER-WRITTEN hint match
-        // something" diagnostic sweep, which iterates explicitHintLines, not
-        // explicitHints -- so these inferred entries never trigger a
-        // spurious "hint didn't match" diagnostic.
+        // A field returned by an alias-returning method must be shared like any other field lookup (getPointerType consults explicitHints). The key is
+        // "<declared type of the field>.<field name>", not the containing class: that is what secondPassDeterminePointerTypes queries. explicitHintLines is not
+        // touched, so inferred entries never trigger the "hint didn't match" diagnostic.
         for (const auto& fieldName : fieldsNeedingShared) {
             explicitHints[makeMemberKey(fieldTypes[fieldName], fieldName)] = PointerType::SHARED;
         }
-        // Case (d)'s fields already carry their own (declaredType, fieldName)
-        // pair (possibly a DIFFERENT class than cls->name -- see
-        // resolveInnerFieldChain), so write directly rather than looking the
-        // type up in this class's own fieldTypes map.
+        // Case (d)'s fields already carry their (declaredType, fieldName), possibly of another class, so write them directly.
         for (const auto& [fieldType, fieldName] : fieldsNeedingSharedTyped) {
             explicitHints[makeMemberKey(fieldType, fieldName)] = PointerType::SHARED;
         }
@@ -1103,44 +901,15 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
                 }
                 return false;
             }();
-            // A VALUE-TYPE (struct) class's `return this;` already gets a
-            // completely different, correct lowering (`return *this;` --
-            // AstEmitter's currentMethodReturnsValueType_ branch) that needs
-            // no shared_ptr machinery at all. Found via a real probe:
-            // imgui-cling's `Response` (a plain value struct, never
-            // smart-pointer-wrapped anywhere) gained a chainable
-            // `onHoverText()` method (`return this;`, matching real egui's
-            // own `Response::on_hover_text(self, ...) -> Self` fluent-chain
-            // shape) and wrongly picked up `class Response : public
-            // std::enable_shared_from_this<Response>` as a spurious base --
-            // harmless in that it happened to still compile (unused base,
-            // no crash), but semantically wrong for a type this project's
-            // own design explicitly never wraps in a smart pointer.
+            // A value-type (struct) class's `return this;` is lowered to `return *this;` and needs no shared_ptr machinery.
             if (anyReturnsThis && !isValueTypeClass(cls->name)) {
-                // A class returning `this` as a shared_ptr must itself ALWAYS be
-                // constructed as shared_ptr (shared_from_this() requires the
-                // object to already be owned by a shared_ptr) -- reuses the exact
-                // mechanism classesNeedingSharedRoots already provides for
-                // back-reference/bidirectional cases, so ordinary `new ClassName()`
-                // sites need no changes to pick up make_shared.
+                // A class returning `this` as a shared_ptr must always be constructed as shared_ptr (shared_from_this() needs it); reuses classesNeedingSharedRoots.
                 classesNeedingSharedFromThis_.insert(cls->name);
                 classesNeedingSharedRoots.insert(cls->name);
             }
         }
-        // A SEPARATE scan, over EVERY method (not just ones already classified
-        // `aliasReturning` above -- passing `this` as an argument has nothing to
-        // do with a method's OWN return value, so it must not be gated on that
-        // classification): does any method pass `this` as a call argument, or
-        // store it via a bare `Node y = this;`/`y = this;`? Chapter 18 Step 37 --
-        // AstEmitter::emitMovedArg lowers any of those three shapes to
-        // shared_from_this(), which needs the SAME enable_shared_from_this +
-        // forced-shared-root machinery `return this;` above already triggers.
-        // Skipping this scan would leave a `this`-passing class with NO base
-        // class inheriting enable_shared_from_this at all (a "not a member"
-        // compile error) or, worse, an object not actually shared_ptr-owned
-        // (shared_from_this()'s own std::bad_weak_ptr throw at runtime).
-        // Same value-type exclusion as the return-position scan above --
-        // a value-type class's `this` never needs shared_ptr machinery.
+        // Separate scan over every method: passing `this` as a call argument or storing it (`Node y = this;`) is lowered to shared_from_this() by
+        // emitMovedArg, so it needs the same enable_shared_from_this and shared-root machinery. Value-type classes are excluded as above.
         if (!isValueTypeClass(cls->name)) {
             for (const auto* method : methods) {
                 if (methodPassesThisAsArgument(method->body)) {
@@ -1153,27 +922,10 @@ void SmartPointerAnalyzer::inferAliasReturningMethods(const Program& program) {
 }
 
 void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& program) {
-    // Free-function counterpart of inferAliasReturningMethods's case (c): a
-    // free function whose body ONLY ever returns a call to an ALREADY-
-    // classified alias-returning method/function is itself alias-returning.
-    // Needed for yaml-cling's `Node Load(string text) { Parser p = new
-    // Parser(text); return p->parseDocument(); }`.
-    //
-    // MUST run AFTER promoteReturnsOfSharedLocals, not alongside
-    // inferAliasReturningMethods (where an earlier version of this lived) --
-    // parseDocument (a CLASS method) only becomes SHARED via
-    // promoteReturnsOfSharedLocals (it returns a plain local, `root`, that
-    // was itself promoted to SHARED by the even-later promoteSharedCallArguments
-    // pass), which runs AFTER inferAliasReturningMethods entirely. Running
-    // this free-function check too early meant Load's own call to
-    // parseDocument() queried a classification that did not exist yet, and
-    // Load silently stayed unique_ptr while parseDocument was correctly
-    // shared_ptr -- a real return-type mismatch confirmed via probe before
-    // this pass was pulled out into its own, later-running function.
+    // Free-function counterpart of case (c): a free function that only returns a call to an already-classified alias-returning method or function is itself
+    // alias-returning. Runs after promoteReturnsOfSharedLocals, because a class method such as parseDocument only becomes shared through that pass.
     std::set<std::string> aliasReturningFreeFunctions;
-    // Iterated to a fixed point: a function that forwards `return other(...)` is classified from
-    // `other`, which may be defined later in the file or classified by an earlier pass
-    // (promoteReturnsOfSharedLocals marks a free function that returns a shared local).
+    // Fixed point: a function that forwards `return other(...)` is classified from `other`, which may be defined later or classified by an earlier pass.
     for (bool changed = true; changed;) {
     changed = false;
     for (const auto& stmt : program.statements) {
@@ -1196,8 +948,7 @@ void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& progr
             // `return x.field;` hands out an object somebody else keeps owning: shared.
             if (auto ma = dynamic_cast<const MemberAccess*>(expr)) {
                 sawCall = true;
-                // The returned field must itself be a shared handle: resolve `base.field` (one
-                // level, or a chain) to the field's owning class and mark that field shared.
+                // The returned field must itself be a shared handle: resolve `base.field` (one level, or a chain) to the field's owning class and mark that field shared.
                 std::function<std::string(const Expression*)> classOfExpr = [&](const Expression* e) -> std::string {
                     if (auto id = dynamic_cast<const Identifier*>(e)) {
                         auto t = symbolTypesByScope.find(makeSymbolKey(fn->name, id->name));
@@ -1233,18 +984,7 @@ void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& progr
                 auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
                 if (member == nullptr) { allAliasCalls = false; break; }
                 if (auto recvId = dynamic_cast<const Identifier*>(member->object.get())) {
-                    // Try THIS free function's own scope first (registerSymbolType
-                    // registers every local under its real, precise scope --
-                    // analyzeStatement already passes fn->name as that scope for
-                    // a free function's body -- in ADDITION to a same-name
-                    // kGlobalScope fallback entry). Two free functions each
-                    // declaring a local of the same NAME but different TYPES
-                    // (e.g. Load's `Parser p` vs main's `Point p`) collide in
-                    // the kGlobalScope fallback, since it is last-write-wins
-                    // with no scoping at all -- confirmed as a real bug via
-                    // probe (main's `Point p` silently corrupted Load's OWN
-                    // resolution of its own unrelated `p.parseDocument()`
-                    // call). The precise scope has no such collision.
+                    // Try this function's own scope first: the global fallback entry is last-write-wins, so two functions with a local of the same name and different types collide there.
                     auto typeIt = symbolTypesByScope.find(makeSymbolKey(fn->name, recvId->name));
                     if (typeIt == symbolTypesByScope.end()) {
                         typeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, recvId->name));
@@ -1270,16 +1010,7 @@ void SmartPointerAnalyzer::inferAliasReturningFreeFunctions(const Program& progr
             changed = true;
             aliasReturningFreeFunctions.insert(fn->name);
             methodReturnKinds_[makeMemberKey("", fn->name)] = PointerType::SHARED;
-            // Dual-register under the QUALIFIED name too (`YAML::Load`) --
-            // isSharedReturningCall's plain-call check (deciding a LOCAL
-            // declaration's pointer kind, e.g. `Node root = YAML::Load(x);`)
-            // queries call->function_name verbatim, which IS the qualified
-            // spelling at a call site outside the namespace, unlike
-            // emitFunction's DEFINITION-side query (always the bare name).
-            // Confirmed as a real bug via probe: Load itself correctly
-            // emitted shared_ptr, but `Node root = YAML::Load(...);` still
-            // declared root as unique_ptr because only the bare "Load" key
-            // existed.
+            // Also register under the qualified name (`YAML::Load`): a call outside the namespace spells it that way, while the definition side queries the bare name.
             if (!fn->namespaceName.empty()) {
                 methodReturnKinds_[makeMemberKey("", fn->namespaceName + "::" + fn->name)] =
                     PointerType::SHARED;
@@ -1332,9 +1063,8 @@ bool SmartPointerAnalyzer::localComesFromSharedCall(const Expression* init, cons
 }
 
 void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) {
-    // `Item w = get(i); ... return w;` -- a local initialised from a call whose result is shared IS shared (AstEmitter::isSharedReturningCall declares it
-    // so), but the table of local decisions the pass below reads does not know that, so such a method stayed unique_ptr-returning while its local was a
-    // shared_ptr: a compile error in the generated code. Which methods return shared depends on this pass itself, so it runs to a fixed point.
+    // `Item w = get(i); ... return w;`: a local initialised from a call whose result is shared is shared (as AstEmitter::isSharedReturningCall declares it), so the
+    // method must return shared too. Which methods return shared depends on this pass itself, so it runs to a fixed point.
     for (bool changed = true; changed;) {
         changed = false;
         promoteReturnsOfSharedLocalsOnce(program, changed);
@@ -1342,55 +1072,17 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
 }
 
 void SmartPointerAnalyzer::promoteReturnsOfSharedLocalsOnce(const Program& program, bool& changed) {
-    // A method's return classification (inferAliasReturningMethods, above) is
-    // structural: it only recognizes `return this;` / `return <field>;` /
-    // `return <alias-returning call>;`. It does NOT recognize `return <local
-    // variable>;` -- and a local can independently become SHARED via a LATER
-    // pass (promoteSharedCallArguments, the very last pass in analyzeProgram,
-    // since a local passed into a parameter that itself got promoted to
-    // SHARED must become SHARED too). Found as a real gap while writing
-    // yaml-cling's Parser: `Node parseDocument() { Node root = new Node(...);
-    // parseValueInto(root, -1); return root; }` -- `root` gets promoted to
-    // shared_ptr (it's passed into parseValueInto's `target` parameter, which
-    // itself needs SHARED because the body does `target[key]`, an alias-
-    // returning operator[] call), but parseDocument's OWN return type stayed
-    // unique_ptr, a real return-type mismatch compile error. This pass
-    // MUST run after promoteSharedCallArguments (needs every local's FINAL
-    // pointer-kind decision, not the one from the ordinary two-pass alone),
-    // and reuses getPointerTypeForVariable rather than re-deriving locals'
-    // kinds from scratch.
+    // inferAliasReturningMethods is structural and does not recognize `return <local>;`. A local can become shared in a later pass (promoteSharedCallArguments),
+    // and the method returning it must then return shared. This pass runs after that one and reuses getPointerTypeForVariable.
     for (const auto& stmt : program.statements) {
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
         if (cls == nullptr) continue;
         for (const auto& member : cls->members) {
             auto method = dynamic_cast<const MethodDeclaration*>(member.get());
             if (method == nullptr) continue;
-            // A specialization (in-class `int as<int>()` OR an external
-            // one spliced in via ASTBuilder, e.g. `Point Node::as<Point>()`)
-            // is skipped here -- this pass keys methodReturnKinds_ by BARE
-            // method name (makeMemberKey(cls->name, method->name)), with no
-            // notion of specializationKey at all, so a specialization whose
-            // return type happens to be a real class (`Point`, unlike the
-            // primary's literal `T`) would silently corrupt the PRIMARY's
-            // own "Node::as" classification -- confirmed as a real bug via
-            // probe: adding `Point Node::as<Point>() { Point out = ...;
-            // return out; }` flipped `Node::as`'s registered kind to SHARED
-            // (because `out`, a specialization-local never registered the
-            // way this pass's variable-scope lookup expects, fell through
-            // getPointerTypeForVariableInScope's own "not found -> SHARED"
-            // default quirk), which in turn corrupted an UNRELATED call
-            // chain (YAML::Load -> Parser::parseDocument) that happened to
-            // read the same "Node::as" key. A specialization's own return
-            // lowering is a completely separate, already-correct concern
-            // (AstEmitter::currentSpecializationValueType_), so this pass
-            // has nothing useful to contribute for one and must not run on
-            // it at all.
+            // Specializations are skipped: methodReturnKinds_ is keyed by bare method name, so a specialization would corrupt the primary's entry.
             if (!method->specializationArg.empty()) continue;
-            // Only meaningful for a CLASS-typed return -- getPointerTypeForVariable
-            // defaults to SHARED for any name it can't match at all (a real,
-            // separate quirk of that query, documented at its own definition),
-            // so restricting to class-typed returns keeps this pass from ever
-            // acting on a coincidentally-named primitive local.
+            // Only for a class-typed return: getPointerTypeForVariable defaults to shared for a name it cannot match, which would misfire on a primitive local.
             if (classNames.find(method->returnType) == classNames.end()) continue;
             const std::string key = makeMemberKey(cls->name, method->name);
             if (methodReturnKinds_.count(key) > 0) continue;  // already SHARED
@@ -1398,20 +1090,10 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocalsOnce(const Program& progr
             std::vector<const Expression*> returns;
             collectReturnExpressions(method->body, returns);
             bool anyLocalIsShared = false;
-            // Scoped lookup ("Class::method") -- getPointerTypeForVariable's
-            // plain name-only match would wrongly collide with a same-named
-            // local in a COMPLETELY UNRELATED method/function elsewhere in the
-            // program (confirmed via a real bug: two free functions each with
-            // their own local named `copy` cross-contaminated each other's
-            // classification -- see getPointerTypeForVariableInScope's own
-            // comment).
+            // Scoped lookup ("Class::method"): a plain name-only match would collide with a same-named local in an unrelated function.
             const std::string methodScope = cls->name + "::" + method->name;
             for (const Expression* expr : returns) {
-                // `return this;` is never a SHARED-local return in this sense (it's
-                // handled by the separate anyReturnsThis/classesNeedingSharedFromThis_
-                // mechanism above) -- `this` is its own ThisExpression node now, so
-                // dynamic_cast<Identifier> already returns nullptr for it, same as
-                // any other non-Identifier return shape.
+                // `return this;` is handled by the anyReturnsThis / classesNeedingSharedFromThis_ mechanism; ThisExpression is not an Identifier, so it falls through here.
                 auto id = dynamic_cast<const Identifier*>(expr);
                 if (id == nullptr) continue;
                 if (getPointerTypeForVariableInScope(methodScope, id->name) == PointerType::SHARED ||
@@ -1431,15 +1113,7 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocalsOnce(const Program& progr
         }
     }
 
-    // Same check for top-level FREE FUNCTIONS, keyed under the "" class
-    // (matching how getMethodReturnPointerType/emitFunction now query a free
-    // function -- see AstEmitter::emitFunction's ownerClass="" case). Needed
-    // for `Node Load(string text) { ... return p->parseDocument(); }`-shaped
-    // code: this pass alone doesn't classify Load as alias-returning (Load
-    // returns a CALL RESULT, not a bare local -- that's
-    // inferAliasReturningMethods's case (c), not this pass's concern), but
-    // any free function that DOES return a shared local needs the same
-    // promotion class methods just got above.
+    // Same check for top-level free functions, keyed under the "" class (as emitFunction queries them).
     for (const auto& stmt : program.statements) {
         auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get());
         if (fn == nullptr) continue;
@@ -1450,11 +1124,7 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocalsOnce(const Program& progr
         std::vector<const Expression*> returns;
         collectReturnExpressions(fn->body, returns);
         bool anyLocalIsShared = false;
-        // Scoped lookup (bare fn->name, matching registerParameters'
-        // scopeName for a free function) -- see the class-method loop above
-        // for why this must not be the plain name-only getPointerTypeForVariable
-        // (a real cross-function name collision, confirmed via yaml-cling's
-        // Clone/cloneChain both having their own local named `copy`).
+        // Scoped lookup (bare fn->name), for the same reason as the class-method loop above.
         for (const Expression* expr : returns) {
             auto id = dynamic_cast<const Identifier*>(expr);
             if (id == nullptr) continue;
@@ -1466,24 +1136,8 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocalsOnce(const Program& progr
         }
         if (anyLocalIsShared) {
             changed = true;
-            // Keyed under the BARE name ("" class + fn->name), matching
-            // exactly how AstEmitter::buildFunctionSignature queries it on the
-            // DEFINITION side -- emitTopLevel always passes fn->name verbatim,
-            // never a namespace-qualified spelling, for ownerClass="" free
-            // functions (unlike class methods, which route through
-            // emitClass's namespace re-wrapping instead of the name itself
-            // carrying the qualifier).
-            //
-            // ALSO dual-registered under the QUALIFIED name -- a real, confirmed
-            // gap found via yaml-cling's `YAML::Clone`: the CALLER-side query
-            // (AstEmitter::isSharedReturningCall, deciding a fresh local's OWN
-            // declared type from a call's RHS, e.g. `Node copy =
-            // YAML::Clone(root);`) uses call->function_name VERBATIM, which is
-            // the qualified spelling from outside the namespace -- exactly the
-            // same bug class inferAliasReturningFreeFunctions's own dual-
-            // registration comment already documents for YAML::Load, this
-            // pass just hadn't needed it until a function returning a locally-
-            // shared variable (rather than a call result) was namespaced too.
+            // Keyed under the bare name ("" class + fn->name), as AstEmitter::buildFunctionSignature queries the definition. Also registered under the qualified name
+            // (`YAML::Clone`), which is how a caller outside the namespace spells it.
             methodReturnKinds_[key] = PointerType::SHARED;
             if (!fn->namespaceName.empty()) {
                 methodReturnKinds_[makeMemberKey("", fn->namespaceName + "::" + fn->name)] =
@@ -1520,9 +1174,8 @@ void collectIdentifierNames(const Expression* expr, std::set<std::string>& out) 
     }
 }
 
-// One entry per statement in execution (pre-)order. `used` holds the names read by the statement's
-// OWN expressions (a loop's entry holds its condition / container); nested bodies get entries of
-// their own.
+// One entry per statement in execution (pre-)order. `used` holds the names read by the statement's own expressions (a loop's entry holds its condition or container);
+// nested bodies get entries of their own.
 struct FlatStmt {
     const Statement* stmt = nullptr;
     std::set<std::string> used;
@@ -1623,8 +1276,7 @@ void SmartPointerAnalyzer::promoteAliasedLocalsInBody(
         } else {
             continue;
         }
-        // `T x = v[i];` / `T x = obj.items[i];` copies a handle out of a container element: x and the element
-        // are two owners.
+        // `T x = v[i];` / `T x = obj.items[i];` copies a handle out of a container element: x and the element are two owners.
         if (auto sub = dynamic_cast<const SubscriptExpression*>(rhs);
             sub != nullptr && types.find(target) != types.end() &&
             (dynamic_cast<const Identifier*>(sub->object.get()) != nullptr ||
@@ -1632,9 +1284,8 @@ void SmartPointerAnalyzer::promoteAliasedLocalsInBody(
             promote(target);
             continue;
         }
-        // `T x = field;` inside a method: the local and the field are two owners from this point on, whether or
-        // not the field is touched again (a field copy never moves the field). Both sides become shared;
-        // otherwise the local is a shared_ptr initialised from a unique_ptr field.
+        // `T x = field;` inside a method: the local and the field are two owners from now on (a field copy never moves the field). Both become shared,
+        // otherwise the local would be a shared_ptr initialised from a unique_ptr field.
         if (auto fieldId = dynamic_cast<const Identifier*>(rhs);
             fieldId != nullptr && types.find(fieldId->name) == types.end() && types.find(target) != types.end()) {
             const size_t sep = scope.find("::");
@@ -1667,8 +1318,7 @@ void SmartPointerAnalyzer::promoteAliasedLocalsInBody(
         for (size_t j = i + 1; j < flat.size() && !usedAgain; ++j) {
             if (flat[j].used.count(src) > 0) usedAgain = true;
         }
-        // inside a loop, a use anywhere in the loop is 'after' on the next iteration, unless the
-        // source is declared inside that loop (then every iteration starts with a fresh one)
+        // inside a loop, a use anywhere in the loop is 'after' on the next iteration, unless the source is declared inside that loop
         for (size_t l = 0; l < i && !usedAgain; ++l) {
             if (flat[l].loopEnd < 0 || static_cast<size_t>(flat[l].loopEnd) < i) continue;
             bool declaredInside = false;
@@ -1740,9 +1390,8 @@ void SmartPointerAnalyzer::promoteParamsStoredInSharedFields(const Program& prog
         }
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
         if (cls == nullptr) continue;
-        // A spawn job's constructor MOVES its object captures into unique fields; the usual rule ("a parameter
-        // stored into a field is linked, so both become shared") would make the creating thread keep a live
-        // owner of an object that now runs concurrently. DanglingChecker::checkSpawnCall decides what may be moved.
+        // A spawn job's constructor moves its object captures into unique fields; the usual "parameter stored into a field is linked" rule would leave the creating
+        // thread an owner of an object that now runs concurrently. DanglingChecker::checkSpawnCall decides what may be moved.
         if (cls->isSpawnJob) continue;
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
@@ -1758,24 +1407,9 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
                                                const std::string& className,
                                                const std::vector<std::pair<std::string, std::string>>& params,
                                                const std::string& scope) {
-    // Only the unconditional, direct, single-hop case is promoted this slice: a
-    // top-level `field = param;` (bare identifier target naming a field of
-    // `className`, or a `this`-qualified member-access target -- CeeLing has no
-    // explicit `this.x` syntax, so only the bare form is reachable in practice)
-    // whose RHS is EXACTLY a parameter name. Storage behind a conditional, into a
-    // nested field, or via an intermediate expression is NOT detected -- the
-    // argument stays UNIQUE and still moves, the existing safe default (see
-    // dangling_checker.cpp's mirrored field-store recognition for the identical
-    // boundary). Not recursing into if/while/for bodies is deliberate scope, not
-    // an oversight: promoting a param whose storage only happens on some paths
-    // would incorrectly promise sharing even on paths where the store never runs.
-    // Later extension (cJSON port): the same promotion applies to a free function, to a store nested
-    // inside if/while/for/try, and to a store through another object (`array.child = item;`). A
-    // promotion is always safe -- SHARED only means the caller's variable is copied instead of
-    // moved -- so the original reason for staying out of branches (not promising sharing on a path
-    // that never stores) costs nothing and is dropped. The field's owning class is resolved from the
-    // target's base expression (parameter, local, or field chain); when that fails the enclosing
-    // class is used, as before.
+    // A store is recognized as `field = param;` (bare field name, or through another object: `array.child = item;`) anywhere in a body, including inside
+    // if/while/for/try and in free functions. Promotion is always safe (shared only means the caller's variable is copied instead of moved). The field's
+    // owning class is resolved from the target's base expression (parameter, local or field chain), else the enclosing class.
     std::map<std::string, std::string> localTypes;
     for (const auto& [ptype, pname] : params) localTypes[pname] = ptype;
     std::function<void(const std::vector<StatementPtr>&)> collectLocals =
@@ -1858,17 +1492,14 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
         auto rhsId = dynamic_cast<const Identifier*>(assign->expression.get());
         if (rhsId == nullptr) continue;
 
-        // RHS must be one of this body's own parameters, or (when the field is already shared) a
-        // local declared in it -- a local stored into a shared field must itself be shared, or the
-        // emitted `field = local` assigns a unique_ptr lvalue to a shared_ptr.
+        // RHS must be one of this body's own parameters, or (when the field is already shared) a local declared in it: a local stored into a shared field must be
+        // shared, or `field = local` assigns a unique_ptr lvalue to a shared_ptr.
         const bool rhsIsParam = std::any_of(params.begin(), params.end(),
             [&](const auto& p) { return p.second == rhsId->name; });
         const bool rhsIsLocal = !rhsIsParam && localTypes.count(rhsId->name) > 0;
         if (!rhsIsParam && !rhsIsLocal) continue;
 
-        // The field's own declared type (registered by analyzeVariableDeclaration
-        // when the class body was first walked) tells us which (class, name) pair
-        // to ask getPointerType about.
+        // The field's declared type tells which (class, name) pair to ask getPointerType about.
         const auto fieldTypeIt = symbolTypesByScope.find(makeSymbolKey(fieldOwner, fieldName));
         if (fieldTypeIt == symbolTypesByScope.end()) continue;
 
@@ -1885,46 +1516,10 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
         if (rhsIsLocal && getPointerType(fieldTypeIt->second, fieldName) != PointerType::SHARED) continue;
 
         if (getPointerType(fieldTypeIt->second, fieldName) != PointerType::SHARED) {
-            // The field was NOT already decided SHARED by anything -- most
-            // commonly `secondPassDeterminePointerTypes`' own base case
-            // (`PointerType::UNIQUE`, "default unique ownership", when no
-            // other signal applies). Left alone, this is a real, general,
-            // pre-existing mismatch (confirmed via probe, no closures
-            // involved: `class Holder { Animal stored; Holder(Animal c) {
-            // stored = c; } }` called as `new Holder(new Dog())`) --
-            // AstEmitter's own inline-`new`-as-call-argument path
-            // (`emitMovedArg`'s NewExpression branch -> factoryFor) has NO
-            // signal from THIS pass to consult and falls back to
-            // `getPointerType`'s own "not found" default, which is
-            // UNCONDITIONALLY SHARED (see that function's own two identical
-            // `return PointerType::SHARED;` branches) -- so a constructor
-            // call site passing a freshly-`new`'d, unnamed argument always
-            // produces a `shared_ptr`, regardless of what this field ends up
-            // deciding. A field left at UNIQUE while its own constructor
-            // argument is unconditionally emitted as SHARED is a silent
-            // `std::unique_ptr<T> stored(std::shared_ptr<T>)` type mismatch
-            // -- a real compile error in the generated C++, not a safety
-            // hole (CeeLing's own analysis never runs on already-broken
-            // output), but exactly the "compiles this pass, fails the next"
-            // gap the safety suite's compile-gate exists to catch.
-            //
-            // Fix: when nothing else drives this field's decision, make it
-            // agree with the SAME default a fresh inline-constructed
-            // argument already gets, rather than leaving it on
-            // secondPass's unrelated "default unique ownership" base case,
-            // which was never reasoning about constructor-argument
-            // construction sites at all.
-            // NOTE: `pointerDecisions` has an entry for EVERY variableReferences
-            // key unconditionally (secondPassDeterminePointerTypes's own loop
-            // writes one on every iteration, including its UNIQUE base case) --
-            // so "does an entry exist" is always true and cannot distinguish
-            // "a real signal fired" from "nothing did." The reason STRING is
-            // the only thing that distinguishes them: the base case's literal
-            // reason is "default unique ownership" (see that function's own
-            // `std::string reason = "default unique ownership";`); anything
-            // else means some real rule (explicit hint, back-reference,
-            // bidirectional, shared-root, data-flow) already decided this
-            // field and must not be silently overridden here.
+            // The field was not decided shared by anything, most commonly by secondPassDeterminePointerTypes' base case ("default unique ownership"). An inline
+            // `new` passed as a constructor argument is emitted with getPointerType's not-found default, which is shared, so a unique field would not accept it.
+            // Make the field agree with that default. `pointerDecisions` has an entry for every key, so the reason string is the only way to tell the base case
+            // from a real rule (hint, back-reference, bidirectional, shared-root, data-flow); a real rule is not overridden.
             bool fieldHasOwnSignal = false;
             for (const auto& [key, ref] : variableReferences) {
                 if (ref.className == fieldTypeIt->second && ref.variableName == fieldName) {
@@ -1948,9 +1543,7 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
             }
         }
 
-        // The parameter's own type tells us which (class, name) key to promote --
-        // registerParameters already gave every object-typed parameter a bare
-        // variableReferences entry to promote here.
+        // The parameter's declared type gives the (class, name) key to promote; registerParameters gave every object-typed parameter a variableReferences entry.
         for (auto& [key, ref] : variableReferences) {
             if (ref.className == paramTypeIt->first && ref.variableName == rhsId->name &&
                 (rhsIsParam || ref.containingScope == normalizeScope(scope))) {
@@ -1965,11 +1558,7 @@ void SmartPointerAnalyzer::promoteParamsInBody(const std::vector<StatementPtr>& 
 }
 
 namespace {
-// Local, transient lookup built once per promoteSharedCallArguments call: resolves
-// a callee (free function name, or "ClassName::methodName" for a method/
-// constructor) to its declared parameter list. Kept local rather than permanent
-// analyzer state -- nothing else in SmartPointerAnalyzer needs a general call-
-// target-to-parameters map, this pass is the only consumer.
+// Transient lookup built once per promoteSharedCallArguments call: a callee (free function name, or "ClassName::methodName") to its declared parameter list.
 struct CalleeParams {
     std::map<std::string, std::vector<std::pair<std::string, std::string>>> freeFunctions;
     std::map<std::string, std::vector<std::pair<std::string, std::string>>> methods;      // "Class::method"
@@ -1981,33 +1570,14 @@ CalleeParams collectCalleeParams(const Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             out.freeFunctions[fn->name] = fn->parameters;
-            // Dual-register under the QUALIFIED name too ("YAML::Clone") -- a
-            // call site OUTSIDE the namespace spells it qualified
-            // (FunctionCall::function_name is captured verbatim from source
-            // text, see ASTBuilder::buildFunctionCall), so a lookup keyed only
-            // by the bare name misses every external caller. Same bug class
-            // (and same fix shape) as AstEmitter::collectClassNames's
-            // functionParams_/functionReturnType_ dual-registration for
-            // YAML::Load.
+            // Also register under the qualified name ("YAML::Clone"): a call outside the namespace spells it that way (FunctionCall::function_name is verbatim).
             if (!fn->namespaceName.empty()) {
                 out.freeFunctions[fn->namespaceName + "::" + fn->name] = fn->parameters;
             }
         } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
             for (const auto& member : cls->members) {
                 if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                    // A specialization is excluded: out.methods is keyed by
-                    // BARE "Class::method", with no notion of
-                    // specializationKey, and is consulted for an ORDINARY
-                    // (non-templated) call's parameter list -- a plain call
-                    // can never actually resolve to a specialization's own
-                    // body anyway (that requires an explicit <Type> type
-                    // argument), so a specialization's parameter list has
-                    // nothing legitimate to contribute here, and would only
-                    // ever risk silently overwriting the PRIMARY's own
-                    // (possibly different-shaped) entry -- same bug class as
-                    // inferAliasReturningMethods/promoteReturnsOfSharedLocals's
-                    // identical exclusion, see their comments for the
-                    // confirmed real-world collision this guards against.
+                    // Specializations are excluded: out.methods is keyed by bare "Class::method", and a plain call never resolves to a specialization, which would only overwrite the primary's entry.
                     if (!method->specializationArg.empty()) continue;
                     out.methods[cls->name + "::" + method->name] = method->parameters;
                 } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
@@ -2022,39 +1592,12 @@ CalleeParams collectCalleeParams(const Program& program) {
 
 void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
     const CalleeParams calleeParams = collectCalleeParams(program);
-    // The precise scope (free function name, "main", or "Class::method") of
-    // whatever body visitStmt/visitExpr are currently walking -- set at each
-    // of the 4 outer entry points below, read by every symbolTypesByScope
-    // lookup in this function in PREFERENCE to the kGlobalScope fallback
-    // (see registerSymbolType: every local is ALSO registered under
-    // kGlobalScope as a last-write-wins fallback, which two unrelated
-    // functions declaring a same-named local of DIFFERENT types silently
-    // collide in -- confirmed as a real bug via probe: yaml_parser.clg's
-    // `Load`'s own `Parser p` was corrupted by an unrelated `Point p` in a
-    // consumer's main()). Trying the precise scope first eliminates that
-    // collision without touching registerSymbolType's fallback (other,
-    // lower-risk call sites may still legitimately rely on the fallback for
-    // a variable whose exact scope isn't threaded through to them).
+    // The precise scope (free function name, "main", or "Class::method") of the body visitStmt/visitExpr are walking. Every symbolTypesByScope lookup tries it
+    // before the kGlobalScope fallback, which is last-write-wins and collides when unrelated functions declare a same-named local of different types.
     std::string currentScope;
 
-    // A free function literally named `begin`/`end` taking a single
-    // class-typed parameter exists, BY CONSTRUCTION, to support ADL-found
-    // range-for from OTHER .clg files (Step 27's mechanism -- ordinary
-    // member begin()/end() can't be used when the iterator and the
-    // container have a circular type dependency CeeLing cannot express).
-    // The pre-existing forcing further down only fires when a `for`
-    // statement iterating this exact class appears in the SAME transpile
-    // unit as begin/end's own definition -- but CeeLing compiles each .clg
-    // file independently (real separate compilation, not a text merge), so
-    // `yaml_node.clg`'s own standalone transpile (defining begin/end) never
-    // sees ANY for-loop; the for-loop lives in a driver .clg that only
-    // #includes yaml_node.clh, transpiled as a SEPARATE unit that cannot
-    // retroactively change yaml_node.h's already-emitted signature.
-    // Confirmed as a real, reproducible cross-file gap (not new to RB18,
-    // though RB18's changes newly exposed it): forced here UNCONDITIONALLY,
-    // not merely when local usage evidence happens to agree, since a
-    // function named begin/end taking one class parameter has no other
-    // legitimate purpose in this codebase.
+    // A free function named `begin`/`end` taking one class-typed parameter exists to support ADL range-for from other .clg files. The forcing further down
+    // only sees a `for` in the same file, and each .clg is compiled separately, so the parameter is forced shared here unconditionally.
     for (const char* fnName : {"begin", "end"}) {
         const auto paramsIt = calleeParams.freeFunctions.find(fnName);
         if (paramsIt == calleeParams.freeFunctions.end() || paramsIt->second.size() != 1) continue;
@@ -2067,20 +1610,8 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
             "argument from any .clg file, not just one with a for-loop in the same transpile unit)";
     }
 
-    // A class method literally named `operator==`/`operator!=` whose single
-    // parameter is the class itself exists to support comparison call sites
-    // ANYWHERE that class is compared (AstEmitter routes `a == b` through it
-    // whenever both operands are that class -- see the BinaryExpression
-    // handling in ast_emitter.cpp's emitExpression). Forced unconditionally,
-    // same reasoning as begin/end above: a caller
-    // comparing two `Node`-typed locals ALWAYS passes a shared_ptr argument
-    // (every Node local defaults to shared_ptr unless something ELSE forces
-    // unique), so the comparison operator's own parameter must accept
-    // shared_ptr regardless of whether local usage evidence WITHIN the
-    // declaring class's own file happens to agree -- confirmed as a real
-    // compile failure via Iterator::operator!=(Iterator other)'s own body
-    // (`current != other.current`, both Node-typed shared_ptr fields),
-    // which never independently forces Node::operator!='s parameter shared.
+    // A method `operator==`/`operator!=` whose single parameter is the class itself serves comparison sites anywhere (AstEmitter routes `a == b` through it).
+    // Callers compare shared_ptr locals, so the parameter is forced shared whatever this file's own usage shows.
     for (const auto& stmt : program.statements) {
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
         if (cls == nullptr) continue;
@@ -2099,18 +1630,8 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
         }
     }
 
-    // Same cross-file gap, for every free function parameter already
-    // classified read-only (classifyReadOnlyFreeFunctionParams, Step 29):
-    // the ordinary per-call-site forcing further down (`isReadOnlyFreeFunctionParam`
-    // branch) only fires for a call site actually present in THIS transpile
-    // unit -- a read-only function like `Clone(const Node&)` defined in
-    // yaml_node.clg but only ever CALLED from a separate driver .clg never
-    // gets its own parameter forced shared when yaml_node.clg is transpiled
-    // standalone (confirmed via probe: `Clone`'s parameter stayed
-    // unique_ptr in yaml_node.h, so a caller's shared_ptr argument from
-    // another file failed to bind). A read-only classification is a
-    // property of the FUNCTION's OWN body, independent of any particular
-    // call site, so it can and should be forced unconditionally here too.
+    // Same cross-file reason, for every free-function parameter classified read-only (classifyReadOnlyFreeFunctionParams): the per-call-site forcing below only
+    // sees calls in this file, but a read-only function is read-only whatever its callers do, so force it here unconditionally.
     for (const auto& stmt : program.statements) {
         auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get());
         if (fn == nullptr) continue;
@@ -2125,18 +1646,8 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
         }
     }
 
-    // "ClassName" -> the parameter name of that class's HANDLE-REBIND
-    // `operator=(SameClass other)` overload, if declared. Built separately
-    // from calleeParams.methods (keyed "Class::operator=", collapsed to ONE
-    // entry per class) because a class declaring BOTH `operator=(string)`
-    // and `operator=(SameClass)` (RB18's yaml-cling Node does exactly this)
-    // has two arity-1 overloads that silently overwrite each other under
-    // that collapsed key -- confirmed via probe: whichever overload is
-    // declared LAST in source order wins, so `calleeParams.methods.find(
-    // "Node::operator=")` could resolve to the STRING overload's params
-    // instead of the Node one, silently defeating the forcing below. Mirrors
-    // AstEmitter::operatorAssignParamTypes_'s identical fix for the same
-    // root cause on the emitter side.
+    // "ClassName" -> parameter name of that class's handle-rebind `operator=(SameClass other)` overload, if declared. Kept apart from calleeParams.methods, which
+    // collapses overloads to one entry per class (a class with both `operator=(string)` and `operator=(SameClass)` would lose one). Mirrors AstEmitter::operatorAssignParamTypes_.
     std::map<std::string, std::string> handleRebindAssignParamName;
     for (const auto& stmt : program.statements) {
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
@@ -2150,14 +1661,8 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
         }
     }
 
-    // Resolve a call/constructor expression's target parameter list, then promote
-    // every argument bound to an already-SHARED parameter to SHARED itself --
-    // otherwise the caller's own local stays UNIQUE and the promotion sub-pass 1
-    // just did is invisible at the call site (AstEmitter would still emit
-    // unique_ptr for the caller's variable). Argument resolution is deliberately
-    // lightweight (bare identifier only, via symbolTypesByScope's global-scope
-    // fallback), matching this codebase's existing "not full type inference"
-    // conservatism elsewhere (e.g. DanglingChecker::asObjectLocalName).
+    // Resolve a call or constructor's target parameter list and promote every argument bound to an already-shared parameter, so the caller's variable is
+    // shared too. Arguments are resolved lightly (bare identifier, via symbolTypesByScope).
     auto promoteArgsAgainstParams = [this, &currentScope](
         const std::vector<ExpressionPtr>& args,
         const std::vector<std::pair<std::string, std::string>>& params) {
@@ -2190,8 +1695,7 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
         if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
             for (const auto& arg : call->arguments) visitExpr(arg.get());
             if (call->callee) {
-                // `recv.method(args)` -- resolve recv's class, then the class's
-                // method's parameter list.
+                // `recv.method(args)`: resolve recv's class, then the method's parameter list.
                 if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
                     if (auto recvId = dynamic_cast<const Identifier*>(member->object.get())) {
                         auto recvTypeIt = currentScope.empty() ? symbolTypesByScope.end()
@@ -2214,26 +1718,9 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
                 if (paramsIt != calleeParams.freeFunctions.end()) {
                     promoteArgsAgainstParams(call->arguments, paramsIt->second);
 
-                    // A parameter classified read-only (classifyReadOnlyFreeFunctionParams
-                    // -- see isReadOnlyFreeFunctionParam) must be able to receive the
-                    // caller's argument WITHOUT consuming it (yaml-cpp API-compatibility:
-                    // a `const Node&`-shaped function like Clone must not move its
-                    // argument). Both the callee's OWN parameter and the caller's
-                    // argument are forced SHARED here -- unconditionally, not merely
-                    // "if already shared" -- for the exact same reason Step 27's ADL
-                    // begin()/end() forcing needed both sides forced: the parameter and
-                    // the argument must be the SAME C++ type for the call to compile at
-                    // all (a shared_ptr argument cannot bind to a unique_ptr parameter),
-                    // and a fresh local's own default (unique) has no reason to already
-                    // agree with a parameter's default (shared) by coincidence.
-                    // buildKey needs the callee's BARE name (matching how
-                    // registerParameters/analyzeStatement scope a function
-                    // DEFINITION's own parameters -- always funcDecl->name,
-                    // never qualified, even for a namespaced function) --
-                    // call->function_name may be qualified ("YAML::Clone") when
-                    // called from outside the namespace, so strip it the same
-                    // way Step 27's ADL-forcing code strips a qualified class
-                    // name for the same reason.
+                    // A read-only parameter (isReadOnlyFreeFunctionParam) must receive the caller's argument without consuming it. Both the parameter and the argument are
+                    // forced shared, since a shared_ptr argument cannot bind to a unique_ptr parameter. buildKey needs the callee's bare name (parameters are scoped under
+                    // the unqualified function name), so a qualified `call->function_name` is stripped.
                     const size_t fnSepPos = call->function_name.rfind("::");
                     const std::string calleeBareName = fnSepPos == std::string::npos
                         ? call->function_name : call->function_name.substr(fnSepPos + 2);
@@ -2275,34 +1762,9 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
         } else if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
             visitExpr(bin->left.get());
             visitExpr(bin->right.get());
-            // `out << x` (stream chain) resolves to a user-defined free
-            // `operator<<(ostream, T)` via ORDINARY C++ operator overload
-            // resolution -- this is NOT a FunctionCall AST node at all (the
-            // grammar/AST model `<<` uniformly as a BinaryExpression, the same
-            // node std::cout << x already used before any user operator<<
-            // existed), so the free-function call-site forcing above never
-            // sees it. Without this, a class-typed right operand streamed via
-            // `<<` into a read-only `operator<<` parameter fails to compile
-            // the exact same way an ordinary call would without Step 29's
-            // forcing (confirmed via probe: std::unique_ptr's deleted copy
-            // constructor rejects the implicit by-value binding). Only the
-            // RIGHT operand can ever be the class-typed value being streamed
-            // (the left is always the stream itself); a bare Identifier is
-            // required here (mirrors promoteArgsAgainstParams's own
-            // resolution granularity).
-            //
-            // `<<` is ALSO integer shift now (one shared grammar tier -- see
-            // grammar.js), so this no longer sees stream chains exclusively. No
-            // stream-vs-shift test is needed to stay correct, though: reaching
-            // the promotion below requires the program to declare a free
-            // `operator<<` whose SECOND parameter is a known CLASS type, and an
-            // Identifier right operand whose own declared type matches it. A
-            // shift's operands are integers, so it fails `classNames.find` and
-            // falls straight through. The "left is always the stream" remark
-            // above is therefore still true of every case that gets PAST these
-            // guards, rather than of every `<<` node reaching this branch.
-            // AstEmitter::isStreamChain is where the distinction is actually
-            // made, because there it changes the emitted output.
+            // `out << x` is a BinaryExpression, not a FunctionCall, so the call-site forcing above never sees it. A class-typed right operand streamed into a read-only
+            // `operator<<` parameter needs the same promotion. Only a bare Identifier right operand is handled. `<<` is also integer shift, but promotion requires a
+            // free `operator<<` whose second parameter is a known class and an operand of that type, so shifts fall through.
             if (bin->operator_str == "<<") {
                 const auto opParamsIt = calleeParams.freeFunctions.find("operator<<");
                 if (opParamsIt != calleeParams.freeFunctions.end() && opParamsIt->second.size() == 2) {
@@ -2315,14 +1777,7 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
                             if (rhsTypeIt == symbolTypesByScope.end()) {
                                 rhsTypeIt = symbolTypesByScope.find(makeSymbolKey(kGlobalScope, rhsId->name));
                             }
-                            // Strip a qualified rhs type ("YAML::Node", as a
-                            // driver OUTSIDE the namespace spells it) down to
-                            // its simple name before comparing against
-                            // operator<<'s own bare paramType ("Node", as
-                            // declared inside the namespace) -- the same
-                            // qualified-vs-bare mismatch class found and fixed
-                            // repeatedly this session (Step 27's ADL forcing,
-                            // Step 29's Clone forcing).
+                            // Strip a qualified rhs type ("YAML::Node") to its simple name before comparing with operator<<'s bare paramType.
                             std::string rhsSimpleType;
                             if (rhsTypeIt != symbolTypesByScope.end()) {
                                 const size_t sepPos = rhsTypeIt->second.rfind("::");
@@ -2346,20 +1801,8 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
                     }
                 }
             }
-            // `a == b`/`a != b` where both operands are the same class and
-            // that class declares its own operator==/!=: AstEmitter routes
-            // this through `a->operator==(b)` (see emitExpression's
-            // BinaryExpression handling) -- again NOT a FunctionCall AST
-            // node, so invisible to the ordinary call-site forcing above.
-            // The method's OWN parameter is already forced SHARED
-            // unconditionally (see the begin/end-style forcing near the top
-            // of this function), but the CALLER's argument (the right
-            // operand) still needs forcing too, or a caller whose local
-            // independently defaulted to UNIQUE (ordinary usage-based
-            // inference, e.g. a single-owner `Node other = new Node(...);`
-            // never shared elsewhere) fails to bind -- confirmed via a real
-            // compile error: `root->operator==(other)` needs a shared_ptr
-            // argument, `other` defaulted to unique_ptr.
+            // `a == b` / `a != b` on the same class with its own operator==/!=: AstEmitter routes it through `a->operator==(b)`, which is not a FunctionCall, so the
+            // caller's right operand needs forcing here too (the method's own parameter is forced shared near the top).
             if ((bin->operator_str == "==" || bin->operator_str == "!=")) {
                 if (auto rhsId = dynamic_cast<const Identifier*>(bin->right.get())) {
                     auto rhsTypeIt = currentScope.empty() ? symbolTypesByScope.end()
@@ -2405,16 +1848,8 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
             visitExpr(decl->expression.get());
         } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
             visitExpr(assign->expression.get());
-            // Same-class `n = otherNode;` handle-rebind forcing lives in the
-            // separate forceHandleRebindAssignments walk below (needs class/
-            // method SCOPE context -- whether `n` is a read-only PARAMETER,
-            // not just any same-class local -- that this generic visitStmt
-            // does not track; see that walk's own header comment for why the
-            // gate is required: an ORDINARY loop-advancement local like
-            // yaml_emitter.clg's `cur = cur.nextSibling();` has the exact
-            // same AST shape but needs the OPPOSITE treatment, a plain
-            // repoint, not a forced-shared handle-rebind -- confirmed via a
-            // real segfault before this gate was added).
+            // Same-class `n = otherNode;` handle-rebind is handled by forceHandleRebindAssignments below, which needs class/method scope: an ordinary loop-advancement
+            // local (`cur = cur.nextSibling();`) has the same shape but must stay a plain repoint.
         } else if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
             visitExpr(ret->expression.get());
         } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
@@ -2426,26 +1861,8 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
             for (const auto& inner : whiles->body) visitStmt(inner.get());
         } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
             visitExpr(fors->container.get());
-            // Range-for over a class-typed container relying on ADL-found free
-            // functions (no MEMBER begin() -- see AstEmitter's matching
-            // hasMemberBegin check) implicitly calls `begin(container)` AND
-            // `end(container)` in the generated C++ -- pure C++-compiler
-            // desugaring, invisible to the ordinary promoteArgsAgainstParams walk
-            // below (which only visits REAL call/constructor expressions in the
-            // AST). Both the container variable and BOTH free functions'
-            // parameters are forced to SHARED here, UNCONDITIONALLY (not merely
-            // matched to whatever the independent usage-based inference already
-            // decided) -- confirmed via direct probe that unique_ptr cannot work
-            // for this pattern AT ALL, regardless of matching: CeeLing has no
-            // reference-parameter syntax, so `begin`/`end` always take the
-            // container BY VALUE, and range-for needs the container passed to
-            // BOTH calls -- but unique_ptr's copy constructor is deleted, so
-            // passing a unique_ptr-backed container into two separate by-value
-            // parameters can never compile no matter what kind either side
-            // independently infers. shared_ptr's cheap, safe copy (refcount
-            // bump) is the only kind that can satisfy "passed by value twice".
-            // Mirrors promoteArgsAgainstParams's own bare-identifier-only
-            // resolution (this pass's established conservatism).
+            // Range-for over a class-typed container using ADL `begin(container)` / `end(container)` calls both free functions in the generated C++, invisible to the
+            // walk below. The container variable and both functions' parameters are forced shared: they take the container by value twice, which a unique_ptr cannot do.
             if (auto containerId = dynamic_cast<const Identifier*>(fors->container.get())) {
                 auto classIt = currentScope.empty() ? symbolTypesByScope.end()
                     : symbolTypesByScope.find(makeSymbolKey(currentScope, containerId->name));
@@ -2454,12 +1871,7 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
                 }
                 if (classIt != symbolTypesByScope.end()) {
                     const std::string& containerClass = classIt->second;
-                    // The container variable's declared type may be qualified
-                    // ("YAML::Node", as the source wrote it) while a free
-                    // function's parameter declared INSIDE that namespace is
-                    // bare ("Node") -- strip to the simple name for comparison
-                    // (the same qualified-vs-bare mismatch class found and fixed
-                    // elsewhere this session for namespaced types).
+                    // Strip a qualified container type ("YAML::Node") to its simple name before comparing with a bare parameter type.
                     const size_t sepPos = containerClass.rfind("::");
                     const std::string containerSimpleClass =
                         sepPos == std::string::npos ? containerClass : containerClass.substr(sepPos + 2);
@@ -2523,19 +1935,8 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
         }
     }
 
-    // A second, separate walk specifically for IMPLICIT-THIS calls to a
-    // read-only-classified SIBLING METHOD (`parseBlockMapInto(target, ...)`
-    // inside another Parser method -- call->callee is null, same AST shape as
-    // a free-function call, so the walk above's "Plain call f(args)" branch
-    // never matches it: calleeParams.freeFunctions has no entry for a method,
-    // which is only ever registered under "Class::method"). Kept as an
-    // independent pass (not folded into visitExpr/visitStmt above) rather than
-    // threading a `currentClass` parameter through that entire, already-large
-    // recursive walker -- this only needs to look at DIRECT calls in a
-    // method's own body, not descend into nested lambdas/closures (CeeLing
-    // has none), so a fresh, method-scoped recursive walk is simpler than
-    // retrofitting class-context onto every existing branch. Mirrors the
-    // free-function forcing above exactly, just keyed by (class, method).
+    // A separate walk for implicit-this calls to a read-only sibling method (`parseBlockMapInto(target, ...)`): the callee is null, like a free call, but
+    // calleeParams.freeFunctions has no entry for a method. Mirrors the free-function forcing above, keyed by (class, method).
     std::function<void(const Expression*, const std::string&, const std::string&)> forceReadOnlyMethodArg =
         [&](const Expression* expr, const std::string& currentClass, const std::string& currentMethod) {
             if (expr == nullptr) return;
@@ -2627,19 +2028,9 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
         }
     }
 
-    // `n = otherNode;` handle-rebind forcing (see AstEmitter's matching
-    // AssignmentStatement gate for the full rationale): the emitter only
-    // routes a same-class assignment through the user's `operator=` when the
-    // LHS is a PARAMETER already classified read-only (isReadOnlyMethodParam/
-    // isReadOnlyFreeFunctionParam) -- an ordinary local (e.g. yaml_emitter.
-    // clg's `cur = cur.nextSibling();`, a plain loop-advancement repoint) must
-    // NOT be forced shared here, or the SAME segfault that gate was added to
-    // fix reappears (this pass forcing sharedness independently of what the
-    // emitter will actually route through operator=). Scoped per (class,
-    // method) so `isReadOnlyMethodParam`/`isReadOnlyFreeFunctionParam` can be
-    // queried correctly -- mirrors forceReadOnlyMethodArgsInBody's own
-    // class/method-scoped walk immediately above, kept as a separate pass
-    // since it triggers on AssignmentStatement, not FunctionCall.
+    // `n = otherNode;` handle-rebind forcing: the emitter routes a same-class assignment through the user's `operator=` only when the LHS is a parameter already
+    // classified read-only, so an ordinary local (`cur = cur.nextSibling();`) must not be forced shared here. Scoped per (class, method) to query
+    // isReadOnlyMethodParam / isReadOnlyFreeFunctionParam.
     std::function<void(const std::vector<StatementPtr>&, const std::string&, const std::string&)>
         forceHandleRebindAssignmentsInBody = [&](const std::vector<StatementPtr>& body,
                                                   const std::string& currentClass,
@@ -2649,14 +2040,7 @@ void SmartPointerAnalyzer::promoteSharedCallArguments(const Program& program) {
                 if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
                     auto rhsId = dynamic_cast<const Identifier*>(assign->expression.get());
                     if (rhsId == nullptr) continue;
-                    // currentFunctionName is precisely scoped by the callers
-                    // below ("Class::method" for a method, bare name for a
-                    // free function -- matching registerSymbolType's own
-                    // registration format), so it must be tried BEFORE the
-                    // kGlobalScope fallback -- same collision class as every
-                    // other site fixed in this function (a same-named local
-                    // of a different type elsewhere in the program silently
-                    // wins the global fallback's last-write-wins entry).
+                    // currentFunctionName is scoped precisely ("Class::method" or the bare name), so try it before the kGlobalScope fallback.
                     const std::string preciseScope = currentClass.empty()
                         ? currentFunctionName : currentClass + "::" + currentFunctionName;
                     auto lhsTypeIt = symbolTypesByScope.find(makeSymbolKey(preciseScope, assign->variable));
@@ -2722,17 +2106,8 @@ void SmartPointerAnalyzer::classifyValueTypeClasses(const Program& program) {
     for (const auto& stmt : program.statements) {
         auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get());
         if (!cls) continue;
-        // Two independent routes into the SAME valueTypeClasses_ set: the
-        // pre-existing structural inference (a class declaring the full
-        // operator*/operator++/operator!= iterator protocol -- the Iterator
-        // case) OR an explicit `struct` declaration (ClassDeclaration::
-        // isValueType, set at parse time -- see class_declaration's grammar.js
-        // comment for why this needs to be an explicit opt-in, not inferred
-        // from "all fields are primitives"). Every existing isValueTypeClass-
-        // gated call site (local/field declarations, parameter passing, and
-        // now also AstEmitter's vector-element codegen) picks up a `struct`
-        // class for free via this one shared set -- no other change needed
-        // for those existing sites.
+        // Two routes into valueTypeClasses_: structural inference (a class with the iterator protocol operator*/operator++/operator!=) or an explicit `struct`
+        // (ClassDeclaration::isValueType, set at parse time).
         bool hasStar = false, hasIncrement = false, hasNotEqual = false;
         for (const auto& member : cls->members) {
             auto method = dynamic_cast<const MethodDeclaration*>(member.get());
@@ -2745,14 +2120,8 @@ void SmartPointerAnalyzer::classifyValueTypeClasses(const Program& program) {
             valueTypeClasses_.insert(cls->name);
         }
     }
-    // EXPLORATORY Eigen spike (see library_summary.h's isKnownExternalClassType --
-    // same narrow, hardcoded allow-list, not the general third-party mechanism):
-    // a known-external class has no ClassDeclaration for the loop above to see at
-    // all, so it needs its own explicit route into the SAME valueTypeClasses_ set.
-    // This is what makes `new Eigen::MatrixXd(...)` emit as a bare, unwrapped
-    // constructor call (matching real Eigen's own by-value usage) instead of
-    // being wrapped in a smart pointer meant for CeeLing-owned heap objects.
-    // (Generalised 2026-11-02: every `class` fact of every loaded fact pack, Eigen's and a project's `--facts` pack alike.)
+    // A known-external class has no ClassDeclaration, so it is added to valueTypeClasses_ here; `new Eigen::MatrixXd(...)` then emits as a bare constructor
+    // call. Covers every `class` fact of every loaded fact pack.
     for (const std::string& external : knownExternalClassTypes()) {
         valueTypeClasses_.insert(external);
     }
@@ -2766,21 +2135,12 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnly(
     const Expression* expr, const std::string& paramName, const std::string& currentClass,
     const std::set<std::string>& okCallees) const {
     if (expr == nullptr) return false;
-    // A BARE occurrence of paramName is exactly what asObjectLocalName-style
-    // move detection keys on elsewhere (DanglingChecker) -- `paramName.field`
-    // is a MemberAccess, a completely different expression node, and never
-    // disqualifies on its own (checked by NOT recursing into a MemberAccess's
-    // object here the way visitExpr elsewhere does -- see the caller, which
-    // only calls this on argument/RHS positions, never descends through
-    // MemberAccess itself).
+    // A bare occurrence of paramName is what move detection keys on; `paramName.field` is a MemberAccess and never disqualifies (its object is not recursed into).
     if (auto id = dynamic_cast<const Identifier*>(expr)) {
         return id->name == paramName;
     }
     if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
-        // `paramName == x` / `paramName != x` compares identity (a null check, or two handles to
-        // the same node); it reads the smart pointer and neither consumes nor stores it, exactly
-        // like `!paramName` below. Only a BARE paramName operand is exempted; anything nested in
-        // the other operand is still checked.
+        // `paramName == x` / `!= x` compares identity; it reads the smart pointer without consuming or storing it. Only a bare paramName operand is exempt.
         if (bin->operator_str == "==" || bin->operator_str == "!=") {
             auto isBareParam = [&](const Expression* e) {
                 auto id = dynamic_cast<const Identifier*>(e);
@@ -2796,15 +2156,7 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnly(
                paramUseDisqualifiesReadOnly(bin->right.get(), paramName, currentClass, okCallees);
     }
     if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
-        // `!paramName` (falsy/null check, e.g. `if (!node) { ... }`) reads,
-        // does not consume -- explicitly non-disqualifying even when the
-        // operand IS the bare parameter itself (unlike every other position,
-        // where a bare paramName identifier disqualifies). A NESTED use inside
-        // the operand still needs checking (e.g. `!node.child` -- though that's
-        // a MemberAccess, already non-disqualifying on its own), so this still
-        // recurses rather than returning false unconditionally; the fix is
-        // narrowly that `!paramName` itself must not match the bare-identifier
-        // rule the way `un->operand.get()` being paramName directly would.
+        // `!paramName` (null check) reads and does not consume. A nested use inside the operand is still checked.
         if (un->operator_str == "!") {
             auto operandId = dynamic_cast<const Identifier*>(un->operand.get());
             if (operandId != nullptr && operandId->name == paramName) return false;
@@ -2812,25 +2164,9 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnly(
         return paramUseDisqualifiesReadOnly(un->operand.get(), paramName, currentClass, okCallees);
     }
     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
-        // A bare paramName passed as a CALL ARGUMENT disqualifies UNLESS the
-        // callee's OWN parameter at that position is already known read-only
-        // (`okCallees` -- a fixed point over ALL free functions AND methods,
-        // mirroring inferAliasReturningMethods's own established algorithm
-        // shape; see classifyReadOnlyFreeFunctionParams for the round-by-round
-        // driver). Motivated by a real, confirmed gap: yaml-cling's
-        // `operator<<(ostream out, Node node) { out << Dump(node); return
-        // out; }` passes `node` bare into `Dump(node)` -- without this,
-        // `operator<<`'s OWN parameter was wrongly disqualified even though
-        // Dump only ever reads its parameter's fields, causing `std::cout <<
-        // someNode;` to fail to compile (a shared_ptr couldn't bind to
-        // operator<<'s unique_ptr parameter). `!call->callee` covers BOTH a
-        // free-function call AND a same-class IMPLICIT-this method call
-        // (`parseBlockMapInto(target, ...)` inside another Parser method --
-        // indistinguishable from a free call at this AST shape); when
-        // `currentClass` is non-empty, the method-scoped key is tried FIRST
-        // (a same-class bare call always resolves to a sibling method, never
-        // an unrelated free function of the same name), falling back to the
-        // free-function key otherwise.
+        // A bare paramName passed as a call argument disqualifies unless the callee's parameter at that position is already read-only (`okCallees`, a fixed
+        // point over free functions and methods). `!call->callee` covers a free call and an implicit-this method call; with `currentClass` set the method key is
+        // tried first (a same-class bare call resolves to a sibling method), then the free-function key.
         for (size_t i = 0; i < call->arguments.size(); ++i) {
             auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
             if (argId != nullptr && argId->name == paramName && !call->callee) {
@@ -2848,10 +2184,7 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnly(
         }
         if (call->callee) {
             if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
-                // The RECEIVER of a method call, e.g. `paramName.method()` --
-                // bare paramName as receiver is a read (dispatch), not a move;
-                // only descend into a nested receiver expression, never treat
-                // the immediate Identifier receiver itself as disqualifying.
+                // Bare paramName as the receiver of a method call is a read, not a move; only a nested receiver expression is descended into.
                 if (auto recvMember = dynamic_cast<const MemberAccess*>(member->object.get())) {
                     return paramUseDisqualifiesReadOnly(recvMember, paramName, currentClass, okCallees);
                 }
@@ -2859,27 +2192,13 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnly(
         }
         return false;
     }
-    // MemberAccess (paramName.field), SubscriptExpression, NewExpression,
-    // literals: never disqualifying on their own -- MemberAccess's own
-    // `.object` is deliberately NOT recursed into (that's exactly the
-    // read-only access this classification exists to allow).
+    // MemberAccess, SubscriptExpression, NewExpression and literals never disqualify on their own (a MemberAccess's object is not recursed into: that is the read-only access).
     return false;
 }
 
 void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& program) {
-    // A parameter that is simply NEVER USED at all (e.g. an empty-bodied
-    // `void sink(Node n) {}`) has zero disqualifying uses by construction --
-    // but "no evidence it's consumed" is not the same claim as "read-only",
-    // and treating it as read-only would be a real regression (confirmed:
-    // it silently broke `sink(a)`'s ordinary move semantics in
-    // tests/safety/move_then_use.clg, which relies on an unused parameter
-    // still consuming its argument, matching every other CeeLing function).
-    // Requiring at least one GENUINE read of `paramName.field` (or a falsy/
-    // non-null check on the bare parameter) before granting read-only status
-    // keeps the classification positive evidence-based, matching the design notes'
-    // "ambiguous -> conservative reject" spirit: no read at all is exactly as
-    // ambiguous as a disqualifying use, so it defaults to the ordinary
-    // move-by-value behavior instead.
+    // A parameter never used has no disqualifying use, but that is not evidence of read-only, and treating it so would break the ordinary move of its argument.
+    // At least one genuine read of `paramName.field` (or a null check on the bare parameter) is required.
     std::function<bool(const Expression*, const std::string&, const std::string&, const std::set<std::string>&)>
         exprHasGenuineRead = [&](const Expression* expr, const std::string& paramName,
                                   const std::string& currentClass, const std::set<std::string>& okCallees) -> bool {
@@ -2890,18 +2209,7 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
             }
             return exprHasGenuineRead(member->object.get(), paramName, currentClass, okCallees);
         }
-        // `paramName[index]` (yaml-cpp-style operator[] read, e.g.
-        // `target["k"]`/`target[i]`) is exactly as genuine a read as
-        // `paramName.field` -- confirmed as a real gap via yaml-cling's own
-        // Parser::parseBlockMapInto, whose ONLY touch of its `target`
-        // parameter is `target[key]` (never a bare `.field` access); without
-        // this, that method's parameter never satisfied the genuine-read
-        // requirement despite being read-only in every other sense, which in
-        // turn meant callers of parseBlockMapInto never saw it as an
-        // okCallee, so `parseValueInto`'s OWN target parameter (which passes
-        // its argument bare into parseBlockMapInto) was wrongly disqualified
-        // too, cascading all the way up to `Parser::parseDocument`'s `root`
-        // showing as moved-from.
+        // `paramName[index]` is as genuine a read as `paramName.field`.
         if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
             if (auto id = dynamic_cast<const Identifier*>(sub->object.get())) {
                 if (id->name == paramName) return true;
@@ -2927,17 +2235,7 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
                    exprHasGenuineRead(bin->right.get(), paramName, currentClass, okCallees);
         }
         if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
-            // A bare paramName passed to an already-read-only-AND-genuinely-
-            // read callee parameter (okCallees) counts as a genuine read HERE
-            // too, not just a non-disqualifying use -- mirrors
-            // paramUseDisqualifiesReadOnly's okCallees exception. Confirmed
-            // necessary via a real gap: `Dump(node) { return
-            // emitNode(node,...); }` never touches `node.field` directly
-            // itself (only emitNode does), so without this, Dump would pass
-            // the DISQUALIFICATION check (not disqualified) but fail the
-            // GENUINE-READ requirement, staying un-classified forever despite
-            // being exactly as read-only as emitNode itself. Method-scoped
-            // key tried first, same reasoning as paramUseDisqualifiesReadOnly.
+            // A bare paramName passed to an already read-only callee parameter (okCallees) counts as a genuine read too, mirroring paramUseDisqualifiesReadOnly. Method-scoped key first.
             for (size_t i = 0; i < call->arguments.size(); ++i) {
                 auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
                 if (argId != nullptr && argId->name == paramName && !call->callee) {
@@ -2994,14 +2292,8 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
         return false;
     };
 
-    // Every disqualifying-use CHECK (see paramUseDisqualifiesReadOnly) walks a
-    // statement body looking for any use of paramName that would require it to
-    // be consumed. A statement-level walk (not just returns, unlike
-    // inferAliasReturningFreeFunctions) since a disqualifying use can be a
-    // plain assignment or bare call argument anywhere in the body, not only in
-    // a `return`. Threads `okCallees` through (see paramUseDisqualifiesReadOnly's
-    // own comment) so a fixed-point round can re-check with a growing set of
-    // already-classified read-only callees.
+    // Statement-level walk over a body for any use of paramName that would require it to be consumed (it can be an assignment or call argument, not only a
+    // return). `okCallees` lets a fixed-point round re-check with a growing set of read-only callees.
     std::function<bool(const std::vector<StatementPtr>&, const std::string&, const std::string&,
                         const std::set<std::string>&)>
         bodyDisqualifies = [&](const std::vector<StatementPtr>& body, const std::string& paramName,
@@ -3056,35 +2348,15 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
         return false;
     };
 
-    // Fixed-point over ALL free functions AND class methods (mirrors
-    // inferAliasReturningMethods's established shape): a function/method
-    // passing paramName bare into ANOTHER function/method's already-read-only
-    // parameter is itself still read-only (see paramUseDisqualifiesReadOnly's
-    // FunctionCall handling) -- but that target might not be classified until
-    // a LATER round (e.g. `operator<<` depends on `Dump`, which is a
-    // completely ordinary function classified on round 1; `operator<<` itself
-    // then only classifies correctly on round 2, once `okCallees` contains
-    // "Dump::0"). Bounded by the number of functions+methods (each round must
-    // classify at least one new pair to continue, same termination argument
-    // as every other fixed point in this file). Methods were added for RB18
-    // (yaml_parser.clg's Parser::parseValueInto/parseBlockMapInto/
-    // parseBlockSeqInto mutate their `target` parameter in place across a
-    // MUTUALLY RECURSIVE set of same-class methods -- exactly the
-    // free-function walker shape this mechanism was built for, just one
-    // level down inside a class -- confirmed as a real gap via the actual
-    // yaml-cling parser, not a hypothetical).
+    // Fixed point over all free functions and class methods: a function passing paramName bare into another's already read-only parameter is itself read-only,
+    // but the target may only be classified on a later round. Bounded by the number of functions and methods, since each round must classify a new pair.
     std::set<std::string> classified;         // "fnName::paramName", free functions
     std::set<std::string> classifiedMethods;  // "ClassName::methodName::paramName"
     bool changed = true;
     while (changed) {
         changed = false;
-        // okCallees: "fnName::argIndex" for a read-only free-function param,
-        // "ClassName::methodName::argIndex" for a read-only method param --
-        // built fresh each round from `classified`/`classifiedMethods` +
-        // each function/method's own parameter list, so a newly-classified
-        // callee becomes visible starting next round (not the same round it
-        // was itself classified in, keeping the iteration simple and
-        // monotonic).
+        // okCallees: "fnName::argIndex" for a read-only free-function parameter, "ClassName::methodName::argIndex" for a method parameter. Built each round from the
+        // classified sets, so a newly classified callee is visible from the next round.
         std::set<std::string> okCallees;
         for (const auto& stmt : program.statements) {
             if (auto fn2 = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
@@ -3114,9 +2386,7 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
                     const std::string classifiedKey = fn->name + "::" + pname;
                     if (classified.count(classifiedKey) > 0) continue;  // already decided
 
-                    // Only object-typed parameters are ever a move-vs-share question --
-                    // a primitive/string/container parameter is never smart-pointer-
-                    // backed in the first place, so read-only-ness is moot for it.
+                    // Only object-typed parameters are a move-vs-share question.
                     bool isClassType = false;
                     for (const auto& s2 : program.statements) {
                         if (auto cls = dynamic_cast<const ClassDeclaration*>(s2.get())) {
@@ -3133,15 +2403,7 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
             } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
                 for (const auto& member : cls->members) {
                     auto method = dynamic_cast<const MethodDeclaration*>(member.get());
-                    // A specialization is excluded -- classifiedKey below is
-                    // keyed by BARE method name (no specializationKey), so a
-                    // specialization's own param-read pattern could
-                    // classify (or fail to classify) the SAME key as its
-                    // primary based on unrelated body content. The
-                    // specialization's out-parameter is already correctly
-                    // handled by its own dedicated mechanism (DanglingChecker/
-                    // AstEmitter's outParamIndex_), which this pass has no
-                    // role in.
+                    // Specializations are excluded: classifiedKey is keyed by bare method name, and a specialization's out-parameter has its own mechanism (outParamIndex_).
                     if (method == nullptr || !method->specializationArg.empty()) continue;
                     for (const auto& [ptype, pname] : method->parameters) {
                         const std::string classifiedKey = cls->name + "::" + method->name + "::" + pname;
@@ -3171,10 +2433,7 @@ void SmartPointerAnalyzer::classifyReadOnlyFreeFunctionParams(const Program& pro
     for (const auto& key : classifiedMethods) {
         readOnlyMethodParams_.insert(key);
     }
-    // Dual-register under the qualified name too -- see collectCalleeParams's
-    // matching comment; isReadOnlyFreeFunctionParam is queried with whatever
-    // spelling the CALL SITE used (call->function_name), which is qualified
-    // from outside the namespace.
+    // Also register under the qualified name; isReadOnlyFreeFunctionParam is queried with the call site's spelling, qualified from outside the namespace.
     for (const auto& stmt : program.statements) {
         auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get());
         if (fn == nullptr || fn->namespaceName.empty()) continue;
@@ -3204,15 +2463,8 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnlyContainer(
     const Expression* expr, const std::string& paramName, const std::string& currentClass,
     const std::set<std::string>& okContainerCallees) const {
     if (expr == nullptr) return false;
-    // A bare occurrence of paramName disqualifies UNLESS the immediate
-    // context (subscript read, .size() receiver, range-for container, or an
-    // already-read-only callee argument) recognizes and clears it below --
-    // this function is only ever called on positions that are NOT one of
-    // those recognized contexts (see the callers: assignment RHS/target,
-    // return, call arguments other than the recognized bare-to-read-only-
-    // callee case, binary/unary operands), matching how
-    // paramUseDisqualifiesReadOnly treats a bare Identifier as always
-    // disqualifying in the positions IT is called from.
+    // A bare occurrence of paramName disqualifies unless its context (subscript read, .size() receiver, range-for container, read-only callee argument) clears it
+    // earlier; this function is only called on positions that are not such a context.
     if (auto id = dynamic_cast<const Identifier*>(expr)) {
         return id->name == paramName;
     }
@@ -3224,12 +2476,7 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnlyContainer(
         return paramUseDisqualifiesReadOnlyContainer(un->operand.get(), paramName, currentClass, okContainerCallees);
     }
     if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
-        // A subscript READ (`paramName[i]` used as a value) never
-        // disqualifies -- the caller only descends into a subscript's INDEX
-        // expression here (see bodyDisqualifiesContainer's AssignmentStatement
-        // target handling, which checks a subscript TARGET separately and
-        // never reaches this branch for `paramName[i] = x`). Still recurse
-        // into a nested object (`m[paramName[i]]`) and the index itself.
+        // A subscript read (`paramName[i]` as a value) never disqualifies; only a nested object and the index are descended into. A subscript target is handled by the caller.
         if (auto id = dynamic_cast<const Identifier*>(sub->object.get()); id != nullptr && id->name == paramName) {
             return paramUseDisqualifiesReadOnlyContainer(sub->index.get(), paramName, currentClass,
                                                           okContainerCallees);
@@ -3244,45 +2491,20 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnlyContainer(
             if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
                 if (auto recvId = dynamic_cast<const Identifier*>(member->object.get());
                     recvId != nullptr && recvId->name == paramName) {
-                    // `.size()` is a genuine read, never disqualifying.
-                    // Every other method on a container in CeeLing's
-                    // allow-list (isKnownVectorMethod) either mutates
-                    // (push_back/pop_back/resize -- disqualify unconditionally,
-                    // even called on a body-local copy of paramName's contents
-                    // makes no sense since paramName IS the receiver here) or
-                    // is begin()/end() (an iterator can outlive a reallocation
-                    // -- see guide chapter 13, threat #4 -- so treated conservatively
-                    // as disqualifying too, not modeled as a form of read).
-                    // `reserve` falls in here too (not modeled as a read) --
-                    // conservative, not a safety requirement (it changes
-                    // neither size() nor any element), just not yet worth a
-                    // dedicated case since nothing calls reserve() on a
-                    // parameter it also wants classified read-only.
+                    // `.size()` is a genuine read. Every other method on a container either mutates (push_back/pop_back/resize), or is begin()/end() (an iterator can outlive a
+                    // reallocation), so it disqualifies. `reserve` is treated the same way, conservatively.
                     if (member->member == "size") return false;
                     return true;
                 }
-                // A nested receiver (`paramName.field.method()`) is a
-                // MemberAccess object -- not descended into here, matching
-                // paramUseDisqualifiesReadOnly's own MemberAccess handling:
-                // reading a field through paramName never disqualifies.
+                // A nested receiver (`paramName.field.method()`) is not descended into: reading a field through paramName never disqualifies.
             }
         }
         for (size_t i = 0; i < call->arguments.size(); ++i) {
             auto argId = dynamic_cast<const Identifier*>(call->arguments[i].get());
             if (argId != nullptr && argId->name == paramName && !call->callee) {
-                // Bare paramName passed to a free function/method's own
-                // parameter at this position -- OK if that target parameter
-                // is itself already known read-only-container (fixed point,
-                // same key shapes as classifyReadOnlyContainerParams builds)
-                // OR an ext_fn `ref` parameter (externRefParams_ is
-                // DanglingChecker's, not this analyzer's -- ext_fn calls are
-                // always free functions with no receiver, recognized here by
-                // name never colliding with a CeeLing-authored function,
-                // matched via the same "fnName::argIndex" key
-                // classifyReadOnlyContainerParams uses for ordinary free
-                // functions, since an ext_fn's `refParams` are registered
-                // into that SAME free-function parameter list at parse time
-                // -- see ExternFunctionDeclaration in ast.h).
+                // Bare paramName passed to a function's parameter at this position is fine if that parameter is already read-only-container (fixed point, same keys as
+                // classifyReadOnlyContainerParams) or an ext_fn `ref` parameter (ext_fn refParams are registered into the same free-function parameter list at parse
+                // time, see ExternFunctionDeclaration in ast.h).
                 const std::string methodKey =
                     currentClass + "::" + call->function_name + "::" + std::to_string(i);
                 const std::string freeKey = call->function_name + "::" + std::to_string(i);
@@ -3298,26 +2520,13 @@ bool SmartPointerAnalyzer::paramUseDisqualifiesReadOnlyContainer(
         }
         return false;
     }
-    // MemberAccess (paramName.field -- not a container-typed field access
-    // question this pass handles), NewExpression, literals: never
-    // disqualifying on their own.
+    // MemberAccess, NewExpression and literals never disqualify on their own.
     return false;
 }
 
 void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& program) {
-    // Genuine-read evidence, mirroring classifyReadOnlyFreeFunctionParams's
-    // own positive-evidence requirement (see that function's header comment
-    // for why an unused parameter must NOT classify as read-only): a
-    // subscript READ, `.size()`, or being the container of a range-for.
-    // `okContainerCallees`/`currentClass` are threaded through so a bare
-    // paramName passed to an ALREADY-classified-read-only-container callee
-    // parameter counts as a genuine read here too, not merely a
-    // non-disqualifying use -- mirrors the object-typed rule's own
-    // FunctionCall case in classifyReadOnlyFreeFunctionParams (needed for
-    // the identical reason: `sumTwice(data) { return sumAll(data) + 0; }`
-    // never touches `data.field`/`data[i]` itself, only sumAll does, so
-    // without this sumTwice would fail the genuine-read requirement forever
-    // despite being exactly as read-only as sumAll).
+    // Genuine-read evidence, as in classifyReadOnlyFreeFunctionParams (an unused parameter must not classify as read-only): a subscript read, `.size()`, or being the
+    // container of a range-for. A bare paramName passed to an already read-only-container callee parameter counts as a read too.
     std::function<bool(const Expression*, const std::string&, const std::string&, const std::set<std::string>&)>
         exprHasGenuineReadContainer = [&](const Expression* expr, const std::string& paramName,
                                           const std::string& currentClass,
@@ -3406,12 +2615,7 @@ void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& progra
                 }
                 if (bodyHasGenuineRead(whiles->body, paramName, currentClass, okContainerCallees)) return true;
             } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
-                // The container of a range-for IS the genuine read itself
-                // (`for (x : paramName)`) -- a bare-identifier container,
-                // unlike every other position, is the evidence, not a
-                // disqualification (checked by NOT calling
-                // paramUseDisqualifiesReadOnlyContainer on fors->container
-                // in bodyDisqualifiesContainer below either).
+                // The container of a range-for is the genuine read itself (`for (x : paramName)`), not a disqualification.
                 if (auto id = dynamic_cast<const Identifier*>(fors->container.get());
                     id != nullptr && id->name == paramName) {
                     return true;
@@ -3441,21 +2645,13 @@ void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& progra
         for (const auto& stmtPtr : body) {
             const Statement* stmt = stmtPtr.get();
             if (auto ret = dynamic_cast<const ReturnStatement*>(stmt)) {
-                // Returning paramName itself (bare identifier) hands the
-                // container out past the call -- disqualifies exactly like
-                // any other escape. paramUseDisqualifiesReadOnlyContainer's
-                // bare-Identifier base case already covers this.
+                // Returning paramName itself hands the container out past the call, which disqualifies like any escape.
                 if (paramUseDisqualifiesReadOnlyContainer(ret->expression.get(), paramName, currentClass,
                                                            okContainerCallees)) {
                     return true;
                 }
             } else if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
-                // `Foo x = paramName;` (or `= paramName[i]`, which is fine --
-                // paramUseDisqualifiesReadOnlyContainer's subscript-read
-                // handling only recognizes paramName as an OBJECT/INDEX
-                // position, and a bare paramName RHS still hits the
-                // bare-Identifier base case) copies/moves the whole
-                // container out -- disqualifies.
+                // `Foo x = paramName;` copies or moves the whole container out, which disqualifies (`= paramName[i]` is a read and is fine).
                 if (paramUseDisqualifiesReadOnlyContainer(decl->expression.get(), paramName, currentClass,
                                                            okContainerCallees)) {
                     return true;
@@ -3466,12 +2662,7 @@ void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& progra
                     return true;
                 }
                 if (assign->target != nullptr) {
-                    // `paramName[i] = x;` (SubscriptExpression target) is a
-                    // WRITE -- disqualifies even though a subscript READ does
-                    // not. Checked directly here (not via
-                    // paramUseDisqualifiesReadOnlyContainer, whose subscript
-                    // handling is read-shaped) since this is the one position
-                    // a subscript's meaning flips.
+                    // `paramName[i] = x;` is a write and disqualifies, unlike a subscript read.
                     if (auto sub = dynamic_cast<const SubscriptExpression*>(assign->target.get())) {
                         if (auto id = dynamic_cast<const Identifier*>(sub->object.get());
                             id != nullptr && id->name == paramName) {
@@ -3483,11 +2674,7 @@ void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& progra
                         return true;
                     }
                 } else if (assign->variable == paramName) {
-                    // Reassigning the parameter itself (`paramName = other;`,
-                    // no ->target, bare-name LHS) discards the caller's
-                    // container entirely -- disqualifies. (A plain read-only
-                    // container param is never itself the LHS in any
-                    // legitimate read-only use.)
+                    // Reassigning the parameter itself (`paramName = other;`) discards the caller's container and disqualifies.
                     return true;
                 }
             } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
@@ -3513,11 +2700,7 @@ void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& progra
                     return true;
                 }
             } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
-                // The range-for's OWN container position is the genuine-read
-                // case (see bodyHasGenuineRead) -- do not disqualify a bare
-                // paramName container here, only a more complex expression's
-                // sub-parts (e.g. `for (x : paramName.field)`, unaffected
-                // either way since MemberAccess never disqualifies).
+                // The range-for's own container position is the genuine-read case; do not disqualify a bare paramName there.
                 bool bareContainer = false;
                 if (auto id = dynamic_cast<const Identifier*>(fors->container.get());
                     id != nullptr && id->name == paramName) {
@@ -3543,12 +2726,7 @@ void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& progra
         return false;
     };
 
-    // Seed with every ext_fn's `ref` container parameters -- static facts,
-    // not part of the fixed point (an ext_fn has no body to classify FROM,
-    // its ref-ness is hand-declared). Registered under the plain
-    // "fnName::argIndex" key, the same shape an ordinary free function's
-    // entry uses, since an ext_fn IS a free function as far as a caller's
-    // bare-argument-passed-onward check is concerned.
+    // Seed with every ext_fn `ref` container parameter (hand-declared, so not part of the fixed point), under the same "fnName::argIndex" key as an ordinary free function.
     std::set<std::string> extFnRefCallees;
     for (const auto& stmt : program.statements) {
         auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt.get());
@@ -3560,8 +2738,7 @@ void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& progra
         }
     }
 
-    // Fixed point, mirroring classifyReadOnlyFreeFunctionParams's own driver
-    // shape exactly (see its header comment for the termination argument).
+    // Fixed point, same driver shape as classifyReadOnlyFreeFunctionParams.
     std::set<std::string> classified;         // "fnName::paramName"
     std::set<std::string> classifiedMethods;  // "ClassName::methodName::paramName"
     bool changed = true;
@@ -3596,9 +2773,7 @@ void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& progra
                 for (const auto& [ptype, pname] : fn->parameters) {
                     const std::string classifiedKey = fn->name + "::" + pname;
                     if (classified.count(classifiedKey) > 0) continue;
-                    // v1 scope: std::vector<primitive> only (matches ext_fn
-                    // `ref`'s own container restriction -- no ownership/
-                    // aliasing ambiguity a primitive element could introduce).
+                    // v1 scope: std::vector<primitive> only (as ext_fn `ref`).
                     if (!isVectorType(ptype) || !isPrimitiveType(vectorElementType(ptype))) continue;
                     if (!bodyDisqualifiesContainer(fn->body, pname, "", okContainerCallees) &&
                         bodyHasGenuineRead(fn->body, pname, "", okContainerCallees)) {
@@ -3631,8 +2806,7 @@ void SmartPointerAnalyzer::classifyReadOnlyContainerParams(const Program& progra
     for (const auto& key : classifiedMethods) {
         readOnlyMethodContainerParams_.insert(key);
     }
-    // Dual-register under the qualified name too, same reasoning as
-    // classifyReadOnlyFreeFunctionParams's own trailing block.
+    // Also register under the qualified name, as in classifyReadOnlyFreeFunctionParams.
     for (const auto& stmt : program.statements) {
         auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get());
         if (fn == nullptr || fn->namespaceName.empty()) continue;
@@ -3675,22 +2849,14 @@ bool SmartPointerAnalyzer::exprReferencesName(const Expression* expr, const std:
         return false;
     }
     if (dynamic_cast<const ClosureExpression*>(expr) != nullptr) {
-        // A closure captures by NAME (see ClosureExpression::captures), not
-        // by reference -- but bodyIsLastUseFieldAssignment treats a closure
-        // ANYWHERE as an unconditional "give up" (see its own doc comment),
-        // so this never needs to inspect the capture list: any
-        // ClosureExpression reachable from a statement after the candidate
-        // assignment already disqualifies the whole function, whether or
-        // not it happens to capture `name`.
+        // Any closure after the candidate assignment already disqualifies the function (bodyIsLastUseFieldAssignment gives up on closures), so the capture list is never inspected.
         return true;
     }
-    // Number/StringLiteral/CharLiteral/ThisExpression/ScopedIdentifier: none
-    // can reference a bare local/parameter name.
+    // Number/StringLiteral/CharLiteral/ThisExpression/ScopedIdentifier cannot reference a bare local or parameter name.
     return false;
 }
 
-// See the header comment for the exact scope (straight-line bodies only,
-// exactly one candidate assignment, no closures anywhere).
+// See the header comment for the scope (straight-line bodies only, exactly one candidate assignment, no closures).
 bool SmartPointerAnalyzer::bodyIsLastUseFieldAssignment(const std::vector<StatementPtr>& body,
                                                           const std::string& paramName) const {
     int candidateIndex = -1;
@@ -3703,20 +2869,8 @@ bool SmartPointerAnalyzer::bodyIsLastUseFieldAssignment(const std::vector<Statem
             return false;
         }
         if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
-            // The candidate shape: a bare-name target (`fieldName = ...;`,
-            // target == null -- see AssignmentStatement's own comment;
-            // whether that name is actually a FIELD, as opposed to a plain
-            // local variable, is deliberately NOT checked here -- see this
-            // function's own header comment for why that's the emitter's
-            // job, not this classification's) whose target name differs
-            // from paramName itself (excludes the degenerate `bytes =
-            // bytes;`) and whose RHS is exactly the bare identifier
-            // `paramName`. Any other shape (a member-access target like
-            // `this->x = paramName;`/`a.b = paramName;`, or any RHS other
-            // than a bare identifier) is NOT a candidate -- it still needs
-            // the containment check below, same as any other statement,
-            // since it may well reference paramName without being the one
-            // assignment we're allowed to move at.
+            // The candidate: a bare-name target (whether it is really a field is the emitter's job) other than paramName itself, with the RHS exactly the bare identifier
+            // `paramName`. Any other shape still goes through the containment check below, since it may reference paramName without being the assignment we may move at.
             const bool targetIsBareNameOtherThanParam =
                 assign->target == nullptr && assign->variable != paramName;
             auto rhsId = dynamic_cast<const Identifier*>(assign->expression.get());
@@ -3725,10 +2879,7 @@ bool SmartPointerAnalyzer::bodyIsLastUseFieldAssignment(const std::vector<Statem
                 candidateIndex = static_cast<int>(i);
                 continue;  // the assignment's own RHS use doesn't disqualify itself
             }
-            // Not the candidate shape -- still check both target and RHS
-            // for an ordinary reference (e.g. `x = paramName + 1;` uses
-            // paramName without being movable, and must still disqualify a
-            // LATER candidate the same as any other use).
+            // Not the candidate shape: still check target and RHS for an ordinary reference (`x = paramName + 1;` is a use that disqualifies a later candidate).
             if (exprReferencesName(assign->target.get(), paramName) ||
                 exprReferencesName(assign->expression.get(), paramName)) {
                 if (candidateIndex != -1) return false;  // used again after the candidate
@@ -3751,11 +2902,7 @@ bool SmartPointerAnalyzer::bodyIsLastUseFieldAssignment(const std::vector<Statem
             if (exprReferencesName(th->expression.get(), paramName) && candidateIndex != -1) return false;
             continue;
         }
-        // Any other statement kind this v1 doesn't specifically recognize
-        // (ContainerDeclaration, nested class/function declarations, ...)
-        // is conservatively treated as an unconditional "give up" -- matching
-        // the same discipline the if/while/for/try check above already
-        // applies structurally.
+        // Any other statement kind is treated as "give up", like the if/while/for/try check above.
         return false;
     }
     return candidateIndex != -1;
@@ -3800,10 +2947,7 @@ bool SmartPointerAnalyzer::bodyHasImpurity(const std::vector<StatementPtr>& body
                                             std::set<std::string> localNames,
                                             const std::set<std::string>& pureSoFar,
                                             const std::set<std::string>& primitiveFieldNames) const {
-    // Does a bare identifier name a LOCAL this body itself declared (via
-    // VariableDeclaration)? Mutating a body-local is fine -- it cannot alias
-    // anything the caller can see, since CeeLing has no way to hand out a
-    // reference to a local (no `ref` params, closures capture by value).
+    // Is this a local declared in the body? Mutating a body-local is fine: nothing can hand out a reference to a local.
     auto isLocal = [&](const std::string& name) { return localNames.count(name) > 0; };
 
     std::function<bool(const Expression*)> callIsImpure = [&](const Expression* expr) -> bool {
@@ -3816,37 +2960,20 @@ bool SmartPointerAnalyzer::bodyHasImpurity(const std::vector<StatementPtr>& body
             auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
             if (member != nullptr) {
                 auto recvId = dynamic_cast<const Identifier*>(member->object.get());
-                // A mutating container method (push_back/pop_back/resize) on
-                // anything but a body-local container is an impurity: it can
-                // reallocate/destroy elements of a container the CALLER can
-                // still see (its own local, a field reached through `this`,
-                // or a container reached through a parameter).
+                // A mutating container method on anything but a body-local container is an impurity: the caller can still see that container.
                 if (vectorMethodInvalidatesReferences(member->member)) {
                     if (recvId == nullptr || !isLocal(recvId->name)) return true;
                     return false;
                 }
-                // A call on a receiver that is itself a non-local object
-                // (`obj.method()`, `field.method()`) -- conservatively
-                // impure unless the receiver's class is known and that
-                // SPECIFIC method is already classified heap-pure. A bare
-                // receiver Identifier that IS local recurses no further (its
-                // own body was already checked when IT was classified).
+                // A call on a non-local receiver (`obj.method()`, `field.method()`) is impure unless the receiver's class is known and that method is already heap-pure. A local
+                // bare receiver needs no more checking.
                 if (recvId != nullptr && isLocal(recvId->name)) return false;
-                // this-implicit or field/chained receiver: resolve via
-                // classFields_ is out of scope for a purely structural,
-                // Program-only pass (no type resolution here) -- treat
-                // conservatively as impure. This only affects the RECEIVER
-                // case (`x.foo()`); a same-class implicit-this call
-                // (`foo()`, call->callee null) is handled below instead.
+                // A this-implicit, field or chained receiver cannot be resolved in this structural pass, so it is impure. A same-class implicit-this call is handled below.
                 return true;
             }
             return true;  // unrecognized callee shape: conservatively impure
         }
-        // Implicit-this method call or free-function call
-        // (`foo(...)`/`this.foo(...)` -- call->callee is null either way,
-        // matching every other pass in this file's own established
-        // disambiguation comment). Pure only if already classified pure this
-        // round (fixed point) -- method-scoped key tried first.
+        // Implicit-this method call or free-function call (callee is null either way): pure only if already classified pure this round; method-scoped key first.
         const std::string methodKey = currentClass + "::" + call->function_name;
         const std::string freeKey = call->function_name;
         if ((!currentClass.empty() && pureSoFar.count(methodKey) > 0) || pureSoFar.count(freeKey) > 0) {
@@ -3865,9 +2992,7 @@ bool SmartPointerAnalyzer::bodyHasImpurity(const std::vector<StatementPtr>& body
         } else if (auto assign = dynamic_cast<const AssignmentStatement*>(stmt)) {
             if (callIsImpure(assign->expression.get())) return true;
             if (assign->target != nullptr) {
-                // `x.field = ...` / `x[i] = ...` -- impure unless `x` is a
-                // body-local (see isLocal's own reasoning: a local's storage
-                // is never visible to the caller).
+                // `x.field = ...` / `x[i] = ...` is impure unless `x` is a body-local.
                 const Expression* root = assign->target.get();
                 std::string rootName;
                 if (auto mem = dynamic_cast<const MemberAccess*>(root)) {
@@ -3876,28 +3001,12 @@ bool SmartPointerAnalyzer::bodyHasImpurity(const std::vector<StatementPtr>& body
                     if (auto id = dynamic_cast<const Identifier*>(sub->object.get())) rootName = id->name;
                 }
                 if (rootName.empty() || !isLocal(rootName)) {
-                    // `this->field = ...` has no bare-identifier root (member
-                    // object is a ThisExpression, not an Identifier) --
-                    // rootName stays empty, correctly falling into "impure"
-                    // (assigning through `this` is never a body-local).
+                    // `this->field = ...` has no bare-identifier root, so it is impure (assigning through `this` is never a body-local).
                     return true;
                 }
             } else if (!isLocal(assign->variable) && primitiveFieldNames.count(assign->variable) == 0) {
-                // Bare `name = ...` reassigning something NOT declared in
-                // this body and NOT a known-primitive field -- a parameter,
-                // or (CeeLing field writes ARE bare names, e.g. `bitBuffer =
-                // bitBuffer >> n;`, not `this->bitBuffer = ...`) a
-                // non-primitive field. Assigning a NEW object/container to
-                // replace what a parameter used to point at cannot itself
-                // dangle anything (CeeLing's move semantics mean the
-                // caller's own local is already consumed/moved-from by this
-                // point if the parameter were object-typed) -- but it also
-                // means this parameter no longer aliases what the caller
-                // passed in for the REST of the body, which is exactly the
-                // "not heap-pure" question this pass exists to answer
-                // conservatively. Treated as impure to stay conservative;
-                // not a case any of the motivating call sites (deflate/
-                // inflate accumulator fields) actually need to pass.
+                // Bare `name = ...` for something not declared in this body and not a primitive field (a parameter, or a non-primitive field: field writes are bare names)
+                // is impure; this keeps the answer conservative.
                 return true;
             }
         } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
@@ -3925,18 +3034,11 @@ bool SmartPointerAnalyzer::bodyHasImpurity(const std::vector<StatementPtr>& body
 }
 
 void SmartPointerAnalyzer::classifyHeapPureFunctions(const Program& program) {
-    // Opposite monotonic direction from the read-only fixed points above:
-    // starts by assuming every free function/method is pure, then removes
-    // any whose OWN body has an impurity (checked against the current
-    // pureSoFar set, so a function calling an impure one loses purity too)
-    // until nothing changes -- same termination argument (bounded by the
-    // number of functions+methods, each round must remove at least one to
-    // continue).
+    // Opposite direction from the read-only fixed points: start with every function and method pure, and remove any whose own body has an impurity (checked against
+    // the current set, so calling an impure one removes it too) until nothing changes. Each round must remove one, so it terminates.
     std::set<std::string> pureFree;
     std::set<std::string> pureMethods;  // "ClassName::methodName"
-    // Per-class primitive field names -- see bodyHasImpurity's own doc
-    // comment for why a bare-name reassignment needs this (CeeLing field
-    // writes are bare names, not `this->field = ...`).
+    // Per-class primitive field names (a field write is a bare name; see bodyHasImpurity).
     std::map<std::string, std::set<std::string>> primitiveFieldsByClass;
     for (const auto& stmt : program.statements) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
@@ -3987,28 +3089,19 @@ void SmartPointerAnalyzer::classifyHeapPureFunctions(const Program& program) {
     }
 
     heapPureFreeFunctions_ = std::move(pureFree);
-    // Split the combined "ClassName::methodName" keys back into
-    // heapPureMethods_'s own storage (kept in the same combined-key shape
-    // isHeapPureMethod's query already builds, so no split is actually
-    // needed -- store verbatim).
+    // heapPureMethods_ uses the same combined "Class::method" keys as isHeapPureMethod, so store verbatim.
     heapPureMethods_ = std::move(pureMethods);
 }
 
 
-// ---- read-only string parameters ---------------------------------------------------------------------
+// ---- read-only string parameters --------------------------------------------------------------------
 //
-// CeeLing has no reference parameters, so every `string` argument used to be copied on every call -- the
-// whole string, regardless of whether the callee ever changes it. A `string` parameter is READ-ONLY when the
-// body never mutates it: no `p.append/push_back/clear/reserve(...)`, no `p = ...`, no `p[i] = ...`, and it is
-// not handed to an ext_fn `ref string` (a mutable reference). Copying it onward (`x = p`, `f(p)`, `return p`,
-// `out.append(p)`) is just a read. Such a parameter is lowered to `const std::string&`.
+// A `string` parameter is read-only when the body never mutates it: no `p.append/push_back/clear/reserve(...)`, no `p = ...`, no `p[i] = ...`, and it is not
+// handed to an ext_fn `ref string`. Copying it onward is a read. Such a parameter is lowered to `const std::string&`.
 //
-// The one real hazard is aliasing. For a LOCAL or by-value parameter argument nothing the callee does can
-// reach the caller's string, but for a FIELD argument the callee might mutate that very field while it holds
-// a reference to it (or, without the reference, would have been looking at a snapshot). So the emitter passes
-// an explicit copy for a field argument unless the callee provably mutates no field of that name: this pass
-// also computes, per function and method, the set of field names it (transitively) mutates -- a name-based,
-// conservative set, with "*" meaning "may mutate anything" (a call it could not resolve to code it can see).
+// The hazard is aliasing: for a field argument the callee might mutate that very field while holding the reference. So the emitter passes an explicit copy
+// for a field argument unless the callee provably mutates no field of that name. This pass computes, per function and method, the field names it
+// transitively mutates (name-based and conservative; "*" means it may mutate anything, e.g. an unresolved call).
 namespace {
 bool isStringMutatorMethod(const std::string& m) {
     return m == "append" || m == "push_back" || m == "clear" || m == "reserve" || m == "resize" ||
@@ -4160,8 +3253,7 @@ void SmartPointerAnalyzer::classifyReadOnlyStringParams(const Program& program) 
                     visitExpr(call->callee.get());
                     if (auto m = dynamic_cast<const MemberAccess*>(call->callee.get())) {
                         if (isStringMutatorMethod(m->member)) noteMutation(m->object.get());
-                        // a call to a user method of that name (receiver class not resolved here: every class
-                        // that has a method of this name is a candidate)
+                        // a call to a user method of that name (receiver class not resolved here: every class that has a method of this name is a candidate)
                         auto it = methodsByName.find(m->member);
                         if (it != methodsByName.end()) {
                             for (const auto& k : it->second) fa.calls.insert(k);
@@ -4196,8 +3288,7 @@ void SmartPointerAnalyzer::classifyReadOnlyStringParams(const Program& program) 
                         noteMutation(a->target.get());
                     } else if (locals.count(a->variable) > 0) {
                         fa.mutatedParams.insert(a->variable);
-                        // reassigning an object-typed PARAMETER drops the handle the caller passed in, which can
-                        // free the object a field argument lives in
+                        // reassigning an object-typed parameter drops the handle the caller passed in, which can free the object a field argument lives in
                         for (const auto& [ptype2, pname2] : *f.params) {
                             if (pname2 == a->variable && !isPrimitiveType(ptype2)) fa.mutatedFields.insert("*");
                         }
@@ -4237,8 +3328,7 @@ void SmartPointerAnalyzer::classifyReadOnlyStringParams(const Program& program) 
     stringMutatedFieldsByFunction_.clear();
     for (const auto& f : fns) {
         const Facts& fa = facts[f.key];
-        // keyed by the BARE callee name (free function or method): the emitter does not always know the
-        // receiver's class, so a call site unions every function/method of that name
+        // keyed by the bare callee name (free function or method): the emitter does not always know the receiver's class, so a call site unions every function/method of that name
         auto& set = stringMutatedFieldsByFunction_[f.bareName];
         set.insert(fa.mutatedFields.begin(), fa.mutatedFields.end());
         if (f.skipParams) continue;
@@ -4316,11 +3406,7 @@ void SmartPointerAnalyzer::firstPassCollectReferences(const Program& program) {
         }
     }
 
-    // Classes first, in base-before-derived order, so analyzeClassDeclaration can
-    // re-register an inherited field under the derived scope from the base's
-    // already-collected members. Everything else (functions, main) is analyzed
-    // afterward in ordinary input order -- it can only reference classes, never be
-    // referenced by one, so its relative position to the class walk doesn't matter.
+    // Classes first, base before derived, so analyzeClassDeclaration can re-register an inherited field under the derived scope. Functions and main come afterward; they only reference classes.
     for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
         analyzeStatement(*cls);
     }
@@ -4364,19 +3450,9 @@ void SmartPointerAnalyzer::analyzeStatement(const Statement& stmt, const std::st
 
 void SmartPointerAnalyzer::registerParameters(
     const std::vector<std::pair<std::string, std::string>>& params, const std::string& scopeName) {
-    // Give each object-typed parameter a bare variableReferences entry so
-    // getPointerType(className, paramName) has something to find instead of always
-    // missing and falling back to the SHARED default (see AstEmitter::emitFunction).
-    // Deliberately minimal: only registerReference + registerSymbolType, matching
-    // just the identity (scope, class, name) a fresh local gets on first sight.
-    // NOT setting isAssignedFrom/assignedFromVars or any bidirectional/back-reference
-    // bookkeeping here -- those heuristics are tuned around locals and fields observed
-    // via full statement analysis, and wiring a parameter into them was not verified
-    // safe. A parameter that is never itself assigned into a field defaults to
-    // PointerType::UNIQUE from secondPassDeterminePointerTypes' base case, same as a
-    // fresh local would; a parameter that IS stored into a field (e.g. `next = child;`)
-    // still gets promoted to SHARED via scanSource's independent regex pass, which
-    // already covers that case today.
+    // Give each object-typed parameter a bare variableReferences entry so getPointerType(className, paramName) finds something instead of falling back to shared.
+    // Deliberately minimal: only registerReference + registerSymbolType. A parameter never stored into a field defaults to unique, like a fresh local; one that is
+    // stored (`next = child;`) is promoted to shared by scanSource's regex pass.
     for (const auto& [ptype, pname] : params) {
         if (classNames.find(ptype) == classNames.end()) continue;
         registerReference(scopeName, ptype, pname, 0);
@@ -4422,30 +3498,14 @@ void SmartPointerAnalyzer::analyzeAssignmentStatement(const AssignmentStatement&
 void SmartPointerAnalyzer::analyzeClassDeclaration(const ClassDeclaration& cls) {
     classNames.insert(cls.name);
     classRelationships[cls.name].className = cls.name;
-    // Also register the QUALIFIED name (`YAML::Node`): analyzeVariableDeclaration/
-    // registerParameters gate their own registration on `classNames.find(type) !=
-    // end()`, keyed by the literal declared-type STRING (which for a `YAML::Node a;`
-    // local is "YAML::Node", not "Node"). Without this, such a local is silently
-    // never registered as a VariableReference at all -- not "wrongly defaults to
-    // shared", the TRUE getPointerType fallback (confirmed by probe: a plain,
-    // never-shared class correctly gets UNIQUE via the ordinary two-pass decision,
-    // because it IS registered; a namespaced one wasn't, and got the raw fallback
-    // instead, which happens to also be SHARED -- easy to mistake for "no bug" until
-    // move-tracking is checked specifically). classRelationships stays keyed by the
-    // SIMPLE name only (cls.name) -- back-reference/bidirectional detection doesn't
-    // need a second entry, only the classNames gate does.
+    // Also register the qualified name (`YAML::Node`): registration is gated on `classNames.find(type)` with the literal declared-type string, so a namespaced local
+    // would never be registered at all. classRelationships stays keyed by the simple name.
     if (!cls.namespaceName.empty()) {
         classNames.insert(cls.namespaceName + "::" + cls.name);
     }
 
-    // Inherited fields need their own entries under the DERIVED class's scope, not
-    // just the base's: this analyzer keys everything by (scope, class, variable), so
-    // a derived instance's inherited field would otherwise have no entry at all and
-    // getPointerType would fall through to its SHARED default -- silently making
-    // every inherited field a shared_ptr regardless of actual ownership shape.
-    // Unlike the other three modules' flat maps, "flattening" here means re-running
-    // the base's member registration in the derived scope. Base-before-derived
-    // ordering is guaranteed by firstPassCollectReferences's caller.
+    // Inherited fields need entries under the derived class's scope too, or getPointerType falls through to its shared default. This re-runs the base's member
+    // registration in the derived scope; base-before-derived order comes from firstPassCollectReferences's caller.
     if (!cls.baseClass.empty()) {
         if (auto baseIt = classMembersByClass_.find(cls.baseClass);
             baseIt != classMembersByClass_.end()) {
@@ -4782,21 +3842,15 @@ void SmartPointerAnalyzer::secondPassDeterminePointerTypes() {
         std::string reason = "default unique ownership";
 
         const std::string exactMemberKey = makeMemberKey(ref.className, ref.variableName);
-        // A hint is written `//@ptr <kind> EnclosingClass.member`, but ref.className is the FIELD's
-        // type, not its enclosing class: for `Node prev;` inside Node the two coincide, which is
-        // why only that shape ever matched. For `Emitter owner;` inside Listener the key built
-        // above is `Emitter.owner` and a hint for `Listener.owner` could never be found (every
-        // cross-class field silently fell back to the default). Look the enclosing class up too.
+        // A hint is written `//@ptr <kind> EnclosingClass.member`, but ref.className is the field's type, not its enclosing class, so look the enclosing class up too.
         const std::string enclosingMemberKey = makeMemberKey(ref.containingScope, ref.variableName);
         auto explicitIt = explicitHints.find(exactMemberKey);
         if (explicitIt == explicitHints.end()) explicitIt = explicitHints.find(enclosingMemberKey);
         const auto fallbackHintIt = explicitHints.find(ref.variableName);
-        // Hints and back-reference rules are about FIELDS (containing scope is a class). A parameter
-        // or local that merely shares a field's name -- `void link(Item prev, ...)` -- is an ordinary
-        // variable and must not become a weak_ptr because of it.
+        // Hints and back-reference rules are about fields (containing scope is a class). A parameter or local that shares a field's name (`void link(Item prev, ...)`)
+        // is an ordinary variable and must not become a weak_ptr.
         const bool isField = classNames.find(ref.containingScope) != classNames.end();
-        // A hint names a field whenever a field of that name exists; it reaches a local or parameter
-        // only when it does not (`//@ptr shared Node.a` on a local `a`).
+        // A hint names a field whenever a field of that name exists; it reaches a local or parameter only when it does not (`//@ptr shared Node.a` on a local `a`).
         const bool hintReachesThis = isField ||
             (fieldMemberKeys.count(exactMemberKey) == 0 && fieldMemberKeys.count(enclosingMemberKey) == 0 &&
              fieldNames.count(ref.variableName) == 0);
@@ -4888,7 +3942,7 @@ bool SmartPointerAnalyzer::isSharedOwnership(const std::string& containingScope,
 }
 
 void SmartPointerAnalyzer::applyExplicitHints() {
-    // Does `target` (a `Class.member`, `Scope.member` or bare name) name a FIELD of some class?
+    // Does `target` (a `Class.member`, `Scope.member` or bare name) name a field of some class?
     auto hintNamesAField = [&](const std::string& target) {
         for (const auto& [fkey, fref] : variableReferences) {
             if (classNames.find(fref.containingScope) == classNames.end()) continue;
@@ -4904,9 +3958,7 @@ void SmartPointerAnalyzer::applyExplicitHints() {
         for (auto& [key, ref] : variableReferences) {
             const std::string memberKey = makeMemberKey(ref.className, ref.variableName);
             const std::string enclosingKey = makeMemberKey(ref.containingScope, ref.variableName);
-            // A hint names a FIELD. A parameter or local that happens to share the field's name
-            // (`void link(Item prev, ...)` next to a `//@ptr weak Item.prev`) must not inherit it:
-            // fields are the entries whose containing scope is a class.
+            // A hint names a field. A parameter or local that shares the field's name must not inherit it: fields are the entries whose containing scope is a class.
             if (classNames.find(ref.containingScope) == classNames.end() && hintNamesAField(target)) continue;
             if (target == ref.variableName || target == memberKey || target == enclosingKey) {
                 ref.hasExplicitHint = true;

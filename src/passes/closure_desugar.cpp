@@ -12,13 +12,8 @@ namespace cling {
 
 namespace {
 
-// One entry per lexical scope currently open (function/method body, plus one
-// per nested if/while/for/try block) -- a captured name resolves by searching
-// innermost-to-outermost, same shape as real block scoping. `type` is the
-// bare declared-type string (as written in source); `isObserver` mirrors
-// VariableDeclaration::isObserver so a captured `ref` name can be rejected
-// (see desugarClosures' own doc comment: this is the most important check
-// here).
+// One entry per open lexical scope (a body, plus one per nested block). A captured name is looked up
+// innermost to outermost. `isObserver` mirrors VariableDeclaration::isObserver so a captured `ref` can be rejected.
 enum class ScopeKind { Local, Param, Field };
 
 struct ScopeEntry {
@@ -27,16 +22,7 @@ struct ScopeEntry {
     ScopeKind kind = ScopeKind::Local;
 };
 
-// A dedicated scope-type stack for THIS pass only -- confirmed via exploration
-// that ASTBuilder has no symbol table at all (it is a syntax-directed
-// translator) and SmartPointerAnalyzer's own symbolTypesByScope (a) runs
-// AFTER EscapeHatchChecker, which would reject a live ClosureExpression
-// before the analyzer ever sees it, and (b) skips every non-class type
-// (`if (classNames.find(ptype) == classNames.end()) continue;`), which is
-// exactly what a closure captures most (int/float/string). Neither existing
-// table can serve this pass, so this is new, minimal, purpose-built state:
-// captured names are the ONLY thing that ever needs to be looked up here,
-// never a general "what type is this expression" query.
+// A scope-type stack for this pass only: it runs before the analyzers, and only captured names are ever looked up.
 class ScopeStack {
 public:
     void push() { scopes_.emplace_back(); }
@@ -71,9 +57,7 @@ private:
     throw std::runtime_error(oss.str());
 }
 
-// The interface class named by a closure must be a declared class with
-// EXACTLY ONE virtual method -- that method is unambiguously the one the
-// closure overrides, so the closure syntax itself never has to name it.
+// The interface named by a closure must be a declared class with exactly one virtual method; that is the one the closure overrides.
 const MethodDeclaration* findSoleVirtualMethod(const ClassDeclaration& iface,
                                                 const ClosureExpression& closure) {
     const MethodDeclaration* found = nullptr;
@@ -96,12 +80,7 @@ const MethodDeclaration* findSoleVirtualMethod(const ClassDeclaration& iface,
     return found;
 }
 
-// The closure's own parameter list must match the interface method's in
-// arity and declared types -- a mismatch would make C++ treat the closure's
-// `call` as an OVERLOAD instead of an OVERRIDE (AstEmitter emits `override`
-// unconditionally, so C++ itself would reject a non-overriding override, but
-// CeeLing's own message here is far clearer about which of the two
-// signatures needs to change).
+// The closure's parameters must match the interface method's in count and types, so the closure's method overrides it.
 void checkSignatureMatches(const ClosureExpression& closure, const MethodDeclaration& iface,
                            const std::string& ifaceName) {
     if (closure.parameters.size() != iface.parameters.size()) {
@@ -122,10 +101,8 @@ void checkSignatureMatches(const ClosureExpression& closure, const MethodDeclara
     }
 }
 
-// Closure classes are named after the SOURCE FILE they came from plus a per-file counter, never a global one:
-// `__closure_app_0` is the first closure of app.clg whether app.clg is being compiled itself or merged into a
-// file that includes it, so the declaration in app.h and the definition in app.cpp always agree and a second
-// file's closures can never reuse the name.
+// Closure classes are named after the source file plus a per-file counter (`__closure_app_0`), so the name
+// is the same whether app.clg is compiled alone or merged into an includer, and two files never collide.
 std::map<std::string, int> g_closureCounters;
 std::string g_currentOrigin;
 bool g_currentIsExternal = false;
@@ -141,26 +118,10 @@ std::string originStem(const std::string& path) {
     return name;
 }
 
-// Builds the synthesized class for one closure and returns it, along with the
-// NewExpression that replaces the closure at its use site. NESTING: a closure
-// literal may appear inside `closure.body` (another closure's own body). This
-// is handled by walking `closure.body` with `walkBody` (forward-declared
-// below, defined further down) using a scope seeded ONLY from the closure's
-// OWN parameters -- never the outer scope this closure itself was found in,
-// and never this closure's OWN capture list. `walkBody`'s existing recursion
-// finds any nested ClosureExpression and desugars it via this same function,
-// so depth is unbounded (3+ levels work identically, each one only ever
-// seeing its immediate parent's parameters).
-//
-// This deliberately does NOT let an inner closure capture an outer closure's
-// CAPTURE (as opposed to its parameter): an outer capture is a FIELD of the
-// outer's synthesized class, reachable only through the outer's own `this` --
-// and `this` cannot be captured (see the `closure-captures-this` rejection
-// below: it is a borrow of the enclosing object, not an owned value). Since
-// the inner closure's scope only ever contains the outer's PARAMETERS, an
-// attempt to capture the outer's own capture falls through to the ordinary
-// `closure-unknown-capture` rejection below with no new code -- the name
-// simply isn't in the (deliberately narrow) inner scope.
+// Builds the synthesized class for one closure and the NewExpression that replaces it.
+// The closure body is walked with a scope seeded only from the closure's own parameters, so a nested closure
+// cannot see the outer closure's captures (they are fields reachable only through `this`, which cannot be
+// captured); such a capture falls through to the ordinary closure-unknown-capture rejection.
 struct DesugarResult {
     StatementPtr closureClass;
     ExpressionPtr replacement;
@@ -170,30 +131,22 @@ void walkBody(std::vector<StatementPtr>& body, ScopeStack& scope,
              const std::map<std::string, const ClassDeclaration*>& classesByName,
              std::vector<StatementPtr>& pendingClasses);
 
-// Nesting depth of `spawn` bodies currently being walked: a `spawn` inside a `spawn` body is rejected
-// (v1 -- no unbounded thread multiplication, and the inner body's captures would be a second hop the
-// sendable-value check below was not written for).
+// Nesting depth of `spawn` bodies being walked; a `spawn` inside a `spawn` body is rejected.
 int g_spawnDepth = 0;
 
-// A value that may cross into another thread: copied on capture, so nothing the new thread can reach is
-// reachable from the creating thread. Primitives (incl. string) and vectors of primitives. Everything else
-// -- every class-typed object, whatever pointer kind it was inferred -- is refused: an object's graph can
-// be shared with a live owner in the creating thread, and a closure capturing a shared_ptr would carry a
-// live alias of the SAME object across (the hole this rule exists to close).
+// A value that may cross into another thread: copied on capture, so nothing the new thread reaches is
+// reachable from the creating thread. Primitives (incl. string) and vectors of primitives. Every
+// class-typed object is refused here (a captured shared_ptr would carry a live alias across).
 //
-// A `struct` is a value type too -- copied, stored bare (never behind a smart pointer), and since a struct
-// handle does not exist, its dynamic type is always its static type (no hidden subclass with extra shared
-// fields, which is exactly what rules out moving a heap OBJECT: a base-typed handle can hold a subclass
-// declared in another file, invisible to this translation unit). So a struct crosses by copy iff everything
-// it is made of does: every field is itself a sendable value and so is its base struct. A class-typed field
-// (stored as an owning handle) makes the struct unsendable.
+// A `struct` is a value type too: stored bare, and with no handle its dynamic type is its static type, so it
+// cannot hide a subclass. It crosses by copy iff every field and its base struct do. A class-typed field
+// makes it unsendable.
 bool isSendableValueType(const std::string& type,
                          const std::map<std::string, const ClassDeclaration*>& classesByName,
                          std::set<std::string>& visiting) {
     if (isPrimitiveType(type)) return true;
     if (isVectorType(type)) return isSendableValueType(vectorElementType(type), classesByName, visiting);
-    // A Channel handle is copied into the new thread and stays valid in the creating one: the queue behind it is guarded by a mutex and
-    // carries copies of plain values only (channel_check.cpp checks its element type wherever a Channel is declared).
+    // A Channel handle is copied in and stays valid in the creator: the queue is mutex-guarded and carries plain-value copies only.
     if (isChannelType(type)) return isSendableValueType(channelElementType(type), classesByName, visiting);
     auto it = classesByName.find(type);
     if (it == classesByName.end() || !it->second->isValueType) return false;
@@ -212,9 +165,7 @@ bool isSendableValueType(const std::string& type,
     return ok;
 }
 
-// Every name a `spawn` body reads or writes, and every name it declares itself. Used to refuse a body that
-// reaches an enclosing local that was not captured: in C++ it would fail to compile anyway, but CeeLing's
-// own message is clearer about the rule, and the rule should not depend on the C++ compile gate.
+// Every name a `spawn` body reads, writes or declares. Used to refuse a body that uses an enclosing local it did not capture.
 void collectNamesInExpr(const Expression* e, std::set<std::string>& used) {
     if (e == nullptr) return;
     if (auto id = dynamic_cast<const Identifier*>(e)) {
@@ -235,8 +186,7 @@ void collectNamesInExpr(const Expression* e, std::set<std::string>& used) {
         collectNamesInExpr(sub->object.get(), used);
         collectNamesInExpr(sub->index.get(), used);
     } else if (auto inner = dynamic_cast<const ClosureExpression*>(e)) {
-        // a closure literal inside the body: its capture list reads names of THIS body; its own body is
-        // checked on its own when it is desugared
+        // a closure literal in the body: its capture list reads names of this body; its own body is checked when desugared
         for (const auto& c : inner->captures) used.insert(c);
     }
 }
@@ -309,17 +259,10 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
                "capture list and results out through an ext_fn such as app_return");
     }
 
-    // Resolve every capture's type from the enclosing scope BEFORE building
-    // anything -- reject on the first unresolvable/forbidden name rather than
-    // partially constructing a broken class.
+    // Resolve every capture's type before building anything, rejecting on the first bad name.
     std::vector<std::pair<std::string, std::string>> resolvedCaptures;  // (type, name)
     for (const auto& name : closure.captures) {
-        // `[this]` cannot reach here anymore: `this` is now a reserved keyword
-        // (grammar.js's `this_expression`), and `capture_list` still parses its
-        // entries as plain `$.identifier` tokens -- `this` no longer lexes as
-        // one, so `[this]` is a PARSE ERROR before this pass ever runs, not a
-        // semantic rejection. See tests/safety/closure_captures_this_rejected.clg
-        // for the fixture proving this (still correctly rejected, just earlier).
+        // `[this]` never reaches here: `this` is a keyword, so it is a parse error.
         const ScopeEntry* entry = scope.find(name);
         if (entry == nullptr) {
             reject("closure-unknown-capture", &closure,
@@ -341,10 +284,9 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
                    "observer's OWNER instead, or restructure so the closure does not need it");
         }
         std::set<std::string> visiting;
-        // A class object is admitted PROVISIONALLY: whether it may be MOVED into the thread depends on the
-        // pointer kind the analyzer infers for it, which does not exist yet at this stage. The rules that
-        // need it (and the rest of the object rules) run in DanglingChecker::checkSpawnCall. What can be
-        // decided here is decided here: only a plain local of a class declared in this program qualifies.
+        // A class object is admitted provisionally: whether it may be moved into the thread depends on the pointer
+        // kind the analyzer infers later, so the object rules run in DanglingChecker::checkSpawnCall. Only a plain
+        // local of a class declared in this program qualifies.
         bool movableObject = false;
         if (isSpawn && !isHandler) {
             auto clsIt = classesByName.find(entry->type);
@@ -396,30 +338,15 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
     const std::string closureClassName =
         "__closure_" + (stem.empty() ? std::string() : stem + "_") + std::to_string(g_closureCounters[stem]++);
 
-    // Fields: one VariableDeclaration per capture, matching how an ordinary
-    // hand-written field is represented (buildMemberVariableDeclaration
-    // produces exactly this shape: type + identifier + null expression).
+    // Fields: one VariableDeclaration per capture.
     std::vector<StatementPtr> members;
     for (const auto& [type, name] : resolvedCaptures) {
         members.push_back(std::make_unique<VariableDeclaration>(type, name, nullptr));
     }
 
-    // Constructor: one parameter per capture, body assigns each into the
-    // SAME-NAMED field. The parameter itself is named "p_<capture>" (not
-    // "<capture>") -- confirmed via probe that CeeLing's AstEmitter has no
-    // parameter/field shadowing concept at all (unlike real C++, where a
-    // constructor parameter shadows a same-named field inside its own body):
-    // an AssignmentStatement's RHS Identifier is resolved via the SAME
-    // isCurrentField check as the LHS, so `total = total;` emitted BOTH sides
-    // as `this->total`, producing a nonsensical self-initializing
-    // `total(this->total)`. Every existing hand-written CeeLing constructor
-    // in this codebase avoids the collision the same way (`age = a;`, never
-    // `age = age;`) -- this is not a special case, it's the established
-    // convention, just applied to a synthesized name instead of a
-    // hand-chosen one. AstEmitter's member-initializer-list hoisting
-    // (emitFunction's isConstructor path) still turns this leading run of
-    // own-field assignments into a real `: count(p_count)` initializer list
-    // automatically -- the parameter rename doesn't affect that at all.
+    // Constructor: one parameter per capture, assigned to the same-named field. The parameter is named
+    // "p_<capture>" because the emitter has no parameter/field shadowing (`total = total;` would emit
+    // `this->total` on both sides). The emitter hoists the leading own-field assignments into a member initializer list.
     std::vector<std::pair<std::string, std::string>> ctorParams;
     std::vector<StatementPtr> ctorBody;
     for (const auto& [type, name] : resolvedCaptures) {
@@ -431,24 +358,9 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
     members.push_back(std::make_unique<ConstructorDeclaration>(
         closureClassName, std::move(ctorParams), std::move(ctorBody)));
 
-    // Walk the closure's OWN body before moving it into the override method
-    // below -- this is what makes nesting work. The inner scope is seeded
-    // ONLY from `closure.parameters` (this closure's own `call`-method
-    // parameter list), matching exactly how desugarClosures' top-level driver
-    // seeds a FunctionDeclaration's scope from `fn->parameters` -- NOT from
-    // `scope` (the scope this closure itself was FOUND in) and NOT from
-    // `resolvedCaptures` (this closure's own captures becoming fields is an
-    // orthogonal fact an inner closure must not see, per this function's own
-    // doc comment above). `walkBody` will find and desugar any
-    // ClosureExpression nested inside via `rewriteExpr`'s own dispatch,
-    // recursively -- depth is unbounded, terminating only when a body
-    // contains no further closure. `pendingClasses` is the SAME accumulator
-    // threaded in from the caller, so an inner closure's synthesized class is
-    // pushed onto it BEFORE this (outer) closure's own class below, giving
-    // the correct inner-before-outer emission order with no extra bookkeeping
-    // (CeeLing has no forward declarations, so the outer's `new
-    // __closure_N(...)` reference to the inner class must appear after the
-    // inner class's own declaration).
+    // Walk the closure's own body before moving it into the method; this is what makes nesting work. The scope is
+    // seeded only from `closure.parameters`. An inner closure's class is pushed onto `pendingClasses` before this
+    // one, so it is declared first.
     ScopeStack innerScope;
     innerScope.push();
     for (const auto& [ptype, pname] : closure.parameters) {
@@ -458,10 +370,7 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
     walkBody(closure.body, innerScope, classesByName, pendingClasses);
     if (isSpawn) --g_spawnDepth;
 
-    // The overriding method: same name/return type/parameters as the
-    // interface's sole virtual method, body is the closure's own body (now
-    // walked above -- any nested closure it contained has already been
-    // replaced with a `new __closure_N(...)` NewExpression).
+    // The overriding method: the interface method's name, return type and parameters, with the closure body.
     auto overrideMethod = std::make_unique<MethodDeclaration>(
         ifaceMethod->returnType, ifaceMethod->name, closure.parameters, std::move(closure.body));
     overrideMethod->isOverride = true;
@@ -485,13 +394,8 @@ DesugarResult desugarOne(ClosureExpression& closure, const ScopeStack& scope,
     return DesugarResult{std::move(closureClass), std::move(replacement)};
 }
 
-// Recursively scans `expr` for a ClosureExpression and, if found, replaces it
-// in place (via the owning ExpressionPtr&) with its desugared NewExpression,
-// appending the synthesized class to `pendingClasses`. Must be called on
-// every ExpressionPtr& that could directly hold or transitively contain a
-// closure -- call arguments and binary/unary operands are the realistic
-// cases; member/subscript objects are covered for completeness even though a
-// closure there is not a real use case.
+// Replaces any ClosureExpression found in `expr` with its desugared NewExpression, appending the synthesized
+// class to `pendingClasses`. Called on every expression position that can hold a closure.
 void rewriteExpr(ExpressionPtr& expr, const ScopeStack& scope,
                  const std::map<std::string, const ClassDeclaration*>& classesByName,
                  std::vector<StatementPtr>& pendingClasses) {
@@ -574,14 +478,7 @@ void rewriteExpr(ExpressionPtr& expr, const ScopeStack& scope,
             reject("closure-reserved-name", neww, "`" + neww->className + "` is a compiler-generated name",
                    "a closure class cannot be constructed by hand -- write a `closure` expression");
         }
-        // `new Holder(closure ...)` -- a closure passed as a CONSTRUCTOR
-        // argument, not a plain function-call argument. Found as a real gap
-        // via probe: without this case, a closure inside `new T(...)`'s
-        // argument list was never visited at all, so the raw
-        // ClosureExpression survived all the way to AstEmitter and was
-        // echoed verbatim as text (emitExpression's "unknown node: best
-        // effort" fallback, `return expr->toString();`) -- invalid C++, not
-        // even a clean rejection.
+        // a closure passed as a constructor argument (`new Holder(closure ...)`)
         for (auto& arg : neww->arguments) {
             rewriteExpr(arg, scope, classesByName, pendingClasses);
         }
@@ -605,19 +502,11 @@ void rewriteExpr(ExpressionPtr& expr, const ScopeStack& scope,
         rewriteExpr(sub->index, scope, classesByName, pendingClasses);
         return;
     }
-    // Identifier/Number/StringLiteral/CharLiteral/ScopedIdentifile/NewExpression's
-    // own arguments (handled when NewExpression itself is built, never holds a
-    // closure in practice) -- nothing to recurse into.
+    // Identifier, literals and the rest hold no closure: nothing to recurse into.
 }
 
-// Walks one body's statements, maintaining `scope` (pushed/popped by this
-// function's own callers for the body's own block), rewriting every
-// expression position, and recursing into nested if/while/for/try blocks
-// (each gets its OWN pushed scope, matching real block-scoping -- a variable
-// declared inside an `if` is not visible to a closure outside it). Declares
-// each VariableDeclaration/ContainerDeclaration into `scope` as it's
-// encountered, so a capture can only see names declared BEFORE the closure
-// in the same top-to-bottom source order real scoping implies.
+// Walks one body's statements, rewriting every expression position and recursing into nested blocks, each with
+// its own scope. Declarations enter `scope` as they are met, so a capture sees only names declared before it.
 void walkBody(std::vector<StatementPtr>& body, ScopeStack& scope,
              const std::map<std::string, const ClassDeclaration*>& classesByName,
              std::vector<StatementPtr>& pendingClasses) {
@@ -699,8 +588,7 @@ void desugarClosures(Program& program) {
         g_currentIsExternal = topLevel->isExternalDeclaration;
 
         if (auto cls = dynamic_cast<ClassDeclaration*>(topLevel.get())) {
-            // Fields are in scope (by bare name, matching implicit `this->field`
-            // access already used elsewhere) for every method/constructor body.
+            // Fields are in scope by bare name for every method and constructor body.
             for (const auto& member : cls->members) {
                 if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
                     scope.declare(field->identifier, field->type, false, ScopeKind::Field);

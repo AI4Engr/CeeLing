@@ -47,16 +47,9 @@ std::string dirnameOf(const std::string& path) {
     return slash == std::string::npos ? "" : path.substr(0, slash + 1);
 }
 
-// Reads a project-local `.ceeling_pairs` declaration file (if present -- its
-// total absence is not an error, just means zero Begin/End-style pairs are
-// registered this compile) so PairingChecker's rules come from the PROJECT,
-// never hardcoded into CeeLing's own source. Format: one `beginName endName`
-// pair per line (whitespace-separated), `#`-prefixed comments and blank
-// lines skipped. This mirrors the same "don't hardcode a third-party
-// library's facts into the compiler" lesson already applied to library_summary.cpp's
-// allow-lists -- a project imitating a DIFFERENT library's Begin/End naming
-// convention (not ImGui's) just ships its own `.ceeling_pairs` file, no
-// CeeLing source change or rebuild needed.
+// Reads a project-local `.ceeling_pairs` file, so PairingChecker's Begin/End-style pairs come from the
+// project and not from the compiler. One `beginName endName` pair per line; `#` comments and blank lines
+// are skipped. A missing file means no pairs.
 std::vector<std::pair<std::string, std::string>> readPairingDeclarations(const std::string& path) {
     std::vector<std::pair<std::string, std::string>> pairs;
     std::ifstream file(path);
@@ -75,8 +68,7 @@ std::vector<std::pair<std::string, std::string>> readPairingDeclarations(const s
     return pairs;
 }
 
-// `#include "yaml_node.clh"` extracts the quoted target ("yaml_node.clh"). Returns ""
-// for `#include <...>` (angle-bracket, real system header) or a malformed line.
+// `#include "yaml_node.clh"` gives "yaml_node.clh". Returns "" for `#include <...>` or a malformed line.
 std::string quotedIncludeTarget(const std::string& includeText) {
     size_t open = includeText.find('"');
     if (open == std::string::npos) return "";
@@ -86,22 +78,10 @@ std::string quotedIncludeTarget(const std::string& includeText) {
 }
 
 #ifdef WITH_TREE_SITTER
-// CeeLing's multi-file story: `#include "foo.clh"` in one .clg makes foo's classes/
-// functions/enums usable there. `.clh` is a SOURCE-level, CeeLing-only spelling (no
-// such file needs to exist) that names foo's declarations the way `.clg` names foo's
-// definitions; resolved by finding foo's OWN .clg source (mergeExternalDeclarations
-// parses that, not any .clh file, which does not exist as CeeLing input) and merging
-// its top-level declarations into `program` marked isExternalDeclaration -- visible
-// to every semantic pass (so `Node`/`Scanner`/etc. are no longer "unknown calls"),
-// but never re-emitted by AstEmitter (the real definitions already live in foo's own
-// separately-generated .cpp; see Statement::isExternalDeclaration). This is genuine
-// separate compilation -- foo.clg's SOURCE is never copied into the including file's
-// own generated .cpp -- not a text merge of the two .clg files. The emitted C++
-// output rewrites `#include "foo.clh"` to `#include "foo.h"` (see rewriteClhIncludes)
-// since `.h` is the real, on-disk generated header g++ needs to find.
-// Recurses so a chain of #includes (parser -> node, parser -> scanner) resolves
-// transitively; `seenClgFiles` prevents infinite recursion / duplicate merges on a
-// diamond include.
+// `#include "foo.clh"` makes the classes, functions and enums of the sibling foo.clg usable. The .clg is
+// parsed and its top-level declarations are merged into `program` marked isExternalDeclaration: every
+// semantic pass sees them, but the emitter does not emit them again (they live in foo's own generated .cpp).
+// Includes are followed transitively; `seenClgFiles` stops cycles and duplicate merges.
 void mergeExternalDeclarations(Program& program, const std::string& baseDir,
                                 std::set<std::string>& seenClgFiles) {
     std::vector<StatementPtr> merged;
@@ -130,11 +110,10 @@ void mergeExternalDeclarations(Program& program, const std::string& baseDir,
         std::unique_ptr<Program> includedProgram = includedBuilder.buildProgram(includedSource);
         for (auto& includedStmt : includedProgram->statements) includedStmt->originFile = resolvedPath;
         std::string includedDir = dirnameOf(resolvedPath);
-        // Resolve the included file's OWN includes first, so a transitive dependency
-        // (parser -> node, parser -> scanner) is visible by the time we merge parser's.
+        // Resolve the included file's own includes first.
         mergeExternalDeclarations(*includedProgram, includedDir, seenClgFiles);
-        // The decoders this file's structs ask for (`decodeX(item)`, struct_json.h) are part of what the including file may call: write them here too, so the
-        // merged declarations carry them (they are declarations only there; the definitions are emitted once, by the file that declares the struct).
+        // Generate the `decodeX(item)` decoders of the included file's structs too, so the includer can call them.
+        // Here they are declarations only; the definition is emitted by the file that declares the struct.
         desugarStructJson(*includedProgram, true);
         for (auto& includedStmt : includedProgram->statements) {
             includedStmt->isExternalDeclaration = true;
@@ -149,10 +128,7 @@ void mergeExternalDeclarations(Program& program, const std::string& baseDir,
 }
 #endif
 
-// `.clh` is a source-level-only spelling (see mergeExternalDeclarations); the actual
-// generated header on disk is named `.h`. Rewrite every `#include "foo.clh"` in the
-// generated C++ to `#include "foo.h"` so the emitted #include lines resolve to real
-// files g++ can find, without requiring the .clg author to know the on-disk name.
+// `.clh` exists only in source; the generated header on disk is `.h`. Rewrites `#include "foo.clh"` to `#include "foo.h"`.
 std::string rewriteClhIncludes(const std::string& cppCode) {
     const std::string from = ".clh\"";
     const std::string to = ".h\"";
@@ -197,18 +173,15 @@ void showUsage(const char* programName) {
 
 bool isRunningInNewWindow() {
 #ifdef _WIN32
-    // On Windows, check if we're running in a console that was created for this process
-    // This is a heuristic - if stdin is not a console, we're likely in a script/pipe
+    // Heuristic: if stdin or stdout is not a console, this is probably a script or pipe.
     return _isatty(_fileno(stdin)) && _isatty(_fileno(stdout));
 #else
-    // On Unix-like systems, check if we have a controlling terminal
     return isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
 #endif
 }
 
 void pauseIfNeeded() {
-    // Only pause if we're running in what appears to be a new window
-    // and not being called from a script
+    // Pause only in a new console window, not when called from a script.
     if (isRunningInNewWindow()) {
         std::cout << "\nPress Enter to continue..." << std::endl;
         std::cin.get();
@@ -225,14 +198,11 @@ int main(int argc, char* argv[]) {
     std::string inputFile;
     std::string outputFile;
     bool compileToCpp = false;
-    // AstEmitter (the AST-driven generator) is the default: it can only emit node
-    // types it recognizes, so a construct CeeLing cannot express structurally cannot
-    // appear in its output -- the property Phase 1 (escape-hatch sealing) depends on.
-    // The legacy regex/text-substitution CppGenerator remains available via
-    // --legacy-cpp for comparison/debugging, but does not offer that guarantee (it
-    // builds output from the raw source text, not from the validated AST).
+    // AstEmitter is the default generator: it emits only node types it recognizes, so a forbidden construct
+    // cannot appear in its output. The text-substitution CppGenerator (--legacy-cpp) is kept for comparison
+    // and does not give that guarantee.
     bool useLegacyGenerator = false;
-    // Runtime bounds checks on v[i] / s[i] are on by default; --no-bounds-checks turns them off.
+    // Runtime checks are on by default; --no-bounds-checks and --no-null-checks turn them off.
     bool boundsChecks = true;
     bool nullChecks = true;
     bool poolShared = false;
@@ -249,7 +219,7 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--emit-ast") {
-            // AstEmitter is now the default; kept as a harmless accepted alias.
+            // AstEmitter is the default; the flag is accepted and ignored.
         } else if (arg == "--no-bounds-checks") {
             boundsChecks = false;
         } else if (arg == "--no-null-checks") {
@@ -280,7 +250,7 @@ int main(int argc, char* argv[]) {
             strictAcceptsProbed = (arg == "--strict=probed") || (arg == "--strict-all" && strictAcceptsProbed);
             strictIncludesBuiltin = strictIncludesBuiltin || arg == "--strict-all";
         } else if (arg == "--strict-headers") {
-            // consumed by the pre-scan below; nothing to do here
+            // already read by the pre-scan above
         } else if (arg == "--report-facts") {
             reportFacts = true;
         } else if (arg == "--legacy-cpp") {
@@ -329,51 +299,34 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        // Read CLing source file
         std::string source = readFile(inputFile);
 
         std::unique_ptr<Program> program;
 
 #ifdef WITH_TREE_SITTER
-        // Use Tree-sitter parser to build AST from source
         ASTBuilder builder;
         program = builder.buildProgram(source);
 
-        // Resolve `#include "*.clh"` targets against their sibling .clg source so
-        // this file's semantic analysis sees the included classes/functions as
-        // known (see mergeExternalDeclarations). Codegen is unaffected: those
-        // merged declarations are marked external and skipped by AstEmitter.
+        // Merge the declarations of `#include "*.clh"` files (see mergeExternalDeclarations).
         std::set<std::string> seenClgFiles{inputFile};
         for (auto& stmt : program->statements) stmt->originFile = inputFile;
         mergeExternalDeclarations(*program, dirnameOf(inputFile), seenClgFiles);
 
-        // Re-attempt any external_method_specialization whose target class
-        // wasn't found in THIS file's own statements (buildProgram already
-        // resolved the same-file case) -- now that merging is done, a target
-        // declared in a #include'd sibling .clg is finally visible. See
-        // Program::unresolvedExternalSpecializations and
-        // ASTBuilder::spliceExternalSpecializations for why this can't
-        // happen any earlier (confirmed via probe: a target-class-in-another-
-        // file specialization is otherwise wrongly rejected as unknown).
+        // Resolve method specializations whose target class is declared in an included file; this can only
+        // happen after the merge.
         ASTBuilder::spliceExternalSpecializations(*program);
 
-        // Desugar every closure expression into an ordinary class + `new` call
-        // BEFORE any checker runs -- EscapeHatchChecker (next) hard-rejects any
-        // construct it doesn't recognize, so a raw ClosureExpression that reached
-        // it would be rejected as unknown rather than analyzed as the class it's
-        // about to become. See closure_desugar.h's own doc comment for the full
-        // design (why this needs its own scope-type pass rather than reusing
-        // ASTBuilder's or SmartPointerAnalyzer's, and why it must run exactly here).
         // `decodeX(item)` for a struct X: generate the decoder (struct_json.h) so the checkers below see ordinary code
         desugarStructJson(*program);
         checkChannels(*program);      // Channel<T>: the element must be a plain value, and nothing may hide a Channel in another type
+        // Turn closures into ordinary classes before any checker runs, since EscapeHatchChecker rejects
+        // a raw closure expression as unknown.
         desugarClosures(*program);
 #else
         throw std::runtime_error("This build was configured without Tree-sitter support. Rebuild with -DWITH_TREE_SITTER=ON.");
 #endif
 
-        // Phase 1: seal escape hatches (e.g. `.get()` on a CeeLing object) before any
-        // lifetime analysis -- a leaky boundary makes dangling analysis meaningless.
+        // Reject escape hatches (`.get()`, raw pointers, casts, ...) before the lifetime analysis, which relies on them being sealed.
         EscapeHatchChecker escapeHatchChecker;
         std::vector<EscapeHatchError> escapeHatchErrors = escapeHatchChecker.check(*program);
         if (!escapeHatchErrors.empty()) {
@@ -390,12 +343,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // SmartPointerAnalyzer runs before the dangling checker now: Phase 2.6
-        // container support needs it there too (DanglingChecker consults
-        // containerElementIsShared to know whether a specific push_back call
-        // shares or moves its argument -- see Chapter 18). Cheap and side-effect
-        // free, so running it unconditionally (even under --legacy-cpp, which
-        // doesn't otherwise need it) is simpler than threading a conditional.
+        // The analyzer runs before the dangling checker, which asks it whether a push_back shares or moves its
+        // argument (containerElementIsShared). It runs for --legacy-cpp too.
         SmartPointerAnalyzer analyzer;
         {
             std::vector<std::string> demandLines;
@@ -428,17 +377,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // Advisory-only Begin/End-style call-pairing check. NEVER affects the exit
-        // code or blocks codegen -- CeeLing's ownership model already guarantees
-        // safety regardless of whether a Begin call's matching End was made (see
-        // pairing_checker.h's doc comment for the full rationale: this is a
-        // source-compatibility/style convenience for projects imitating ANY
-        // library's Begin/End-style call-pair naming -- ImGui's or otherwise --
-        // not a safety mechanism, and not specific to ImGui). Pairs to watch come
-        // from a project-local `.ceeling_pairs` file (see readPairingDeclarations),
-        // never hardcoded here -- a project using a different library's naming
-        // convention (open/close, push/pop, acquire/release, ...) just ships its
-        // own declaration file, no CeeLing source change or rebuild needed.
+        // Advisory Begin/End call-pairing check: it only warns and never changes the exit code or blocks
+        // codegen. The pairs come from the project's `.ceeling_pairs` file (see readPairingDeclarations).
         PairingChecker pairingChecker;
         for (const auto& [beginName, endName] :
              readPairingDeclarations(dirnameOf(inputFile) + ".ceeling_pairs")) {
@@ -455,18 +395,9 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Generate C++ code. Output extension `.h` requests a declaration-only header
-        // (class/method/function SIGNATURES, no bodies -- except templates, which
-        // must stay fully defined at every instantiation point) instead of a full
-        // translation unit; any other extension (.cpp, .cc, ...) emits the ordinary
-        // full definition. This is what lets one .clg `#include "foo.clh"` another's
-        // generated foo.h and reference its types across a real, separately compiled
-        // translation unit -- not a text merge of the two .clg sources.
-        // "CEELING_GEN_" + uppercased basename (non-alnum -> '_') -- the exact
-        // include-guard spelling emitHeader() would use for THIS SAME .clg's
-        // OWN companion header, whether or not one is being generated by this
-        // particular invocation. Shared by both branches below (previously
-        // only computed for the header branch).
+        // Generate C++. An output name ending in `.h` requests a declaration-only header (signatures, no
+        // bodies, except templates); any other extension gets the full definitions.
+        // Include-guard spelling: "CEELING_GEN_" + uppercased basename, non-alphanumerics replaced by '_'.
         auto guardNameFor = [](const std::string& baseName) {
             std::string guardName = baseName;
             for (char& c : guardName) {
@@ -487,27 +418,8 @@ int main(int argc, char* argv[]) {
             std::string headerBaseName = (slash == std::string::npos) ? outputFile : outputFile.substr(slash + 1);
             cppCode = emitter.emitHeader(*program, guardNameFor(headerBaseName));
         } else {
-            // AST-driven generator (default): walks the validated Program, so an
-            // unsupported/forbidden construct cannot appear in the output.
-            // Per-class declaration guards (AstEmitter::perClassGuardName,
-            // wrapping each "class X {...};" block emitted by emitClass, the
-            // SAME mechanism emitHeader's emitClassHeader uses) are what make
-            // a genuinely circular `.clh` include pair (e.g. context.clg <->
-            // button.clh) safe -- whichever of a class's own local
-            // declaration (here) or a transitively-included copy of its
-            // header is reached FIRST in one translation unit wins, and the
-            // other is skipped, without needing this file to pre-declare
-            // anything about its own companion header up front. An earlier,
-            // simpler attempt at this fix (unconditionally #define-ing this
-            // whole FILE's header guard before any #include) worked for the
-            // narrow case that first surfaced it, but broke the moment a
-            // SECOND file (drag_float.cpp, transitively needing context.h,
-            // which transitively needed drag_float.h back) was compiled
-            // together in the same circular graph -- the file-level guard
-            // pre-declaration blocked that second file's own real header
-            // content from ever expanding. Per-class guards, checked at the
-            // exact point each class is actually declared (not the whole
-            // file's top), don't have this problem.
+            // Per-class declaration guards (AstEmitter::perClassGuardName) make a circular `.clh` include pair
+            // safe: whichever copy of a class declaration is reached first wins.
             AstEmitter emitter(analyzer);
             emitter.setBoundsChecks(boundsChecks);
             emitter.setNullChecks(nullChecks);
@@ -521,11 +433,10 @@ int main(int argc, char* argv[]) {
         }
         cppCode = rewriteClhIncludes(cppCode);
 
-        // Write to output file
         if (strictFacts) {
-            // --strict: every fact the program relied on must be vouched for. `declared` = a person wrote it; `reviewed:<who>:<date>` = a person
-            // checked a scanner's draft; `probed:<date>` (with =probed) = tools/fact-gauge/probe_pack.py ran it against the real library.
-            // `opaque` is exempt: it only makes the checks stricter. Built-in facts are exempt unless --strict-all.
+            // --strict: every fact the program relied on must be vouched for: `declared`, `reviewed:<who>:<date>`,
+            // or (with =probed) `probed:<date>`. `opaque` is exempt (it only makes checking stricter), and so are
+            // built-in facts unless --strict-all.
             std::vector<std::string> unvouched;
             for (const auto* f : cling::builtinFacts().usedFacts()) {
                 if (!f->external && !strictIncludesBuiltin) continue;
@@ -552,8 +463,7 @@ int main(int argc, char* argv[]) {
 
         std::cout << "C++ code generated successfully: " << outputFile << std::endl;
         if (reportFacts) {
-            // The trusted-boundary report: every fact a check answered "yes" from while this file was compiled. A fact below
-            // `declared` + `review=hand|reviewed` is a scanner's draft; a project pack is the project's own claim about its library.
+            // The trusted-boundary report: every fact a check answered "yes" from while compiling this file.
             const cling::FactTable& table = cling::builtinFacts();
             std::vector<const cling::FactTable::Fact*> used = table.usedFacts();
             std::cout << "Facts relied on (" << used.size() << "), packs loaded:";

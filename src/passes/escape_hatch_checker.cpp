@@ -25,10 +25,7 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
     }
 
     for (const auto& stmt : program.statements) {
-        // Only declarations (functions, classes, enums, includes) have a place at file scope. An
-        // executable statement there has no lowering: the emitter used to drop a declaration like
-        // `int counter = 0;` silently while keeping every use of it, so the failure surfaced as a
-        // C++ compile error instead of a CeeLing diagnostic.
+        // Only declarations have a place at file scope; an executable statement there has no lowering.
         if (dynamic_cast<const VariableDeclaration*>(stmt.get()) != nullptr ||
             dynamic_cast<const ContainerDeclaration*>(stmt.get()) != nullptr ||
             dynamic_cast<const AssignmentStatement*>(stmt.get()) != nullptr ||
@@ -62,7 +59,7 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
                 if (auto field = dynamic_cast<const VariableDeclaration*>(member.get())) {
                     requireKnownType(field->type, "the type of field `" + field->identifier + "`", field->loc.line, field->loc.column);
                 } else if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                    // a primary generic method `<T> T as()` names its own type parameter: `T` is not an unknown type inside it
+                    // a generic method `<T> T as()` names its own type parameter, which is not an unknown type
                     typeParameter_ = method->typeParameter;
                     requireKnownType(method->returnType, "the return type of `" + method->name + "`", method->loc.line, method->loc.column);
                     for (const auto& [ptype, pname] : method->parameters) {
@@ -83,11 +80,8 @@ std::vector<EscapeHatchError> EscapeHatchChecker::check(const Program& program) 
 }
 
 void EscapeHatchChecker::collectClasses(const Program& program) {
-    // Base-before-derived so a derived class inherits its base's already-flattened
-    // fields; a same-named field declared by the derived class then overwrites the
-    // inherited entry, which is the correct shadowing behavior. Flattening here is
-    // what lets every classFields_ lookup below stay an exact match with no
-    // base-chain walking (see class_hierarchy.h).
+    // Base before derived, so a derived class inherits its base's flattened fields and may shadow them.
+    // Flattening keeps every classFields_ lookup an exact match (see class_hierarchy.h).
     for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
         classNames_.insert(cls->name);
         auto& fields = classFields_[cls->name];
@@ -95,8 +89,7 @@ void EscapeHatchChecker::collectClasses(const Program& program) {
             if (auto baseIt = classFields_.find(cls->baseClass); baseIt != classFields_.end()) {
                 fields = baseIt->second;
             }
-            // `.get()` is an ordinary user method if ANY class in the chain declares
-            // it -- inheriting a `get()` makes it just as legitimate a call.
+            // `.get()` is an ordinary user method if any class in the chain declares it.
             if (classesWithOwnGet_.count(cls->baseClass) > 0) {
                 classesWithOwnGet_.insert(cls->name);
             }
@@ -111,10 +104,7 @@ void EscapeHatchChecker::collectClasses(const Program& program) {
             }
         }
 
-        // Dual-register under the qualified name (`YAML::Node`), mirroring
-        // AstEmitter::collectClassNames -- a variable declared `YAML::Node x;` needs
-        // classFields_["YAML::Node"] to resolve `x`'s field accesses, the same
-        // reason the emitter needs it for codegen.
+        // Also registered under the qualified name (`YAML::Node`), which declarations may use.
         if (!cls->namespaceName.empty()) {
             const std::string qualified = cls->namespaceName + "::" + cls->name;
             classNames_.insert(qualified);
@@ -131,28 +121,18 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
         if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
             knownFreeFunctions_.insert(fn->name);
             freeFunctionReturnType_[fn->name] = fn->returnType;
-            // Dual-register under the qualified name (`YAML::Load`) -- a call
-            // site inside a DIFFERENT namespace (or at global scope) spells it
-            // qualified, same reasoning as ClassDeclaration's identical
-            // dual-registration for `YAML::Node`.
+            // Also registered under the qualified name (`YAML::Load`).
             if (!fn->namespaceName.empty()) {
                 knownFreeFunctions_.insert(fn->namespaceName + "::" + fn->name);
                 freeFunctionReturnType_[fn->namespaceName + "::" + fn->name] = fn->returnType;
             }
         } else if (auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt.get())) {
-            // An ext_fn has no body for isKnownCallable to reason about beyond
-            // "is this name callable at all" -- same treatment as an ordinary
-            // FunctionDeclaration at THIS checker's level, which never looks
-            // past the name/arity here (DanglingChecker is what consults the
-            // hand-declared borrow summary; SmartPointerAnalyzer needs no
-            // ext_fn awareness since v1 is primitive/vector-of-primitive only).
+            // An ext_fn is only checked for being callable by name; DanglingChecker uses its borrow summary.
             knownFreeFunctions_.insert(extFn->name);
             freeFunctionReturnType_[extFn->name] = extFn->returnType;
         }
     }
-    // Same base-before-derived flattening as collectClasses: without it,
-    // `d.baseMethod()` would fail isKnownCallable's exact lookup and be rejected by
-    // the default-reject-unknown-calls rule -- a safe failure, but a false one.
+    // Same base-before-derived flattening as collectClasses, so `d.baseMethod()` resolves.
     for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
         auto& methods = classMethods_[cls->name];
         auto& virtuals = classVirtualMethods_[cls->name];
@@ -165,20 +145,13 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
                 baseIt != classMethodReturnType_.end()) {
                 returnTypes = baseIt->second;
             }
-            // A method stays virtual all the way down the chain once any ancestor
-            // declared it so -- that's exactly what makes calling it from a
-            // constructor a trap even in a class that never wrote `virtual` itself.
+            // A method stays virtual down the chain once any ancestor declared it.
             if (auto baseIt = classVirtualMethods_.find(cls->baseClass);
                 baseIt != classVirtualMethods_.end()) {
                 virtuals = baseIt->second;
             }
-            // Inherit the base's specialization arities too, re-keyed under
-            // THIS class's own name (classSpecializationArities_ is keyed by
-            // "Class::specKey", not flattened via a shared className->set map
-            // the way classMethods_ is, so a derived class needs its own
-            // explicit copy). Snapshotted into a separate vector first --
-            // inserting into classSpecializationArities_ while iterating it
-            // directly would invalidate the iteration.
+            // Inherit the base's specialization arities, re-keyed under this class's name. Snapshotted first,
+            // because inserting while iterating would invalidate the iteration.
             const std::string basePrefix = cls->baseClass + "::";
             std::vector<std::pair<std::string, std::set<size_t>>> inherited;
             for (const auto& [key, arities] : classSpecializationArities_) {
@@ -192,13 +165,8 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
         }
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                // A specialization (`int as<int>() {...}`) registers under its
-                // SYNTHETIC key ("as<int>"), not the bare method name -- a call
-                // WITHOUT a type argument must never resolve to a specialization's
-                // body (isKnownCallable below only ever looks up the synthetic key
-                // when the call itself carries a matching templateArg). The bare
-                // name stays reserved for the primary generic (or an ordinary
-                // method, the common case where specializationArg is empty).
+                // A specialization (`int as<int>() {...}`) registers under its synthetic key ("as<int>"), so a
+                // call without a type argument never resolves to it. The bare name stays for the primary method.
                 const std::string key = method->specializationArg.empty()
                     ? method->name
                     : specializationKey(method->name, method->specializationArg);
@@ -207,16 +175,8 @@ void EscapeHatchChecker::collectCallables(const Program& program) {
                 if (method->isVirtual || method->isOverride) {
                     virtuals.insert(key);
                 }
-                // Record this specialization's own declared arity, ALWAYS (not
-                // just when a same-type-argument sibling collides) -- see
-                // classSpecializationArities_'s own comment for why plain
-                // classMethods_ membership alone can't answer "was THIS call's
-                // arity ever actually declared" (yaml-cpp's `as<T>()` vs
-                // `as<T>(T fallback)` pair needs two real, differently-shaped
-                // C++ template primaries -- confirmed via probe that a call to
-                // a nonexistent arity, e.g. `as<int>(99)` when only `as<int>()`
-                // exists, produced generated C++ that fails to compile, yet
-                // isKnownCallable's plain membership check let it through).
+                // Always record the specialization's arity, so a call with an arity never declared
+                // (`as<int>(99)` when only `as<int>()` exists) is rejected here instead of failing in g++.
                 if (!method->specializationArg.empty()) {
                     classSpecializationArities_[cls->name + "::" + key].insert(method->parameters.size());
                 }
@@ -255,18 +215,8 @@ std::string EscapeHatchChecker::resolveDeclaredType(const Expression* expr) cons
         }
         return {};
     }
-    // A chained field access (`data.scalar.length()`, receiver is
-    // `data.scalar`, a MemberAccess, not a bare Identifier): resolve the
-    // OBJECT half (`data`) to its class via resolveObjectType (already walks
-    // arbitrary MemberAccess chains through classFields_), then look up the
-    // final member's OWN declared type in that class's field map. Needed for
-    // RB18 (Node::operator= alias-rebind): yaml_node.clg's fields now live one
-    // level down through a `NodeData data` indirection, so a receiver like
-    // `data.scalar` (a string-typed field of a class-typed field) must resolve
-    // to "string" for `.length()`/`.substr()` to pass the string-method
-    // allow-list below -- before this, only a bare identifier receiver
-    // resolved at all, so any method call through a chained field access was
-    // wrongly rejected as unknown (default-reject caught a legitimate call).
+    // A chained field access (`data.scalar.length()`): resolve the object half to its class, then look up
+    // the final member's declared type in that class's fields.
     if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
         const std::string objClass = resolveObjectType(member->object.get());
         if (objClass.empty()) return {};
@@ -282,19 +232,15 @@ std::string EscapeHatchChecker::resolveDeclaredType(const Expression* expr) cons
 
 bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
     if (call.callee) {
-        // `recv.method(args)`: the receiver's class must be known AND declare this
-        // method. An unresolvable receiver (e.g. the result of another call -- this
-        // checker does lightweight resolution, not full type inference) is treated
-        // as unknown, matching resolveObjectType's existing conservative behavior.
+        // `recv.method(args)`: the receiver's class must be known and declare the method. An unresolvable
+        // receiver is treated as unknown.
         auto member = dynamic_cast<const MemberAccess*>(call.callee.get());
         if (member == nullptr) return false;
 
-        // A known library method on a recognized container type, e.g.
-        // `v.push_back(x)` where `v`'s declared type is `std::vector<T>`.
+        // A known library method on a recognized container type, e.g. `v.push_back(x)` on a `std::vector<T>`.
         const std::string declaredType = resolveDeclaredType(member->object.get());
         if (isVectorType(declaredType)) {
-            // resize/reserve/assign/copyWithin only on primitive-element vectors --
-            // see isKnownVectorMethod's comment in library_summary.h. (`assign(n, x)` on an object vector would copy an owner.)
+            // resize/reserve/assign/copyWithin only on primitive-element vectors (`assign(n, x)` on an object vector would copy an owner).
             if (member->member == "resize" || member->member == "reserve" ||
                 member->member == "assign" || member->member == "copyWithin" || isVectorAlgorithm(member->member)) {
                 if (isVectorAlgorithm(member->member) && call.arguments.size() != vectorAlgorithmArity(member->member)) return false;
@@ -302,7 +248,7 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
             }
             return isKnownVectorMethod(member->member);
         }
-        // A Channel<T> (library_summary.h): send/wait/take/size/close/isClosed with their exact argument counts; nothing else.
+        // A Channel<T>: send/wait/take/size/close/isClosed with their exact argument counts; nothing else.
         if (isChannelType(declaredType)) {
             return isKnownChannelMethod(member->member, call.arguments.size());
         }
@@ -321,11 +267,8 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         if (isMapType(declaredType)) {
             return isKnownMapMethod(member->member);
         }
-        // A known-external class (e.g. Eigen::MatrixXd) calling one of its
-        // allow-listed borrowing methods (`.block()`, `.row()`, ...) -- see
-        // library_summary.h's isKnownBorrowingMethod doc comment. Checked
-        // before the CeeLing-own-class path below since a known-external type
-        // never has a classMethods_ entry (nothing parses its declaration).
+        // A known external class (e.g. Eigen::MatrixXd) calling an allow-listed borrowing method. Checked
+        // first, since such a class has no classMethods_ entry.
         if (!declaredType.empty() && isKnownExternalClassType(declaredType)) {
             return isKnownBorrowingMethod(declaredType, member->member) || isKnownFreshMethod(declaredType, member->member) ||
                    isKnownMutatorMethod(declaredType, member->member);
@@ -335,30 +278,20 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         if (objClass.empty()) return false;
         auto it = classMethods_.find(objClass);
         if (it == classMethods_.end()) return false;
-        // A call carrying a type argument (`n.as<int>()`) resolves to the
-        // SPECIALIZATION's synthetic key, never the bare method name -- a
-        // specialization must exist for the exact requested type, matching real
-        // C++ (there is no implicit conversion between specializations).
+        // A call with a type argument (`n.as<int>()`) resolves to the specialization's synthetic key; a
+        // specialization must exist for the exact requested type.
         if (call.templateArg.empty()) {
             return it->second.count(member->member) > 0;
         }
         const std::string key = specializationKey(member->member, call.templateArg);
         if (it->second.count(key) == 0) return false;
-        // A type-argument match alone isn't enough -- the call's own argument
-        // COUNT must match one of this specialization's actually-declared
-        // arities too (yaml-cpp's `as<T>()` vs `as<T>(T fallback)` are two
-        // separate C++ template primaries at different arities; a call to a
-        // nonexistent arity, e.g. `as<int>(99)` when only `as<int>()` was ever
-        // declared, must be rejected here -- confirmed via probe that the
-        // generated C++ for that case does not compile, yet a plain type-only
-        // membership check let it through).
+        // The argument count must also match a declared arity of the specialization.
         auto arityIt = classSpecializationArities_.find(objClass + "::" + key);
         return arityIt != classSpecializationArities_.end() &&
                arityIt->second.count(call.arguments.size()) > 0;
     }
     // `int(x)` etc.: a primitive conversion, allowed only when the argument is not known to be an
-    // object, container or string (an unresolvable expression such as `a + b` is a primitive
-    // computation or a type error the C++ compile gate reports -- neither is a memory hazard).
+    // object, container or string.
     if (call.templateArg.empty() && isPrimitiveConversionName(call.function_name)) {
         if (call.arguments.size() != 1) return false;
         const Expression* arg = call.arguments[0].get();
@@ -367,8 +300,7 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
         if (declared == "string" || declared == "std::string") return false;
         return resolveObjectType(arg).empty();
     }
-    // Plain call `f(args)`: either a free function, or -- inside a method body -- a
-    // bare same-class method call with an implicit `this` receiver, or a qualified
+    // Plain call `f(args)`: a free function, a bare same-class method call inside a method, or a
     // library free function on the allow-list (`std::stoi(x)`).
     if (call.templateArg.empty() && knownFreeFunctions_.count(call.function_name) > 0) return true;
     if (call.templateArg.empty() && isKnownQualifiedFreeFunction(call.function_name)) return true;
@@ -379,9 +311,7 @@ bool EscapeHatchChecker::isKnownCallable(const FunctionCall& call) const {
             if (call.templateArg.empty()) {
                 if (it->second.count(call.function_name) > 0) return true;
             } else {
-                // Same type-then-arity check as the receiver-qualified branch
-                // above, for a bare same-class call (`as<int>(99)` with an
-                // implicit `this`).
+                // Same type-then-arity check as the receiver-qualified branch.
                 const std::string key = specializationKey(call.function_name, call.templateArg);
                 if (it->second.count(key) > 0) {
                     auto arityIt = classSpecializationArities_.find(currentClass_ + "::" + key);
@@ -418,8 +348,7 @@ std::string EscapeHatchChecker::resolveObjectType(const Expression* expr) const 
         if (auto it = localType_.find(id->name); it != localType_.end()) {
             return classNames_.count(it->second) ? it->second : std::string{};
         }
-        // Not a local/param: fall back to a field of the enclosing class (bare field
-        // access inside a method, e.g. `left.get()` for a field named `left`).
+        // Not a local or parameter: fall back to a field of the enclosing class.
         if (!currentClass_.empty()) {
             if (auto clsIt = classFields_.find(currentClass_); clsIt != classFields_.end()) {
                 if (auto fIt = clsIt->second.find(id->name); fIt != clsIt->second.end()) {
@@ -440,27 +369,12 @@ std::string EscapeHatchChecker::resolveObjectType(const Expression* expr) const 
         return {};
     }
     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
-        // A CHAINED receiver (`a.b().c()`: resolving `a.b()`'s own class here so
-        // `.c()` can be checked against it). Only `recv.method(...)` calls are
-        // resolved -- a bare `f()` free-function call has no per-function return
-        // CLASS tracked anywhere in this checker (only classMethodReturnType_
-        // exists, keyed by owning class), so it stays unresolved, same
-        // conservative "unknown shape -> {}" fallback every other unhandled case
-        // here already uses.
-        //
-        // Safe to widen resolution to a call receiver (previously always {}):
-        // every CeeLing object is compiler-wrapped in a smart pointer, so a
-        // method's return value is always a live reference-counted/owning COPY,
-        // never a raw alias into a temporary that could already be destroyed --
-        // confirmed via probe (chained call on a temporary Holder: the Holder
-        // destructs at end of the full expression, but the returned shared_ptr
-        // keeps the pointee alive, exactly like `Node r = pick(x, y);` already
-        // does for free functions). This only widens what CAN be resolved to a
-        // known class; an unresolvable receiver still falls through to {},
-        // preserving the default-reject posture for everything genuinely unknown.
+        // A chained receiver (`a.b().c()`): resolve `a.b()` to the class `b()` returns, so `.c()` can be
+        // checked. Only `recv.method(...)` and `f()` links are resolved; anything else stays unknown.
+        // This is safe because every CeeLing object is smart-pointer wrapped: a returned value is an
+        // owning copy, never an alias into a destroyed temporary.
         if (!call->callee) {
-            // A plain `f()` call -- the first link of a chain can be a free
-            // function too (e.g. `makeHolder().getInner()`).
+            // A plain `f()` call can be the first link of a chain (`makeHolder().getInner()`).
             auto fnIt = freeFunctionReturnType_.find(call->function_name);
             if (fnIt == freeFunctionReturnType_.end()) return {};
             return classNames_.count(fnIt->second) ? fnIt->second : std::string{};
@@ -484,12 +398,8 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
     if (expr == nullptr) return;
 
     if (auto id = dynamic_cast<const Identifier*>(expr)) {
-        // `reinterpret_cast<T>(x)` etc. have no cast syntax in CeeLing's grammar, so
-        // they parse as ordinary comparison chains (`reinterpret_cast < T > (x)`) with
-        // no ERROR node -- the parser never sees anything wrong. Catch it here: these
-        // names are never legal identifiers in CeeLing source (no class, variable, or
-        // function is allowed to shadow a C++ keyword), so their appearance is
-        // conclusive evidence of an attempted cast.
+        // `reinterpret_cast<T>(x)` etc. have no cast syntax, so they parse as comparison chains with no
+        // ERROR node. These names are never legal identifiers, so their appearance means an attempted cast.
         if (id->name == "reinterpret_cast" || id->name == "const_cast" ||
             id->name == "static_cast" || id->name == "dynamic_cast") {
             EscapeHatchError e;
@@ -520,14 +430,8 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                 errors_.push_back(e);
             }
         } else if (!isKnownCallable(*call)) {
-            // Default-reject unknown library calls: CeeLing has no summary (borrow/
-            // move contract) for anything it didn't compile itself, so it cannot
-            // prove a call is safe -- default-allow would silently treat the return
-            // value as "fresh" even if the callee actually hands back an alias of
-            // one of its arguments (exactly the shape DanglingChecker's auto-derived
-            // summaries catch for known functions). `.get()` calls are handled by
-            // the branch above (they're rejected/accepted by a different rule, not
-            // this one, so they don't fall through here).
+            // Default-reject unknown calls: with no summary the checker cannot prove the call safe, and
+            // treating the result as fresh would miss a callee that returns an alias of an argument.
             std::string calleeName = call->function_name;
             if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get())) {
                 calleeName = calleeMember->member;
@@ -548,7 +452,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                          "(or bool) value. A class, container or string cannot be cast to a "
                          "primitive -- that would be a type-confusion hatch (guide chapter 13, #13).";
             }
-            // A method of std::vector / string that exists but is not admitted: say why (the rule is in library_summary.cpp).
+            // A method of std::vector / string that exists but is not admitted: say why (the rule is in src/facts/library_summary.cpp).
             if (auto calleeMember = dynamic_cast<const MemberAccess*>(call->callee.get())) {
                 const std::string recvType = resolveDeclaredType(calleeMember->object.get());
                 std::string why;
@@ -620,17 +524,10 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
             errors_.push_back(e);
         }
 
-        // Virtual call from a constructor (the design notes Phase 2.7). In C++ this does NOT
-        // dispatch to the derived override -- the vtable still points at the base
-        // while the base's constructor runs -- so the code silently does something
-        // other than what it visually says. Purely structural: no provenance or
-        // liveness needed, just "is this a call, inside a constructor, to a method
-        // that is virtual anywhere in this class's hierarchy". Only constructors are
-        // checked because CeeLing has no destructor syntax (the other half of the
-        // classic trap simply cannot be written).
+        // Virtual call from a constructor: C++ does not dispatch to the derived override while the base
+        // constructor runs. Only constructors are checked; there is no destructor syntax.
         if (inConstructor_ && !currentClass_.empty()) {
-            // Both `this->method()` (bare name, implicit receiver) and an explicit
-            // same-class receiver resolve to the enclosing class's method set.
+            // `this->method()` (bare name) and an explicit same-class receiver both use the enclosing class's methods.
             std::string virtualName;
             if (!call->callee) {
                 virtualName = call->function_name;
@@ -657,13 +554,8 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
             }
         }
 
-        // `this` passed as a call argument from a CONSTRUCTOR must be rejected --
-        // see rejectThisEscapeInConstructor's own doc comment for the full
-        // bad_weak_ptr rationale. Checked narrowly (each argument must be
-        // DIRECTLY the bare Identifier `this`) so `this.foo()` -- an ordinary,
-        // always-safe member access that never extracts a shared_ptr copy -- is
-        // never caught by this: that shape's `this` is checked via the
-        // MemberAccess branch below, which this check deliberately does not touch.
+        // `this` passed as a call argument from a constructor is rejected (see rejectThisEscapeInConstructor).
+        // Only a bare `this` argument is caught; `this.foo()` is an ordinary member access.
         for (const auto& arg : call->arguments) {
             rejectThisEscapeInConstructor(arg.get(), expr);
         }
@@ -679,11 +571,8 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
         return;
     }
     if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
-        // `n[key]` on a CLASS-typed receiver (not a container) means the user's own
-        // `operator[]` -- subject to the same default-reject-unknown-calls rule an
-        // ordinary method call already gets, since it's really `n.operator[](key)`
-        // in disguise. A container receiver (vector/map) is unaffected: this only
-        // fires when resolveObjectType finds an actual class.
+        // `n[key]` on a class-typed receiver is the user's `operator[]` call and gets the same
+        // default-reject rule as any method call. Container receivers are unaffected.
         const std::string objClass = resolveObjectType(sub->object.get());
         if (!objClass.empty()) {
             auto it = classMethods_.find(objClass);
@@ -707,11 +596,8 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
         return;
     }
     if (auto bin = dynamic_cast<const BinaryExpression*>(expr)) {
-        // `ClassName * identifier` has no legal meaning as multiplication (a class
-        // name is never a numeric value), and CeeLing has no separate pointer-
-        // declarator syntax to tell `Node* p;` apart from `a * b;` at the grammar
-        // level -- so a `*` whose left operand is a known class name is conclusively
-        // an attempted raw pointer declaration, not real arithmetic.
+        // `ClassName * identifier` is not multiplication, and the grammar cannot tell it from a raw
+        // pointer declaration, so a `*` whose left operand is a class name is rejected.
         if (bin->operator_str == "*") {
             if (auto leftId = dynamic_cast<const Identifier*>(bin->left.get());
                 leftId != nullptr && classNames_.count(leftId->name)) {
@@ -720,22 +606,15 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
                 e.column = expr->loc.column;
                 e.message = "raw pointer types (`T*`) are forbidden (found `" +
                             leftId->name + "*`)";
-                e.help = "pointers have no legal path through CeeLing (the design notes hatch "
+                e.help = "pointers have no legal path through CeeLing (guide chapter 13, hatch "
                          "#15); declare a plain object variable and let the compiler "
                          "choose the smart-pointer type.";
                 errors_.push_back(e);
             }
         }
-        // An operator between two OBJECT-typed operands (e.g. `a * b` where both are
-        // Eigen::MatrixXd) is really an implicit third-party operator-overload CALL --
-        // the exact same "did CeeLing compile this itself" question isKnownCallable
-        // already asks for an explicit `.method()` call, just spelled as an operator
-        // instead. Without this check, a binary operator on any unrecognized foreign
-        // type silently passed through unchecked (confirmed via probe) -- a real gap
-        // in the default-reject boundary. Only fires when BOTH operands resolve to a
-        // known-external class type (leaves ordinary primitive arithmetic, and
-        // operators on CeeLing's own classes -- which already have their own
-        // operator== / operator<< routing elsewhere -- completely untouched).
+        // An operator between two operands of known external classes (e.g. Eigen::MatrixXd `a * b`) is an
+        // implicit library call and gets the same default-reject check as `.method()`. CeeLing's own classes
+        // and primitive arithmetic are untouched.
         const std::string leftType = resolveDeclaredType(bin->left.get());
         const std::string rightType = resolveDeclaredType(bin->right.get());
         if (!leftType.empty() && isKnownExternalClassType(leftType) &&
@@ -758,7 +637,7 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
     }
     if (auto un = dynamic_cast<const UnaryExpression*>(expr)) {
         if (un->operator_str == "*" && isOptionalType(resolveDeclaredType(un->operand.get()))) {
-            // `*o` on an empty optional is undefined behaviour in C++ (value() throws instead). There is no checked spelling of it: use value() or value_or().
+            // `*o` on an empty optional is undefined behaviour in C++; use value() or value_or().
             EscapeHatchError e;
             e.line = expr->loc.line;
             e.column = expr->loc.column;
@@ -777,17 +656,11 @@ void EscapeHatchChecker::checkExpression(const Expression* expr) {
         }
         return;
     }
-    // Identifier/Number/ScopedIdentifier/StringLiteral leaves: nothing to check.
+    // Identifier, Number, ScopedIdentifier and StringLiteral leaves: nothing to check.
 }
 
-// See header for the full contract. `expr` must be checked as a DIRECT bare
-// ThisExpression node (grammar.js's reserved `this_expression`) -- callers
-// must NOT recurse into a larger expression and call this on some inner
-// sub-expression, or a legal `this.foo()` receiver would be wrongly caught
-// (a ThisExpression used as a MemberAccess's own receiver is not itself
-// "the whole expression at this position"; the distinction is made by which
-// call sites choose to call this function at all, e.g. checkExpression's
-// MemberAccess branch deliberately never calls this on `member->object`).
+// `expr` must be tested as the whole bare `this` node; callers must not call this on a sub-expression, or a
+// legal `this.foo()` receiver would be caught.
 void EscapeHatchChecker::rejectThisEscapeInConstructor(const Expression* expr, const ASTNode* anchor) {
     if (!inConstructor_) return;
     if (dynamic_cast<const ThisExpression*>(expr) == nullptr) return;
@@ -814,8 +687,7 @@ std::string trimType(const std::string& t) {
 
 bool EscapeHatchChecker::typeIsKnown(const std::string& rawType) const {
     std::string type = trimType(rawType);
-    // A `ref` observer is written `ref T x`: the parser keeps `T` here. A trailing `&`/`*` never reaches this point (raw pointers
-    // and references are rejected elsewhere), so they are left to those checks.
+    // A `ref` observer is written `ref T x`; the parser keeps `T` here. A trailing `&`/`*` is rejected elsewhere.
     if (type.empty() || type == "void") return true;
     if (!typeParameter_.empty() && type == typeParameter_) return true;
     if (isPrimitiveType(type) || isStringType(type) || isOstreamType(type)) return true;
@@ -879,7 +751,7 @@ void EscapeHatchChecker::requireKnownType(const std::string& type, const std::st
         errors_.push_back(e);
         return;
     }
-    // one report per distinct name and line: a type used ten times on one line is one mistake
+    // one report per distinct name and line
     if (!reportedUnknownTypes_.insert(trimType(type) + "@" + std::to_string(line)).second) return;
     EscapeHatchError e;
     e.line = line;
@@ -925,13 +797,8 @@ void EscapeHatchChecker::checkStatement(const Statement* stmt) {
                          "Use a `std::span<T>` for a view that writes, or assign to the vector itself.";
                 errors_.push_back(e);
             }
-            // `n[key] = value;` on a CLASS-typed (not container) receiver needs a
-            // REFERENCE-returning `operator[]` to mean anything in real C++ (the
-            // reference is what the subsequent `= value` actually assigns through).
-            // CeeLing has no `ref`-return capability yet (see the internal notes/Ch. 9), so
-            // this is rejected outright regardless of whether `operator[]` itself
-            // exists -- read position (`x = n[key];`) has no such problem and stays
-            // supported; only the write-through-subscript shape is unsupported.
+            // `n[key] = value;` on a class-typed receiver needs a reference-returning `operator[]`, which
+            // CeeLing cannot express, so it is rejected whether or not `operator[]` exists. Reading `x = n[key];` is supported.
             const std::string objClass = resolveObjectType(sub->object.get());
             if (!objClass.empty()) {
                 EscapeHatchError e;
@@ -976,9 +843,7 @@ void EscapeHatchChecker::checkStatement(const Statement* stmt) {
     } else if (auto th = dynamic_cast<const ThrowStatement*>(stmt)) {
         checkExpression(th->expression.get());
     } else if (auto trys = dynamic_cast<const TryStatement*>(stmt)) {
-        // Both bodies are ordinary code: an unknown call inside `try` is exactly
-        // as unchecked as one outside it. (Missing this branch let any call
-        // through as long as it sat inside a try block.)
+        // An unknown call inside `try` is as unchecked as one outside it.
         for (const auto& inner : trys->body) {
             checkStatement(inner.get());
         }

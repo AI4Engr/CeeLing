@@ -8,18 +8,14 @@
 namespace cling {
 
 namespace {
-// "std::vector<Node>" or "vector<Node>" -- accept both the qualified and bare form,
-// matching how `type` strings are captured verbatim from source text (a user could
-// plausibly write either, though every fixture uses the qualified form).
+// Both the qualified and the bare spelling are accepted.
 constexpr const char* kQualifiedPrefix = "std::vector<";
 constexpr const char* kBarePrefix = "vector<";
 
 constexpr const char* kMapQualifiedPrefix = "std::map<";
 constexpr const char* kMapBarePrefix = "map<";
 
-// Strips a prefix/trailing '>' the same way vectorElementType does, returning the
-// raw (unsplit) argument list text, e.g. "int, string". Empty if `type` isn't a
-// map<...> shape.
+// The raw argument list text of a map<...> type, e.g. "int, string"; empty if `type` is not one.
 std::string mapArgsText(const std::string& type) {
     size_t prefixLen = 0;
     if (type.rfind(kMapQualifiedPrefix, 0) == 0) {
@@ -33,11 +29,7 @@ std::string mapArgsText(const std::string& type) {
     return type.substr(prefixLen, type.size() - prefixLen - 1);
 }
 
-// Splits "K, V" on the top-level comma (not one nested inside a further '<...>',
-// though nested generics as map arguments are rejected downstream by
-// isPrimitiveType regardless -- this split just needs to not misparse them into
-// garbage key/value strings before that rejection happens), trims surrounding
-// whitespace. Returns {"", ""} if there isn't exactly one top-level comma.
+// Splits "K, V" on the top-level comma and trims whitespace. Returns {"", ""} unless there is exactly one.
 std::pair<std::string, std::string> splitMapArgs(const std::string& argsText) {
     int depth = 0;
     size_t commaPos = std::string::npos;
@@ -81,36 +73,21 @@ std::string vectorElementType(const std::string& type) {
 
 namespace {
 
-// ADMISSION BY RULE (2026-11-02). There is no list of admitted std::vector / std::string / std::map method names. The scan of
-// the library's own declarations (facts/std-vector.clfacts, std-string.clfacts, std-map.clfacts) holds one fact per SIGNATURE:
-// what it returns, whether it changes the receiver, and the kind of each parameter. A name is admitted when every signature
-// CeeLing code could actually call returns a shape the checkers can honour. "Honour" means: after the call, the analysis still
-// knows what the result may alias, so admitting it does not open a hole.
+// Admission by rule: there is no list of admitted method names. The facts (facts/std-*.clfacts) hold one entry
+// per signature: its result shape, whether it changes the receiver, and the kind of each parameter. A name is
+// admitted when every callable signature returns a shape the checkers can follow:
 //   void, scalar      nothing to alias.
-//   string            a fresh std::string (a value type).
-//   self-reference    `append` & co return *this; CeeLing binds no observer to a call result, so it is used as a statement
-//                     or a temporary.
-// Everything else stays out until the checker can follow it, and the reason is reported with the rejected call:
-//   raw-pointer       sealed: a raw pointer has nowhere legal to go (data(), c_str()).
-//   iterator-view     an iterator dangles when the container grows; iterators are not tracked.
-//   element-reference at()/front()/back(): only `v[i]` is tracked as an observer of the container.
-//   view              string_view conversion: views are not tracked.
-//   value             a type CeeLing has no shape for (std::allocator, a pair, a comparison object).
-//   unresolved        the scan could not determine the result.
-// A signature is CALLABLE unless a parameter is of a kind CeeLing has no value of: an iterator, an initializer_list, an
-// allocator, a pair or map node, a pointer to writable memory (`vector::erase(const_iterator)` is not callable, `map::erase(key)`
-// is). Every call that returns an iterator is refused, a string literal is the only `const char *`, and CeeLing has no pairs,
-// so such an overload can never be written; leaving it out is exact, and it is what lets `map::erase(key)` and
-// `string::insert(pos, text)` in while `erase(iterator)` stays out. A parameter pack (`emplace_back(args...)`) is callable.
-// A callable signature with a non-const reference parameter (`swap(other)`, `merge(other)`) is out: CeeLing moves a container
-// argument by default, which would empty the other operand.
+//   string            a fresh value.
+//   self-reference    `append` and friends return *this; used as a statement or temporary.
+// Refused, with the reason reported (see shapeRefusal): raw-pointer, iterator-view, element-reference, view, value, unresolved.
+// A signature is callable unless a parameter is of a kind CeeLing cannot write (iterator, initializer_list,
+// allocator, pair, pointer to writable memory); that is why `map::erase(key)` is in and `erase(iterator)` is out.
+// A callable signature with a non-const reference parameter (`swap(other)`) is out: the argument would be moved.
 bool shapeHonoured(const std::string& shape, const std::string& cls = "") {
-    // A `view` result (std::string_view::substr) is a view of the SAME owner as the receiver: the checker follows it, but only for a string_view receiver.
+    // A `view` result (substr) is a view of the same owner as the receiver; the checker follows it for a string_view or span receiver.
     if (shape == "view" && (cls == "string_view" || cls == "span")) return true;
     if (shape == "element-reference" && cls == "span") return true;      // the element is a number: consumed as a copy
-    // An optional holds a number, a bool, a char or a string (nothing else is allowed, see isOptionalElementAllowed). A REFERENCE to that element
-    // (`value()`) can only be consumed as a value here: CeeLing cannot bind a reference to a primitive or a string, and a call result is not a valid
-    // origin for a view. So the reference is a copy by the time anything can see it, and the element type itself (`value_or` returns it by value) is fresh.
+    // An optional holds a primitive or a string, and a reference to it can only be consumed as a copy.
     if (cls == "optional" && (shape == "element-reference" || shape == "value")) return true;
     return shape == "void" || shape == "scalar" || shape == "string" || shape == "self-reference";
 }
@@ -182,7 +159,7 @@ MethodVerdict methodVerdict(const std::string& cls, const std::string& name) {
     return {true, ""};
 }
 
-// Does any signature of `name` change the receiver (so every observer of the container dies)? Counted over ALL signatures, callable or not.
+// Does any signature of `name` change the receiver (so every observer of the container dies)? Counts all signatures, callable or not.
 bool methodMutates(const std::string& cls, const std::string& name) {
     for (const FactTable::Fact* f : builtinFacts().withPrefix(cls + ".sig", name + "/")) {
         if (f->attrs.at("mutates") == "yes") return true;
@@ -205,22 +182,13 @@ std::string stringMethodRefusal(const std::string& methodName) {
 }
 
 bool vectorMethodSharesArg(const std::string& methodName, size_t argIndex) {
-    // push_back(x) links x into the container (like a field store), the same way
-    // `a.b = obj;` does not consume `obj` -- see dangling_checker.cpp's member-
-    // target-assignment handling for the precedent this follows.
+    // push_back(x) links x into the container like a field store; it does not consume x.
     return argIndex == 0 && builtinFacts().hasFlag("vector.note", methodName, "shares-arg0");
 }
 
 bool vectorMethodInvalidatesReferences(const std::string& methodName) {
-    // pop_back doesn't reallocate (capacity is unchanged), but it DOES destroy
-    // the popped-back element itself, so any existing reference/observer of
-    // that element is dangling afterward -- conservatively treated the same
-    // as push_back's whole-container invalidation, since this codebase's
-    // model tracks invalidation at the container level, not per-element (see
-    // Chapter 18 Step 14's design note on this granularity choice).
-    // Derived, not listed: a method that may change the receiver (a non-const member with no const twin, found by the scan,
-    // `mutates=yes` in facts/std-vector.clfacts) invalidates. That is push_back, pop_back, resize, reserve, assign, clear,
-    // shrink_to_fit, ... and nothing a name list could forget.
+    // Derived, not listed: a method that may change the receiver (`mutates=yes` in facts/std-vector.clfacts)
+    // invalidates. Invalidation is tracked per container, not per element.
     return methodMutates("vector", methodName);
 }
 
@@ -244,7 +212,7 @@ std::string stringViewMethodRefusal(const std::string& methodName) {
     return methodVerdict("string_view", methodName).reason;
 }
 
-// Does this method of a string_view return another view of the SAME owner (substr)? Read from the scan, not listed.
+// Does this method of a string_view return another view of the same owner (substr)? Read from the facts.
 bool stringViewMethodReturnsView(const std::string& methodName) {
     for (const FactTable::Fact* f : builtinFacts().withPrefix("string_view.sig", methodName + "/")) {
         const std::string& r = f->attrs.at("result");
@@ -343,9 +311,8 @@ std::string mapMethodRefusal(const std::string& methodName) {
 }
 
 bool mapMethodInvalidatesReferences(const std::string& methodName) {
-    // Coarser than the standard (insert does not invalidate references into a map, erase only those of the erased element):
-    // any method that changes the map kills its observers. Conservative, and no map observer can be written today (a map holds
-    // primitives only, and `ref` to a primitive does not compile), so nothing is lost.
+    // Coarser than the standard: any method that changes the map kills its observers. No map observer can be
+    // written today (a map holds primitives only), so nothing is lost.
     return methodMutates("map", methodName);
 }
 
@@ -387,7 +354,7 @@ bool isCharType(const std::string& type) {
 
 bool isKnownQualifiedFreeFunction(const std::string& qualifiedName) {
     // std::stoi / stod / to_string, the project shims (facts/shims.clfacts) and Eigen's static factory (facts/eigen.clfacts).
-    // The check is a bare string match on the called name, whether or not a namespace qualifier is present.
+    // A plain string match on the called name.
     return builtinFacts().has("function", qualifiedName);
 }
 
@@ -411,9 +378,7 @@ bool isKnownExternalOperator(const std::string& type, const std::string& operato
 }
 
 bool isKnownBorrowingMethod(const std::string& className, const std::string& methodName) {
-    // Not exhaustive -- extend by consulting Eigen's own Block/Transpose/Ref/Map/Diagonal/Reverse expression-template
-    // family (see this function's header doc comment), never by guessing. Each entry gets REAL dangling tracking
-    // (DanglingChecker::resolveBorrowingMethodReceiver), unlike isKnownExternalOperator's set.
+    // Each entry gets dangling tracking (DanglingChecker::resolveBorrowingMethodReceiver).
     // An opaque class's unlisted method is assumed to borrow the receiver (see isOpaqueExternalClass).
     return builtinFacts().has("borrow", className + "::" + methodName) || isConservativeOpaqueCall(className, methodName);
 }
@@ -439,8 +404,7 @@ std::vector<std::string> knownExternalClassTypes() {
 }
 
 bool isKnownRuntimeHelper(const std::string& qualifiedName) {
-    // cling::spawn is produced only by closure_desugar's `spawn(closure ...)` rewrite (a hand-written call is
-    // rejected there): it is what makes the sendable-capture check unavoidable.
+    // cling::spawn is produced only by closure_desugar's `spawn(closure ...)` rewrite; a hand-written call is rejected.
     static const std::set<std::string> kKnown = {"cling::readFileToString", "cling::fileExists",
                                                   "cling::readFileToBytes", "cling::spawn",
                                                   "cling::setJobFailure", "cling::clearJobFailure",

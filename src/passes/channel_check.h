@@ -4,21 +4,19 @@
 
 namespace cling {
 
-// Validates every use of the built-in `Channel<T>` type before any other pass sees it:
-//   - T must be a plain value (primitive, string, std::vector of those, or a struct made only of those): the same values a `spawn`
-//     may capture, because a channel is how threads hand each other COPIES of such values;
-//   - a Channel may not be nested inside another generic (std::vector<Channel<int>>, std::map, Channel<Channel<int>>);
-//   - a Channel may not be a `ref` observer and may not cross an `ext_fn` signature.
-// Throws std::runtime_error with the compiler's "error[semantic/...]" text on the first violation. Run after desugarStructJson and
-// before desugarClosures (closure parameters are still ClosureExpression nodes, and are checked too).
+// Validates every use of the built-in `Channel<T>` type:
+//   - T must be a plain value, the same kind a `spawn` may capture;
+//   - a Channel may not be nested in another generic (vector, map, another Channel);
+//   - a Channel may not be a `ref` observer or appear in an `ext_fn` signature.
+// Throws std::runtime_error with the usual "error[semantic/...]" text on the first violation.
+// Runs after desugarStructJson and before desugarClosures (closure parameters are checked too).
 void checkChannels(Program& program);
 
-// True if some declaration, parameter or return type in the program (included files' declarations too) is a Channel. The emitter
-// uses it to put the runtime template (library_summary.h: channelHelperDefinition) into the generated file or header.
+// True if some declaration, parameter or return type is a Channel; the emitter then adds the
+// runtime template (src/emit/runtime_helpers) to the generated file or header.
 bool programUsesChannel(const Program& program);
 
-// True if some declaration, parameter or return type in the program mentions a `span<T>`: the emitter then puts library_summary.h's
-// spanHelperDefinition (cling::span) into the generated file or header.
+// Same for `span<T>`: the emitter then adds cling::span.
 bool programUsesSpan(const Program& program);
 
 }  // namespace cling

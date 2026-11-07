@@ -674,7 +674,7 @@ int main() {
 ```
 <!-- error: 10_channel_ext_fn_rejected.clg -->
 ```
-Error: error[semantic/forbidden-construct]: ext_fn parameter `c` type `Channel<int>` is not supported (line 1, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see the internal notes' ext_fn entry).
+Error: error[semantic/forbidden-construct]: ext_fn parameter `c` type `Channel<int>` is not supported (line 1, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see guide chapter 11).
 ```
 
 <!-- example: 10_channel_unknown_method_rejected.clg -->

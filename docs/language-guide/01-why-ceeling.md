@@ -337,7 +337,7 @@ int main() {
 ```
 error[semantic/forbidden-construct]: raw pointer types (`T*`) are forbidden (found `Node*`)
   --> 01_raw_pointer.clg:9:5
-  help: pointers have no legal path through CeeLing (the design notes hatch #15); declare a plain object variable and let the compiler choose the smart-pointer type.
+  help: pointers have no legal path through CeeLing (guide chapter 13, hatch #15); declare a plain object variable and let the compiler choose the smart-pointer type.
 ```
 
 ### 7. A closure that captures a frame that is gone

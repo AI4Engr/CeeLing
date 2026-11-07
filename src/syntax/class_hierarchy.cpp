@@ -15,19 +15,15 @@ std::vector<const ClassDeclaration*> classesInBaseFirstOrder(const Program& prog
         }
     }
 
-    // Depth-first emit: a class is emitted only after its base already has been.
-    // `emitted` doubles as the cycle guard -- validateInheritance already rejected
-    // cycles at parse time, but this stays self-contained rather than trusting that
-    // from a different module.
+    // A class is emitted only after its base. `emitted` also guards against cycles
+    // so this does not depend on validateInheritance.
     std::vector<const ClassDeclaration*> ordered;
     std::set<std::string> emitted;
 
     for (const ClassDeclaration* start : inputOrder) {
         if (emitted.count(start->name) > 0) continue;
 
-        // Walk up to the root, collecting the unemitted chain, then emit it
-        // base-first. Bounded by the number of classes, so a (already-rejected)
-        // cycle still terminates here rather than spinning.
+        // Collect the unemitted chain up to the root, then emit it base first.
         std::vector<const ClassDeclaration*> chain;
         std::set<std::string> onChain;
         const ClassDeclaration* cursor = start;

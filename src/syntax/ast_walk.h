@@ -1,6 +1,6 @@
 #pragma once
-// A small recursive walk over every statement and expression of a program (including the bodies of functions, methods,
-// constructors, closures and the members of classes). Shared by the passes that look for particular constructs.
+// Recursive walk over every statement and expression, including function, method, constructor and closure bodies
+// and class members.
 #include <functional>
 
 #include "syntax/ast.h"

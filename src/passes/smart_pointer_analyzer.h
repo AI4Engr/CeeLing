@@ -29,9 +29,7 @@ struct VariableReference {
     bool isAssignedTo = false;    // Is another variable assigned from this?
     bool isBackReference = false; // Is this a backward reference (e.g., prev in doubly linked list)?
     bool participatesInBidirectionalAssignment = false;
-    // Copied out of / into a field (`Item c = p.child;`, `c = p.child;`,
-    // `p.child = q.next;`): field and the other side are two live owners of one
-    // object, so both must be shared -- unique_ptr cannot be copied.
+    // Copied out of or into a field: the field and the other side are two owners of one object, so both are shared.
     bool aliasedWithField = false;
     bool hasExplicitHint = false;
     std::set<std::string> assignedFromVars;  // Variables assigned to this one
@@ -48,152 +46,70 @@ struct ClassRelationship {
     bool hasBidirectionalAssignment = false;
 };
 
+// Chooses unique_ptr / shared_ptr / weak_ptr for every object variable, field, container element and method result,
+// and classifies parameters (read-only, last-use) for the emitter.
 class SmartPointerAnalyzer {
 public:
-    // Two-pass analysis
     void analyzeProgram(const Program& program, const std::string& source = "");
 
-    // ---- pointer demands: what files that include each other need to agree on ----
-    // A class is analysed in the file that declares it, and the header that file produces fixes the pointer kind of every field, container element and
-    // method return. A file that INCLUDES the class sees how it is used (an alias made of a field, an element copied out of a vector, a returned local) and
-    // may need a kind the declaring file, which cannot see that use, did not choose: the generated code of the two would not fit together. In one file
-    // this cannot happen, because the analysis sees everything; across files it is handled in two steps (scripts/build.sh does them):
-    //   1. compile every file and WRITE its demands (exportDemands): the kinds it needs for the members of the classes it includes;
-    //   2. compile every file again, READING all the demands (setDemands): a member some file needs shared becomes shared in every file that has the class.
-    // A demand can only make a member SHARED (shared is always safe to use, unique is not). Lines of the file: "shared field Class.name",
-    // "shared elements name" (a container field, by name like every container here), "shared return Class::method". Without demands nothing changes.
+    // Pointer demands. Pointer kinds are chosen per file, but a file that includes a class may need a kind the
+    // declaring file did not choose (see --ptr-demands in the guide). exportDemands writes what this file needs;
+    // setDemands reads them back. A demand can only make a member shared. Line forms: "shared field Class.name",
+    // "shared elements name", "shared return Class::method".
     void setDemands(const std::vector<std::string>& lines);
     std::vector<std::string> exportDemands(const Program& program) const;
     PointerType getPointerType(const std::string& className, const std::string& variableName) const;
-    // Scope-aware variant of getPointerType: the decision recorded for exactly this
-    // (enclosing function/method, class, name) triple when there is one, else the merged
-    // getPointerType answer. getPointerType merges EVERY same-named variable of the same class
-    // across the whole program and answers SHARED when they disagree, so a function whose local
-    // `item` is unique got a shared declaration just because another function's `item` is shared
-    // -- while its return type, decided per function, stayed unique. The scope string is the one
-    // analyzeStatement uses: a free function's name, "main", or "Class::method".
+    // The decision recorded for this (scope, class, name), else the merged getPointerType answer, which
+    // is SHARED when same-named variables disagree. scopeName is a free function's name, "main" or "Class::method".
     PointerType getPointerTypeInScope(const std::string& scopeName, const std::string& className,
                                       const std::string& variableName) const;
     PointerType getPointerTypeForVariable(const std::string& variableName) const;
-    // Scoped variant of getPointerTypeForVariable: only matches pointerDecisions
-    // entries recorded under `scopeName` (a function/method name, matching
-    // buildKey's own containingScope argument), never a same-named local in an
-    // unrelated function. getPointerTypeForVariable's plain name-only suffix
-    // match is a REAL, pre-existing cross-function name collision (confirmed:
-    // two unrelated free functions each with their own local named `copy`
-    // wrongly classified each other's return type) -- this scoped variant
-    // exists specifically for promoteReturnsOfSharedLocals's two loops, which
-    // always know which single function/method body they're asking about and
-    // have no reason to risk a same-named local anywhere else in the program.
+    // Like getPointerTypeForVariable but only matches decisions recorded under scopeName, so a same-named local
+    // in another function cannot collide.
     PointerType getPointerTypeForVariableInScope(const std::string& scopeName,
                                                   const std::string& variableName) const;
     std::string buildAnalysisReport() const;
     const std::vector<AnalysisDiagnostic>& getDiagnostics() const;
     bool classRequiresSharedRoot(const std::string& className) const;
 
-    // Is `fieldName`, declared directly in class `enclosingClass`, lowered to a std::weak_ptr?
-    // Exact (enclosing class, field) lookup -- unlike getPointerType, which matches on the
-    // field's TYPE and silently falls back to SHARED when nothing matches. A weak_ptr field
-    // cannot be read directly in C++ (no operator->, operator!, operator==, operator bool),
-    // so every read of one has to go through lock(); AstEmitter asks this to know when.
+    // Is this field of this class lowered to a weak_ptr? Exact lookup. A weak_ptr cannot be read directly,
+    // so the emitter reads such a field through lock().
     bool isWeakField(const std::string& enclosingClass, const std::string& fieldName) const;
 
-    // Phase 2.6 container support: a vector's element pointer kind must be uniform
-    // (std::vector<unique_ptr<T>> and std::vector<shared_ptr<T>> are different C++
-    // types), decided once across every push_back call site targeting that
-    // container variable -- deliberately separate from the class-field/local
-    // pointerDecisions machinery above (self-contained, so it can't perturb those
-    // existing heuristics; see the .cpp for the exact rule). WEAK is never an
-    // element kind (back-reference detection is field-name-based and doesn't apply
-    // to container elements in this slice).
-    // Is `containerVarName`'s element kind SHARED (true) or UNIQUE (false, the
-    // default when no push_back call forces sharing)?
+    // Is the element kind of this container SHARED (true) or UNIQUE (false)? One kind per container
+    // variable, because vector<unique_ptr<T>> and vector<shared_ptr<T>> are different types. Never WEAK.
     bool containerElementIsShared(const std::string& containerVarName) const;
 
-    // A method's RETURN pointer kind, INFERRED (never annotated -- see
-    // inferAliasReturningMethods for the exact rule) from its body's own
-    // shape: a method whose every `return` hands back `this` or an object-
-    // typed field (never `new T(...)`) is classified ALIAS_RETURNING and gets
-    // SHARED here. Deliberately defaults to UNIQUE (not SHARED, unlike
-    // getPointerType's field/local fallback), so an ordinary object-returning
-    // method keeps today's unique_ptr/move-return behavior completely
-    // unchanged unless its body actually matches the alias-returning shape.
+    // A method's return pointer kind. SHARED when every `return` hands back `this`, an object field or another
+    // alias-returning method (see inferAliasReturningMethods); otherwise UNIQUE.
     PointerType getMethodReturnPointerType(const std::string& className,
                                            const std::string& methodName) const;
 
-    // Does `className` need `std::enable_shared_from_this<className>` as a
-    // compiler-generated base? True iff some ALIAS_RETURNING method's body
-    // contains a bare `return this;` -- auto-derived from the same inference
-    // pass, no user-facing annotation exists for this at all.
+    // Does the class need enable_shared_from_this: some alias-returning method contains `return this;`.
     bool classNeedsSharedFromThis(const std::string& className) const;
 
-    // Is `className` a VALUE TYPE -- never wrapped in unique_ptr/shared_ptr for
-    // its own variable declarations, class fields, or method return values,
-    // unlike every other user-defined class? Purely structural, no annotation
-    // (see classifyValueTypeClasses): true iff the class defines all three of
-    // operator*/operator++/operator!= (the C++ range-for iterator protocol).
-    // This is a SEPARATE, independent classification from PointerType --
-    // AstEmitter checks this FIRST and, if true, skips calling
-    // getPointerType/getMethodReturnPointerType entirely for that class-typed
-    // thing (a value-type class's own FIELDS of some OTHER class type are
-    // unaffected and still go through the ordinary pointer-kind decision).
+    // Is the class a value type (never wrapped in a smart pointer)? True iff it defines operator*, operator++
+    // and operator!= (the range-for iterator protocol). Independent of PointerType; the emitter checks it first.
     bool isValueTypeClass(const std::string& className) const;
 
-    // Is free function `fnName`'s parameter `paramName` READ-ONLY -- never
-    // stored into a field/return/another owning sink anywhere in the body,
-    // only ever read via `paramName.field` (including passing such a field
-    // access on to another already-classified read-only parameter)? See
-    // classifyReadOnlyFreeFunctionParams for the exact structural rule.
-    // Motivated by yaml-cpp API-compatibility: a yaml-cpp function taking
-    // `const Node&` (e.g. `Clone`) must not consume its caller's argument,
-    // even though CeeLing has no reference-parameter syntax and an object
-    // parameter defaults to move-by-value.
+    // Is a free function's object parameter read-only: only ever read as `param.field`, never stored,
+    // returned or moved on? Such a parameter is not consumed by the call (see classifyReadOnlyFreeFunctionParams).
     bool isReadOnlyFreeFunctionParam(const std::string& fnName, const std::string& paramName) const;
 
-    // Same classification, for a CLASS METHOD's own parameter (e.g. Parser::
-    // parseValueInto's `target`, which is only ever mutated THROUGH -- never
-    // stored/returned/moved-into-another-owner -- so the caller's own local
-    // must survive the call). Kept as a separate query (not folded into
-    // isReadOnlyFreeFunctionParam) since methods key by (class, method, param)
-    // triples, not just (fnName, paramName) pairs -- two different classes'
-    // same-named methods must not collide. See classifyReadOnlyFreeFunctionParams,
-    // which now classifies both free functions and methods in one fixed point.
+    // The same for a method's parameter, keyed by (class, method, param).
     bool isReadOnlyMethodParam(const std::string& className, const std::string& methodName,
                                 const std::string& paramName) const;
 
-    // Is free function `fnName`'s parameter `paramName` a READ-ONLY CONTAINER
-    // (`std::vector<primitive>`)? A separate, stricter classification from
-    // isReadOnlyFreeFunctionParam above (object-typed params): a container
-    // parameter is read-only only if every use is a subscript READ, `.size()`,
-    // the container of a range-for, or passed on bare to another already-
-    // read-only container parameter (or an `ext_fn` `ref` parameter) -- NOT
-    // "any non-disqualifying use", since a container has mutating METHOD
-    // CALLS (`push_back`/`pop_back`/`resize`) that the object-typed rule's
-    // receiver-of-a-method-call case would otherwise wave through as a mere
-    // "read" (dispatch). See classifyReadOnlyContainerParams. Motivated by
-    // zlib-cling's `decodeSymbol`, which copies four ~512-entry vectors on
-    // every decoded symbol purely because CeeLing has no reference-parameter
-    // syntax; measured 9.7x on zlib-cling's decompressor from passing those
-    // four by `const&` alone.
+    // Is a free function's std::vector<primitive> parameter read-only, so it can be passed as const&?
+    // Stricter than the object rule: a mutating method call (push_back, pop_back, resize) disqualifies
+    // (see classifyReadOnlyContainerParams).
     bool isReadOnlyContainerParam(const std::string& fnName, const std::string& paramName) const;
 
-    // Same classification for a class method's own container parameter --
-    // separate query for the same (class, method, param) triple-keying
-    // reason isReadOnlyMethodParam is separate from isReadOnlyFreeFunctionParam.
+    // The same for a method's container parameter.
     bool isReadOnlyMethodContainerParam(const std::string& className, const std::string& methodName,
                                           const std::string& paramName) const;
 
-    // Is EVERY body statement of free function `fnName` (transitively,
-    // through every callee it invokes) free of container reallocation/
-    // destruction and of replacing an object/container field or variable
-    // that is not its own local? This is what makes `const&` binding safe
-    // for a NON-local argument (a field, or a chained field access): if the
-    // callee is heap-pure, nothing it does can invalidate the reference the
-    // caller's own field/vector is bound through. Writing a PRIMITIVE field
-    // is fine (it cannot change or destroy a vector) -- only object/container
-    // field/variable assignment and container-mutating method calls
-    // disqualify. See classifyHeapPureFunctions.
-    // A `string` parameter the body never mutates (see classifyReadOnlyStringParams): lowered to
+    // A string parameter the body never mutates (see classifyReadOnlyStringParams): lowered to
     // `const std::string&`. className is "" for a free function.
     bool isReadOnlyStringParam(const std::string& className, const std::string& functionName,
                                const std::string& paramName) const;
@@ -204,33 +120,21 @@ public:
     // May it write a field that owns objects (a class handle or a container), or reassign an object
     // parameter -- i.e. free an object that a field argument lives in?
     bool calleeMayMutateObjects(const std::string& bareName) const;
-    // Does ANY function/method with this bare name have a read-only string parameter at `index`?
+    // Does any function/method with this bare name have a read-only string parameter at `index`?
     // (for a call whose receiver class the emitter could not resolve)
     bool anyReadOnlyStringParamAt(const std::string& bareName, size_t index) const;
+
+    // Is the function heap-pure: transitively, it frees or reallocates no container or object it does not
+    // own locally, and replaces no object/container field or non-local variable. Writing a primitive field is
+    // allowed. This is what makes a const& to a FIELD argument safe (see classifyHeapPureFunctions).
     bool isHeapPureFreeFunction(const std::string& fnName) const;
 
     // Same, for a class method.
     bool isHeapPureMethod(const std::string& className, const std::string& methodName) const;
 
-    // Is free function `fnName`'s `std::vector<primitive>` parameter
-    // `paramName` safely MOVED (not copied) at the one bare-name field
-    // assignment (`data = paramName;`) that stores it, because that
-    // assignment is PROVABLY paramName's last use in the body? This is a
-    // narrower, orthogonal question from isReadOnlyContainerParam above: a
-    // read-only container is never moved anywhere (bound by `const&`
-    // instead); this classification is for the opposite shape -- a
-    // parameter whose ENTIRE body usage is "hand it to one field, and
-    // never touch it again" (zlib-cling's `pushAll(std::vector<byte>
-    // bytes) { input = bytes; }` is the motivating case: DanglingChecker's
-    // own bare-field-store handling treats `data = bytes;` as a link/share
-    // that leaves `bytes` live afterward -- correct in general (a linked-
-    // list node is routinely used again right after being attached to a
-    // field), but needlessly conservative for the common case where the
-    // parameter genuinely never IS used again). See
-    // classifyLastUseFieldAssignedParams for the scan and its deliberately
-    // narrow scope (straight-line bodies only -- any if/while/for/try/
-    // closure anywhere in the body means "give up", not "analyze the
-    // branches").
+    // Is a std::vector<primitive> parameter moved (not copied) at the one bare-name field assignment
+    // (`data = param;`) that stores it, because that is provably its last use? See
+    // classifyLastUseFieldAssignedParams for the deliberately narrow scope.
     bool isLastUseFieldAssignedParam(const std::string& fnName, const std::string& paramName) const;
 
     // Same classification for a class method's own parameter.
@@ -238,241 +142,120 @@ public:
                                              const std::string& paramName) const;
 
 private:
-    // Classifies value-type classes (see isValueTypeClass) by scanning every
-    // ClassDeclaration's members for operator*/operator++/operator!= method
-    // definitions. Fully independent of the rest of the pipeline -- reads
-    // only the raw Program, writes only valueTypeClasses_ -- so it can run
-    // first, before firstPassCollectReferences, with no ordering dependency.
+    // Finds value-type classes (see isValueTypeClass). Reads only the Program.
     void classifyValueTypeClasses(const Program& program);
 
     // First pass: collect all reference relationships
     void firstPassCollectReferences(const Program& program);
     void analyzeStatement(const Statement& stmt, const std::string& currentClass = "");
     void analyzeVariableDeclaration(const VariableDeclaration& decl, const std::string& currentClass);
-    // Give each object-typed parameter a minimal identity in variableReferences (see
-    // .cpp for why this stays deliberately minimal -- no assignment/back-reference
-    // heuristics wired in).
+    // Gives each object-typed parameter a minimal identity in variableReferences.
     void registerParameters(const std::vector<std::pair<std::string, std::string>>& params,
                             const std::string& scopeName);
     void analyzeAssignmentStatement(const AssignmentStatement& stmt, const std::string& currentClass);
     void analyzeClassDeclaration(const ClassDeclaration& cls);
 
-    // Phase 2.6: scan every push_back call site across the whole program (mirrors
-    // the top-level firstPassCollectReferences walk, but self-contained -- own
-    // data, own recursive statement walk) to decide each container variable's
-    // element pointer kind. Runs once per analyzeProgram call.
+    // Scans every push_back call site to decide each container variable's element pointer kind.
+    // Self-contained, separate from the pointerDecisions machinery.
     void scanContainerElementKinds(const Program& program);
     void scanContainerElementKindsImpl(const Program& program);
-    // `scopeName` is the precise scope (free function name, "main", or
-    // "Class::method") this statement's own body belongs to -- tried before
-    // symbolTypesByScope's kGlobalScope fallback when resolving a bare
-    // identifier's type, to avoid two unrelated functions' same-named
-    // locals colliding in that fallback (see scanContainerElementKinds's
-    // callers, which now pass this precisely).
+    // scopeName is the scope of the statement's body (function name, "main" or "Class::method"); it is tried
+    // before the global fallback when resolving an identifier's type.
     void scanContainerElementKindsInStatement(const Statement& stmt, const std::string& scopeName);
     // Every name declared in the body being scanned (locals of any type, loop variables, parameters). A name in this
     // set that has no entry in the body's own scope is a local of a type the symbol table does not record (string,
     // int, vector...), NOT the same-named class variable some other function happens to have.
     std::set<std::string> scanLocals_;
 
-    // A parameter that a method/constructor body stores into an already-SHARED
-    // field must itself be SHARED (a `shared_ptr` field can't hold a moved-in
-    // `unique_ptr` and leave the source usable -- see dangling_checker.cpp's
-    // AssignmentStatement field-store handling, which this mirrors). Self-
-    // contained third pass, runs once after secondPassDeterminePointerTypes (needs
-    // fields' own already-decided pointer kind), single pass (no fixed-point
-    // iteration -- see .cpp for the documented limitation this leaves).
-    // Two handles to one object (`b = a;` then `a` used again) are both shared. See the call site.
     // Object parameters and the object return of a virtual / override method are always SHARED: the
     // base declaration and every override must have the identical C++ signature, but each class's
-    // pointer kinds are otherwise inferred from its own body (an unused parameter is unique, a read
-    // one is shared), which cannot agree across a hierarchy.
+    // pointer kinds are otherwise inferred from its own body, which cannot agree across a hierarchy.
     void forceVirtualSignaturesShared(const Program& program);
     // (scope, type, name, container) of every `container.push_back(identifier)` seen by the container scan
     std::vector<std::vector<std::string>> pushedArgs_;
     std::set<std::string> demandedFields_;     // "Class.name"
     std::set<std::string> demandedElements_;   // container field name
     std::set<std::string> demandedReturns_;    // "Class::method"
-    // The declared type of every container FIELD (`items` -> `std::vector<Cmd>`), by field name like every other container here: tells the scan that a
-    // container holds objects even in a file that never pushes into it.
+    // The declared type of every container field, by field name: tells the scan that a container holds
+    // objects even in a file that never pushes into it.
     std::map<std::string, std::string> containerFieldTypes_;
 
+    // Two handles to one object (`b = a;` then `a` used again) are both shared.
     void promoteAliasedLocals(const Program& program);
     void promoteAliasedLocalsInBody(const std::vector<StatementPtr>& body,
                                     const std::vector<std::pair<std::string, std::string>>& params,
                                     const std::string& scope);
+    // A parameter stored into an already-shared field must itself be shared. Runs after the second pass.
     void promoteParamsStoredInSharedFields(const Program& program);
     void promoteParamsInBody(const std::vector<StatementPtr>& body, const std::string& className,
                              const std::vector<std::pair<std::string, std::string>>& params,
                              const std::string& scope);
 
-    // A call-site argument bound to a parameter that sub-pass 1 promoted to SHARED
-    // must itself become SHARED (otherwise the caller's local is still emitted as
-    // unique_ptr and the promotion is invisible at the call site). Runs after
-    // promoteParamsStoredInSharedFields. Its own recursive statement/expression
-    // walk lives entirely inside the .cpp (as local lambdas, not member functions)
-    // since analyzeStatement doesn't visit call expressions, control-flow bodies,
-    // or constructor-call (NewExpression) arguments at all, and nothing else in
-    // this class needs that walk.
+    // A call argument bound to a parameter promoted to SHARED becomes SHARED too. Its statement/expression
+    // walk lives in the .cpp as local lambdas.
     void promoteSharedCallArguments(const Program& program);
 
-    // INFERS which methods return an ALIAS (shared_ptr) rather than transfer
-    // ownership (unique_ptr, the default), purely from each method body's own
-    // shape -- no annotation. A method is classified ALIAS_RETURNING iff every
-    // reachable `return` in it hands back `this`, an object-typed field of the
-    // same class, or a call to ANOTHER already-classified alias-returning
-    // method (the recursive-walker shape, e.g. yaml-cpp-style
-    // `return child.findOrAppendSibling(key);`). Runs as a genuine small
-    // fixed-point over each class's own methods (a "leaf" method like
-    // `siblingAt` must be classified before a caller like `operator[]` that
-    // depends on it), self-contained (own data, own recursive statement walk,
-    // mirrors scanContainerElementKinds's shape) -- see the .cpp for the exact
-    // per-round algorithm. Writes classification into methodReturnKinds_, and
-    // a field found under case (b) into explicitHints (SHARED) so it flows
-    // through the exact same lookup path every other field decision already
-    // uses. Also auto-derives classesNeedingSharedFromThis_ for any
-    // alias-returning method whose body contains a bare `return this;`. Runs
-    // BEFORE secondPassDeterminePointerTypes (so its explicitHints writes are
-    // picked up by that pass's applyExplicitHints call).
+    // Infers which methods return an alias (shared_ptr) rather than transfer ownership: every reachable
+    // `return` hands back `this`, an object field of the class, or a call to another alias-returning method.
+    // A small fixed point per class. Writes methodReturnKinds_, SHARED hints for the fields returned, and
+    // classesNeedingSharedFromThis_. Runs before secondPassDeterminePointerTypes.
     void inferAliasReturningMethods(const Program& program);
 
-    // A FOURTH pass, running after promoteSharedCallArguments (needs every
-    // local's FINAL pointer-kind decision): promotes a method's return
-    // classification to SHARED if it returns a bare local variable whose own
-    // decided kind is SHARED, even though inferAliasReturningMethods's
-    // structural rule (this/field/alias-call only) never covers plain locals.
-    // See the .cpp for the concrete yaml-cling Parser shape this closes.
+    // Promotes a method's return to SHARED if it returns a bare local whose decided kind is SHARED.
+    // Needs every local's final decision, so it runs after promoteSharedCallArguments.
     void promoteReturnsOfSharedLocals(const Program& program);
     void promoteReturnsOfSharedLocalsOnce(const Program& program, bool& changed);
     bool localComesFromSharedCall(const Expression* init, const std::string& ownClass, const std::string& scope) const;
 
-    // Free-function counterpart of inferAliasReturningMethods's case (c) --
-    // MUST run AFTER promoteReturnsOfSharedLocals (needs a called class
-    // method's FINAL classification, which that pass may still be setting).
-    // See the .cpp for the exact yaml-cling Load() shape this closes.
+    // Free-function counterpart of inferAliasReturningMethods; runs after promoteReturnsOfSharedLocals.
     void inferAliasReturningFreeFunctions(const Program& program);
 
-    // Classifies each free function's object-typed parameters as read-only or
-    // not (see isReadOnlyFreeFunctionParam). Purely structural over the raw
-    // Program (mirrors classifyValueTypeClasses's independence) -- runs FIRST,
-    // alongside it, before any pointer-kind decision exists yet, since this
-    // classification is about how a PARAMETER'S OWN BODY USAGE shapes it, not
-    // about any already-decided pointer kind. promoteSharedCallArguments
-    // consults this (much later) to force both a read-only parameter AND its
-    // call-site argument to SHARED -- see the .cpp for why both sides need it.
+    // Classifies object parameters as read-only or not (see isReadOnlyFreeFunctionParam), as a fixed point
+    // over the raw Program. Runs first, before any pointer kind exists. promoteSharedCallArguments later
+    // forces both a read-only parameter and its call argument to SHARED.
     void classifyReadOnlyFreeFunctionParams(const Program& program);
-    // Does expression `expr`, within a function body where `paramName` names a
-    // read-only-candidate parameter, use `paramName` in a way that would
-    // require it to be consumed/stored (fails read-only), given `okCallees` --
-    // the set of "fnName::argIndex" call targets already known read-only this
-    // round (a fixed point, mirroring inferAliasReturningMethods's algorithm,
-    // since a parameter passed onward to another read-only parameter is itself
-    // still read-only, but that target might not be classified yet on an
-    // earlier round)? Returns true the first time a disqualifying use is
-    // found; a call site that reads only `paramName.field` (not bare
-    // `paramName`) never disqualifies, regardless of the callee.
-    // `currentClass` is the enclosing class of the body being scanned (empty
-    // for a free function) -- needed so a bare implicit-this call inside a
-    // METHOD (`parseBlockMapInto(target, ...)`, indistinguishable at the AST
-    // level from a free-function call: call->callee is null either way) can
-    // build the right okCallees key ("Class::method::argIndex", not just
-    // "method::argIndex", which would collide across classes and never match
-    // a free function's own differently-shaped key).
+    // Does `expr` use `paramName` in a way that consumes or stores it? okCallees holds the
+    // "fnName::argIndex" targets known read-only so far in this round. currentClass is the enclosing class
+    // ("" for a free function): a bare implicit-this call needs it to build the right okCallees key.
+    // Reading only `paramName.field` never disqualifies.
     bool paramUseDisqualifiesReadOnly(const Expression* expr, const std::string& paramName,
                                        const std::string& currentClass,
                                        const std::set<std::string>& okCallees) const;
 
-    // Container counterpart of classifyReadOnlyFreeFunctionParams -- a
-    // SEPARATE fixed point (not folded into the one above) because the
-    // per-use rule genuinely differs: a container's mutating method calls
-    // (push_back/pop_back/resize) must disqualify, where the object-typed
-    // rule's "receiver of a method call is a mere read" case would wrongly
-    // let them through. Runs independently; does not depend on or feed
-    // classifyReadOnlyFreeFunctionParams's own sets.
+    // Container counterpart of classifyReadOnlyFreeFunctionParams, a separate fixed point because a
+    // container's mutating method calls must disqualify.
     void classifyReadOnlyContainerParams(const Program& program);
     void classifyReadOnlyStringParams(const Program& program);
-    // Does expression `expr` use the bare identifier `paramName` (a
-    // container-parameter candidate) in a way that disqualifies read-only
-    // status? Disqualifying: assignment target, a subscript WRITE
-    // (`paramName[i] = x`), a mutating method call receiver (push_back/
-    // pop_back/resize), begin()/end(), being copied into a local/field/
-    // return, closure capture, or passed bare to a callee parameter that is
-    // not itself already read-only (container or ext_fn ref). A subscript
-    // READ, `.size()`, and the container of a range-for are the genuine-read
-    // evidence (see bodyContainerHasGenuineRead) and never disqualify.
+    // Does `expr` use the container parameter in a disqualifying way: assignment target, subscript write,
+    // mutating method call, begin()/end(), copied into a local/field/return, closure capture, or passed bare
+    // to a callee parameter that is not itself read-only? A subscript read, size() and a range-for over it
+    // never disqualify (see bodyContainerHasGenuineRead).
     bool paramUseDisqualifiesReadOnlyContainer(const Expression* expr, const std::string& paramName,
                                                  const std::string& currentClass,
                                                  const std::set<std::string>& okContainerCallees) const;
 
-    // Classifies which free functions/methods are HEAP-PURE (see
-    // isHeapPureFreeFunction). A separate fixed point over the same
-    // functions/methods: heap-purity of a function depends on the
-    // heap-purity of everything it calls (a pure-looking function that
-    // calls an impure one is itself impure), so this iterates to a fixed
-    // point the same way the read-only classifications do, just with the
-    // opposite monotonic direction (starts "assume pure", removes on
-    // evidence of impurity or an impure callee, until nothing changes).
+    // Classifies heap-pure functions (see isHeapPureFreeFunction). A fixed point that starts from "pure" and
+    // removes a function on evidence of impurity or an impure callee.
     void classifyHeapPureFunctions(const Program& program);
-    // Does statement list `body` (within function `fnName`/method
-    // `currentClass::methodName`) contain an impurity: a container-mutating
-    // method call on anything but body-local container, an assignment that
-    // replaces an object/container field or non-local variable, or a call to
-    // a function/method not in `pureSoFar` (fixed-point set, "fnName" for
-    // free functions / "Class::method" for methods)? `localNames` is the set
-    // of names this body itself declared (VariableDeclaration) -- mutating
-    // THOSE is fine, they cannot alias caller state. `primitiveFieldNames` is
-    // the enclosing class's own primitive-typed field names (empty for a
-    // free function) -- a BARE reassignment of one of these (CeeLing field
-    // writes are bare names, e.g. `bitBuffer = bitBuffer >> n;`, not
-    // `this->bitBuffer = ...`) is fine: a primitive has no provenance, so
-    // writing one cannot change or destroy a container/object the caller can
-    // see (confirmed necessary via a real gap: zlib-cling's dropBits/
-    // needBits/bits, which only ever touch primitive bitBuffer/bitsUsed
-    // fields this way, were wrongly classified impure without this,
-    // defeating decodeSymbol's own call-site reference passing entirely).
+    // Does `body` contain an impurity: a container-mutating call on anything but a body-local container, an
+    // assignment replacing an object/container field or non-local variable, or a call to a function not in
+    // `pureSoFar` ("fn" or "Class::method")? localNames are the names the body declares (mutating them is
+    // fine). primitiveFieldNames are the class's primitive fields: a bare write to one is fine, since a
+    // primitive has no provenance.
     bool bodyHasImpurity(const std::vector<StatementPtr>& body, const std::string& currentClass,
                           std::set<std::string> localNames, const std::set<std::string>& pureSoFar,
                           const std::set<std::string>& primitiveFieldNames) const;
 
-    // Classifies which std::vector<primitive> parameters are safely MOVED at
-    // their one bare-name field-assignment statement (see
-    // isLastUseFieldAssignedParam's own doc comment for the motivating case
-    // and how this differs from the read-only classification). Not a fixed
-    // point -- purely a per-function/method scan, independent of every other
-    // function's own classification, since "is this the last use in MY body"
-    // never depends on what any callee does.
+    // Classifies std::vector<primitive> parameters that are moved at their one field assignment (see
+    // isLastUseFieldAssignedParam). A per-function scan, not a fixed point.
     void classifyLastUseFieldAssignedParams(const Program& program);
-    // Scans `body` (straight-line only -- see below) for a single bare-name
-    // field-assignment statement (`fieldName = paramName;`, no `this->`/`.`
-    // on the LHS, matching CeeLing's field-write syntax) whose RHS is
-    // exactly the bare identifier `paramName`, and confirms no statement
-    // AFTER that one references `paramName` again. Returns true only if:
-    // exactly one such assignment exists (zero or more-than-one both give up
-    // -- more than one field assignment from the same parameter is not
-    // "one last use", it's an ambiguous shape this v1 does not attempt to
-    // reason about), and every statement in `body` is one of
-    // VariableDeclaration/AssignmentStatement/ExpressionStatement/
-    // ReturnStatement/ThrowStatement -- an IfStatement/WhileStatement/
-    // ForStatement/TryStatement ANYWHERE in the body (not just after the
-    // candidate assignment) means "give up", not "analyze the branches":
-    // this is deliberately far more conservative than
-    // paramUseDisqualifiesReadOnlyContainer's per-use walk, trading recall
-    // for a much smaller, easier-to-audit implementation, since the
-    // motivating shape (zlib-cling's pushAll) is a single-statement body
-    // and there is no evidence yet that a more general analysis is worth
-    // building. A ClosureExpression anywhere (captures `paramName` by name,
-    // not by reference, but still counts as "used") also gives up, checked
-    // the same way.
+    // True only when `body` has exactly one bare-name field assignment `field = paramName;`, no statement
+    // after it mentions paramName, and every statement is a declaration, assignment, expression, return or
+    // throw. An if/while/for/try or closure anywhere in the body gives up.
     bool bodyIsLastUseFieldAssignment(const std::vector<StatementPtr>& body,
                                         const std::string& paramName) const;
-    // Does the (expression) subtree contain a bare reference to `paramName`,
-    // OR a ClosureExpression that captures `paramName` by name, OR a nested
-    // ClosureExpression at all (conservatively treated as a use, regardless
-    // of its own capture list, matching bodyIsLastUseFieldAssignment's
-    // "closure anywhere gives up" rule)? Pure containment check -- unlike
-    // paramUseDisqualifiesReadOnlyContainer, this never distinguishes a
-    // "read" from a "write": ANY occurrence after the candidate assignment
-    // disqualifies the move, full stop.
+    // Does the subtree mention `paramName`, or contain any closure (treated as a use)? Does not
+    // distinguish reads from writes.
     bool exprReferencesName(const Expression* expr, const std::string& name) const;
 
     void scanSource(const std::string& source);
@@ -511,46 +294,34 @@ private:
     std::vector<AnalysisDiagnostic> diagnostics;
     std::vector<std::string> reportLines;
 
-    // container variable name -> true if any push_back call site pushed an
-    // already-SHARED source (forcing the whole container's element kind to
-    // shared_ptr). Absent/false = unique_ptr (the default).
+    // container variable name -> true if some push_back pushed an already-shared source (the whole
+    // container then holds shared_ptr). Absent or false means unique_ptr.
     std::map<std::string, bool> containerElementShared_;
 
-    // className -> (object-typed fieldName -> its class), FLATTENED across the
-    // inheritance chain. Used by analyzeClassDeclaration to re-register a base's
-    // fields under each derived class's own scope (see the comment there for why
-    // this analyzer needs per-scope re-registration rather than a shared flat map).
+    // className -> (object-typed fieldName -> its class), flattened across the inheritance chain.
+    // analyzeClassDeclaration re-registers a base's fields under each derived class's scope.
     std::map<std::string, std::map<std::string, std::string>> classMembersByClass_;
 
-    // "Class.method" -> the method's INFERRED return pointer kind (see
-    // inferAliasReturningMethods). Absent means "not alias-returning" --
-    // getMethodReturnPointerType then defaults to UNIQUE, NOT SHARED, unlike
-    // the field/local pointerDecisions fallback.
+    // "Class.method" -> inferred return pointer kind. Absent means UNIQUE (not SHARED, unlike the
+    // field/local fallback).
     std::map<std::string, PointerType> methodReturnKinds_;
 
-    // Classes needing `std::enable_shared_from_this<T>` as a compiler-generated
-    // base, auto-derived (never user-annotated) from an alias-returning
-    // method's body containing `return this;`.
+    // Classes that need enable_shared_from_this as a generated base.
     std::set<std::string> classesNeedingSharedFromThis_;
 
-    // Classes classified as value types (see isValueTypeClass/
-    // classifyValueTypeClasses).
+    // Value-type classes (see isValueTypeClass).
     std::set<std::string> valueTypeClasses_;
 
-    // "fnName::paramName" -> read-only (see isReadOnlyFreeFunctionParam).
-    // Absence means "not read-only" (the safe default -- an ordinary,
-    // unclassified parameter keeps today's move-by-value behavior unchanged).
+    // "fnName::paramName" -> read-only. Absent means not read-only (the parameter is moved in by value).
     std::set<std::string> readOnlyFreeFunctionParams_;
-    // "className::methodName::paramName" -> read-only (see isReadOnlyMethodParam).
+    // "className::methodName::paramName" -> read-only.
     std::set<std::string> readOnlyMethodParams_;
 
-    // Same key shapes as above, for the container classification (see
-    // isReadOnlyContainerParam/isReadOnlyMethodContainerParam).
+    // Same key shapes, for container parameters.
     std::set<std::string> readOnlyContainerParams_;
     std::set<std::string> readOnlyMethodContainerParams_;
 
-    // "fnName" / "className::methodName" -> heap-pure (see
-    // isHeapPureFreeFunction/isHeapPureMethod).
+    // "fnName" / "className::methodName" -> heap-pure.
     std::set<std::string> heapPureFreeFunctions_;
     std::set<std::string> readOnlyStringParams_;  // "fn::param" / "Class::method::param"
     std::map<std::string, std::set<std::string>> stringMutatedFieldsByFunction_;
@@ -558,10 +329,7 @@ private:
     std::set<std::string> readOnlyStringPositions_;  // "bare#index"
     std::set<std::string> heapPureMethods_;
 
-    // Same key shapes as readOnlyContainerParams_/readOnlyMethodContainerParams_
-    // above, for the last-use-field-assignment classification (see
-    // isLastUseFieldAssignedParam/isLastUseMethodFieldAssignedParam and
-    // classifyLastUseFieldAssignedParams).
+    // Same key shapes, for the last-use field assignment classification.
     std::set<std::string> lastUseFieldAssignedParams_;
     std::set<std::string> lastUseMethodFieldAssignedParams_;
 };

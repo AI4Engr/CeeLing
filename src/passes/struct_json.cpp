@@ -37,9 +37,7 @@ struct Field {
 struct StructInfo {
     const ClassDeclaration* cls = nullptr;
     std::vector<Field> fields;
-    // The struct has a constructor with no parameters: every field is then OPTIONAL. The decoder starts from `new X()` and overwrites the fields that
-    // are present (and not null); a missing field keeps the value the constructor gave it. Without one, every field is required and the decoder builds
-    // the struct with the constructor that takes all of them.
+    // The struct has a constructor with no parameters: every field is optional and a missing one keeps the constructor's value.
     bool optional = false;
 };
 

@@ -8,25 +8,10 @@
 namespace cling {
 
 namespace {
-// True iff `body` is guaranteed to leave its enclosing function before falling
-// through to whatever statement follows it (a `return`/`throw` as its LAST
-// statement, or an `if`/`else` whose BOTH arms always exit). Used by the
-// IfStatement branch-merge below to avoid a false use-after-move: a move
-// inside a branch that unconditionally returns can never be observed by code
-// AFTER the `if` (that code is only reachable via the OTHER path), so its
-// effects must not be merged into the post-`if` state the way an ordinary
-// (fall-through) branch's effects are. Confirmed as a real, pre-existing gap
-// (not introduced by RB18 -- reproduced on an ordinary flat class with no
-// NodeData/handle split at all) via a minimal probe: `if (x) { other(n);
-// return; } n.use();` wrongly flagged `n` as moved-from at the LAST line,
-// even though that line is only reachable when the `if` was false. Only
-// looks at the LAST statement (conservative: an early return nested deeper
-// inside, say, a `while`, does not make the enclosing block itself
-// unconditionally exit, since the loop might not execute that path) --
-// deliberately narrow, matching this checker's overall "ambiguous ->
-// conservative reject" bias elsewhere; a genuinely exiting shape this misses
-// just falls back to the pre-existing (safe, if occasionally over-strict)
-// merge behavior.
+// True if `body` always leaves its block before falling through: it ends in a
+// return/throw/break/continue, or in an if/else whose arms both always exit. The `if` merge uses
+// it so a move in an exiting branch is not seen by the code after the `if`. Only the last
+// statement is looked at; a missed exit just falls back to the stricter merge.
 bool alwaysExits(const std::vector<StatementPtr>& body) {
     if (body.empty()) return false;
     const Statement* last = body.back().get();
@@ -74,11 +59,8 @@ std::vector<DanglingError> DanglingChecker::check(const Program& program, const 
 }
 
 void DanglingChecker::collectClassNames(const Program& program) {
-    // Base-before-derived so classFields_ is FLAT (a derived class's entry already
-    // contains its base's fields). Without this, a derived class's method body
-    // wouldn't recognize `inheritedField = param;` as a field-store and would treat
-    // it as an ordinary local reassignment -- the exact bug Step 19 fixed for
-    // non-inherited fields, reappearing one level up the hierarchy.
+    // Base before derived, so a derived class's classFields_ entry already holds its base's
+    // fields and `inheritedField = param;` is recognized as a field store.
     for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
         classNames_.insert(cls->name);
         auto& fields = classFields_[cls->name];
@@ -98,12 +80,8 @@ void DanglingChecker::collectClassNames(const Program& program) {
             }
         }
 
-        // Dual-register under the qualified name, mirroring AstEmitter/
-        // EscapeHatchChecker's collection passes: without this, a `YAML::Node`-typed
-        // local/parameter fails isObjectType's classNames_ lookup and is silently
-        // NEVER move-tracked at all -- not a safe over-rejection, a missed catch
-        // (confirmed by a probe: `sink(a); use(a);` on a namespaced type was wrongly
-        // accepted before this fix).
+        // Also register under the qualified name, or a `YAML::Node` local would never be
+        // move-tracked.
         if (!cls->namespaceName.empty()) {
             const std::string qualified = cls->namespaceName + "::" + cls->name;
             classNames_.insert(qualified);
@@ -113,30 +91,10 @@ void DanglingChecker::collectClassNames(const Program& program) {
 }
 
 bool DanglingChecker::isObjectType(const std::string& type) const {
-    // std::map<K,V> participates in move/observer tracking the same way
-    // std::vector<T> does -- both are container types where "did you still have
-    // access to the old one after passing it to a function" is a real, checkable
-    // question, independent of what's inside them (this slice restricts map K/V to
-    // primitives, but the container variable itself is exactly as move-trackable as
-    // a vector variable). `string` deliberately stays excluded: a bare `string`
-    // local is a plain C++ value type with cheap real copies everywhere, not a
-    // container whose "old" and "new" handles could diverge.
-    //
-    // A value-type class (struct keyword, Iterator-shaped structural case, or a
-    // known-external value type like Eigen::MatrixXd -- see SmartPointerAnalyzer::
-    // isValueTypeClass) DOES still participate in move/observer tracking -- it is
-    // move-CONSTRUCTED into a callee exactly like a class-typed local
-    // (AstEmitter emits `sink(std::move(a));` for a value-type argument same as
-    // any other object type), so a real use-after-move is possible for any value
-    // type owning heap storage (confirmed via probe: Eigen::MatrixXd, which has
-    // genuine move semantics, silently accepted `sink(a); use(a);` with zero
-    // errors before this fix -- a live use-after-move gap, not a false-positive
-    // guard). What must NOT be tracked as a move is a plain declaration-copy from
-    // another value-type local (`Foo b = a; Foo c = a;` are both ordinary, legal
-    // COPIES, not moves) -- that distinction is handled at the one call site that
-    // registers a copy-declaration as a move (see the VariableDeclaration
-    // else-branch in processStatement), not here by excluding value types from
-    // tracking altogether the way the previous version of this function did.
+    // Classes, vectors, maps and value-type classes (structs, external value types such as
+    // Eigen::MatrixXd) are tracked: they are moved into callees. `string` is not: it is a plain
+    // value that is copied. A declaration-copy of a value type is not a move; that is decided
+    // where declarations are processed.
     return classNames_.find(type) != classNames_.end() || isVectorType(type) ||
            isMapType(type) ||
            (analyzer_ != nullptr && analyzer_->isValueTypeClass(type));
@@ -162,9 +120,7 @@ DanglingChecker::FunctionSummary DanglingChecker::deriveSummaryForBody(
     const std::vector<std::pair<std::string, std::string>>& params) const {
     FunctionSummary summary;
 
-    // Only top-level `return` statements are considered (bodies have no nested
-    // function/class scopes, so no need to recurse into unrelated declarations --
-    // but `return` can appear inside `if`/`while`, so those ARE walked).
+    // Collect every `return`, including those nested in if/while/for/try.
     std::vector<const ReturnStatement*> returns;
     std::vector<const Statement*> stack;
     for (const auto& s : body) stack.push_back(s.get());
@@ -194,12 +150,8 @@ DanglingChecker::FunctionSummary DanglingChecker::deriveSummaryForBody(
                 if (summary.returnBorrowsParam == -1) {
                     summary.returnBorrowsParam = static_cast<int>(i);
                 } else if (summary.returnBorrowsParam != static_cast<int>(i)) {
-                    // Two different returns alias two different parameters: not
-                    // representable by a single index. Conservative-reject rule --
-                    // keep treating the return as an alias (of the first parameter
-                    // found) rather than silently downgrading to "fresh", since
-                    // "fresh" would wrongly let a caller believe no argument is
-                    // still observed.
+                    // Returns aliasing different parameters cannot be one index; keep the
+                    // first rather than downgrade to "fresh".
                 }
                 break;
             }
@@ -214,12 +166,8 @@ void DanglingChecker::deriveSummaries(const Program& program) {
             functionParams_[fn->name] = fn->parameters;
             functionReturnType_[fn->name] = fn->returnType;
             summaries_[summaryKey("", fn->name)] = deriveSummaryForBody(fn->body, fn->parameters);
-            // Dual-register under the qualified name (`YAML::Load`), same
-            // reasoning as every other namespaced-declaration dual-
-            // registration in this codebase: a call site outside the
-            // namespace spells it qualified, and resolveCallReturnAlias's
-            // plain-call branch looks up functionParams_/summaries_ keyed by
-            // exactly that spelling.
+            // Also register under the qualified name (`YAML::Load`), which is how a call
+            // outside the namespace spells it.
             if (!fn->namespaceName.empty()) {
                 const std::string qualified = fn->namespaceName + "::" + fn->name;
                 functionParams_[qualified] = fn->parameters;
@@ -227,28 +175,18 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                 summaries_[summaryKey("", qualified)] = summaries_[summaryKey("", fn->name)];
             }
         } else if (auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt.get())) {
-            // No body to derive a summary FROM -- the summary is the hand-
-            // declared `borrows N` fact itself (or -1, fresh/owned, matching
-            // FunctionSummary's own default). Still registered into
-            // functionParams_/functionReturnType_ exactly like an ordinary
-            // FunctionDeclaration, since resolveCallReturnAlias and argument
-            // move-application key off those same maps regardless of which
-            // kind of declaration produced them.
+            // No body: the summary is the declared `borrows N` fact (or -1).
             functionParams_[extFn->name] = extFn->parameters;
             functionReturnType_[extFn->name] = extFn->returnType;
             FunctionSummary summary;
             summary.returnBorrowsParam = extFn->returnBorrowsParam;
             summaries_[summaryKey("", extFn->name)] = summary;
-            // `ref` params are borrowed for the call's duration, not moved --
-            // see applyCallArgMoves's outParamIdx-shaped exemption, which
-            // skips inserting these indices into movedFrom_.
+            // `ref` params are borrowed for the call, not moved.
             externRefParams_[extFn->name] = extFn->refParams;
         }
     }
-    // Base-before-derived again, for the same reason: `d.inheritedMethod(x)` has to
-    // find both the parameter list (to resolve which argument binds where) and the
-    // derived summary. An inherited method that the derived class does NOT override
-    // keeps the base's summary verbatim -- it is literally the same body.
+    // Base before derived: an inherited method the derived class does not override keeps
+    // the base's parameters and summary.
     for (const ClassDeclaration* cls : classesInBaseFirstOrder(program)) {
         auto& params = classMethodParams_[cls->name];
         auto& returnTypes = classMethodReturnType_[cls->name];
@@ -268,9 +206,7 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                 returnTypes = baseIt->second;
             }
         }
-        // See AstEmitter::collectClassNames's identical pre-count -- only a
-        // genuinely overloaded method name (declared more than once) needs the
-        // arity-qualified key; every other method keeps its plain bare-name key.
+        // Only an overloaded method name needs the arity-qualified key.
         std::map<std::string, int> nameCounts;
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
@@ -279,15 +215,9 @@ void DanglingChecker::deriveSummaries(const Program& program) {
         }
         for (const auto& member : cls->members) {
             if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
-                // A specialization registers under its synthetic key ("as<int>"),
-                // not the bare method name -- see EscapeHatchChecker's identical
-                // reasoning. A call resolves to the right specialization's
-                // params/summary only when its own templateArg constructs the
-                // matching key (see resolveCallReturnAlias/applyCallArgMoves below).
-                // An OVERLOADED (same-name, different-arity) ordinary method keys
-                // by overloadKey(name, paramCount) instead, so a second
-                // declaration doesn't silently overwrite the first's params/
-                // summary (see class_hierarchy.h's overloadKey).
+                // A specialization registers under its synthetic key ("as<int>"); an
+                // overloaded method under overloadKey(name, paramCount), so one
+                // declaration does not overwrite another.
                 std::string key;
                 if (!method->specializationArg.empty()) {
                     key = specializationKey(method->name, method->specializationArg);
@@ -300,15 +230,9 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                 returnTypes[key] = method->returnType;
                 summaries_[summaryKey(cls->name, key)] =
                     deriveSummaryForBody(method->body, method->parameters);
-                // The PRIMARY generic (typeParameter set) with T used as a
-                // parameter type, and ONLY when T is NOT ALSO the return
-                // type -- see buildMethodDeclaration's validation. When T
-                // IS the return type (`<T> T as(T fallback)`), a T-typed
-                // parameter is an ORDINARY by-value parameter (T isn't a
-                // real class type, so it already emits as a bare, verbatim
-                // value -- no out-parameter lowering needed or wanted; doing
-                // so anyway would wrongly turn `as(T fallback)`'s fallback
-                // into a raw pointer).
+                // A primary generic whose T is a parameter type is an out-parameter, unless
+                // T is also the return type (`<T> T as(T fallback)`): then it is an
+                // ordinary by-value parameter.
                 if (!method->typeParameter.empty() && method->returnType != method->typeParameter) {
                     for (size_t i = 0; i < method->parameters.size(); ++i) {
                         if (method->parameters[i].first == method->typeParameter) {
@@ -320,11 +244,8 @@ void DanglingChecker::deriveSummaries(const Program& program) {
             }
         }
 
-        // Dual-register under the qualified name: resolveCallReturnAlias looks up
-        // classMethodParams_/summaries_ keyed by the RECEIVER's declared type string
-        // (localType_'s value), which is "YAML::Node" for a `YAML::Node n;` local --
-        // without this, a summary-derived alias on a namespaced type's method call
-        // would silently resolve to nothing instead of the real summary.
+        // Also register under the qualified name: lookups are keyed by the receiver's
+        // declared type string, "YAML::Node" for a `YAML::Node n;` local.
         if (!cls->namespaceName.empty()) {
             const std::string qualified = cls->namespaceName + "::" + cls->name;
             classMethodParams_[qualified] = params;
@@ -334,13 +255,7 @@ void DanglingChecker::deriveSummaries(const Program& program) {
                     summaries_[summaryKey(qualified, methodName)] = it->second;
                 }
             }
-            // Same reasoning, for outParamIndex_: applyCallArgMoves looks
-            // this up keyed by the RECEIVER's declared type string, which is
-            // "YAML::Node" for a `YAML::Node n;` local -- without this dual
-            // registration, an out-parameter call through a namespaced
-            // receiver falsely looked un-registered, so its argument was
-            // wrongly treated as moved (confirmed via probe: yaml-cling's
-            // real YAML::Node::decodeInto<T> case).
+            // The same for outParamIndex_.
             const std::string ownPrefix = cls->name + "::";
             std::vector<std::pair<std::string, size_t>> requalified;
             for (const auto& [key, idx] : outParamIndex_) {
@@ -365,9 +280,7 @@ std::string DanglingChecker::asObjectLocalName(const Expression* expr) const {
 }
 
 bool DanglingChecker::isOperatorAssignMutation(const AssignmentStatement& assign) const {
-    // Only a bare-identifier target reaches here (member/subscript targets are
-    // handled by earlier branches); `assign->target` is null in that case, so
-    // `assign.variable` is the whole LHS name.
+    // Only a bare-identifier target reaches here; `assign.variable` is the whole LHS.
     auto typeIt = localType_.find(assign.variable);
     if (typeIt == localType_.end()) return false;
     const std::string& lhsClass = typeIt->second;
@@ -376,9 +289,7 @@ bool DanglingChecker::isOperatorAssignMutation(const AssignmentStatement& assign
     if (methodIt == classMethodParams_.end() || methodIt->second.count("operator=") == 0) {
         return false;  // this class has no operator= -- ordinary reassignment path
     }
-    // Same-class RHS (`n = otherNodeLocal;`) is ordinary ownership transfer, not a
-    // mutation -- only a type-mismatched RHS (RHS isn't an object local of this
-    // same class) means operator=.
+    // A same-class RHS is an ordinary ownership transfer, not operator=.
     if (auto rhsId = dynamic_cast<const Identifier*>(assign.expression.get())) {
         auto rhsTypeIt = localType_.find(rhsId->name);
         if (rhsTypeIt != localType_.end() && rhsTypeIt->second == lhsClass) {
@@ -391,10 +302,7 @@ bool DanglingChecker::isOperatorAssignMutation(const AssignmentStatement& assign
 std::string DanglingChecker::asContainerSubscript(const Expression* expr) const {
     auto sub = dynamic_cast<const SubscriptExpression*>(expr);
     if (sub == nullptr) return {};
-    // The container itself must be a bare, live, container-typed local -- matches
-    // asObjectLocalName's own restriction to bare identifiers (this checker does
-    // lightweight resolution, not full type inference; `f()[i]` or `a.v[i]` are not
-    // resolved by this lightweight pass, same conservatism as elsewhere).
+    // The container must be a bare, live local; `f()[i]` and `a.v[i]` are not resolved.
     auto id = dynamic_cast<const Identifier*>(sub->object.get());
     if (id == nullptr) return {};
     if (objectLocals_.find(id->name) == objectLocals_.end()) return {};
@@ -467,10 +375,7 @@ std::string DanglingChecker::resolveClassOfExpr(const Expression* expr) const {
         const std::string& returnType = methodIt->second;
         return classNames_.count(returnType) ? returnType : std::string{};
     }
-    // MemberAccess (bare field chains), `new`, literals, etc: not resolved by
-    // this lightweight pass -- same pre-existing conservative fallback every
-    // caller of this function already relies on (a field's declared TYPE is
-    // not tracked anywhere in this checker, only its NAME via classFields_).
+    // Field chains, `new` and literals are not resolved.
     return {};
 }
 
@@ -482,26 +387,20 @@ std::string DanglingChecker::resolveCallReturnAlias(const Expression* expr) cons
     const std::vector<std::pair<std::string, std::string>>* params = nullptr;
 
     if (call->callee) {
-        // `recv.method(args)`: resolve the receiver's static class to find the
-        // right class's method summary. resolveClassOfExpr handles both a bare
-        // identifier receiver AND a CHAINED call receiver (`a.b().c(...)`) --
-        // see its own doc comment for why widening to a call receiver is safe.
+        // `recv.method(args)`: find the receiver's class (a name or a chained call).
         auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
         if (member == nullptr) return {};
         std::string recvClass = resolveClassOfExpr(member->object.get());
         if (recvClass.empty()) return {};
         auto clsIt = classMethodParams_.find(recvClass);
         if (clsIt == classMethodParams_.end()) return {};
-        // A call carrying a type argument resolves to the specialization's own
-        // key -- see EscapeHatchChecker::isKnownCallable's identical reasoning.
+        // A call with a type argument resolves to the specialization's key.
         std::string methodKey = call->templateArg.empty()
             ? member->member
             : specializationKey(member->member, call->templateArg);
         auto paramIt = clsIt->second.find(methodKey);
         if (paramIt == clsIt->second.end() && call->templateArg.empty()) {
-            // Same overload-key retry as AstEmitter::calleeParam -- the bare name
-            // may have been registered under an arity key instead (deriveSummaries
-            // only does this for a genuinely overloaded method name).
+            // An overloaded name is registered under an arity key.
             methodKey = overloadKey(member->member, call->arguments.size());
             paramIt = clsIt->second.find(methodKey);
         }
@@ -725,10 +624,6 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
         return;
     }
 
-    // A known invalidating call (push_back) kills every existing observer of its
-    // container receiver first -- runs alongside the argument-move logic below
-    // since both are driven by the exact same call expression, and every call
-    // site in this file that calls applyCallArgMoves needs this too.
     invalidateContainerObservers(expr);
     if (hasFieldObservers() && calleeHeapEffect(call) == 2) {
         for (const auto& arg : call->arguments) {
@@ -747,11 +642,8 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
         killFieldObservers("");
     }
 
-    // A known library method may SHARE an argument instead of moving it (e.g.
-    // `v.push_back(x)` links x into the container, the same way storing into a
-    // field does not consume the RHS -- see library_summary.h). Resolve the
-    // receiver's declared type/name once so each argument can check the per-index
-    // rule.
+    // A library method may share an argument instead of moving it (`v.push_back(x)`).
+    // Resolve the receiver's type and name once for the per-argument rule.
     std::string receiverType;
     std::string receiverName;
     std::string methodName;
@@ -766,16 +658,14 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
             }
         }
     }
-    // A Channel<T> copies what it is given (send) and hands out fresh copies (take): no argument is moved into it and nothing it
-    // returns aliases anything. (AstEmitter emits the arguments as plain copies for a Channel receiver to match.)
+    // A Channel<T> copies what it is given and hands out fresh copies: nothing is moved or aliased.
     if (call->callee) {
         if (auto member = dynamic_cast<const MemberAccess*>(call->callee.get())) {
             if (isChannelType(declaredTypeOf(member->object.get()))) return;
         }
     }
     const bool receiverIsVector = !receiverType.empty() && isVectorType(receiverType);
-    // A mutable out-parameter (see outParamIndex_) is never moved -- the
-    // callee writes through it but the caller's argument survives.
+    // A mutable out-parameter (outParamIndex_) is never moved.
     size_t outParamIdx = call->arguments.size();  // sentinel: no out-parameter
     if (!receiverType.empty()) {
         if (auto it = outParamIndex_.find(outParamKey(receiverType, methodName));
@@ -783,15 +673,12 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
             outParamIdx = it->second;
         }
     } else if (call->callee == nullptr && !currentClass_.empty()) {
-        // an unqualified call of a method of the CURRENT class (implicit `this`): `if (!decodeInto(out)) ...` inside YAML::Node::as<T>
+        // an unqualified call of a method of the current class (implicit `this`)
         if (auto it = outParamIndex_.find(outParamKey(currentClass_, call->function_name)); it != outParamIndex_.end()) {
             outParamIdx = it->second;
         }
     }
-    // ext_fn `ref` arguments (see externRefParams_) are borrowed for the
-    // call's duration, not moved -- same exemption shape as outParamIdx
-    // above. ext_fn is always a free function, so this only applies on the
-    // plain-call path (receiverType empty, function_name set).
+    // ext_fn `ref` arguments are borrowed, not moved. ext_fn is always a free function.
     const std::set<size_t>* refParams = nullptr;
     if (receiverType.empty()) {
         if (auto it = externRefParams_.find(call->function_name); it != externRefParams_.end()) {
@@ -799,8 +686,8 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
         }
     }
 
-    // An argument that an earlier call of this statement already moved (`add(v, total(v))`: total(v) is evaluated first here, and C++ leaves the
-    // order open anyway) is a use of a moved-from value even when THIS call only borrows it.
+    // An argument an earlier call in this statement already moved (`add(v, total(v))`) is a use
+    // of a moved-from value even when this call only borrows it.
     auto reportMovedArgument = [&](size_t i) {
         const std::string src = asObjectLocalName(call->arguments[i].get());
         if (src.empty() || movedFrom_.count(src) == 0) return;
@@ -820,15 +707,8 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
             reportMovedArgument(i);
             continue;
         }
-        // Inferred read-only container parameter (see
-        // SmartPointerAnalyzer::classifyReadOnlyContainerParams and
-        // ast_emitter.cpp's matching const& emission) -- borrowed for the
-        // call's duration, not moved, exactly like the ext_fn `ref`
-        // exemption above and the outParamIdx exemption before it. Resolved
-        // by callee name/argument index only (not by the ARGUMENT's own
-        // type), since the classification is a property of the callee's
-        // parameter, independent of what expression the caller happens to
-        // pass -- matching how outParamIdx/refParams are resolved above.
+        // An inferred read-only container parameter is borrowed, not moved. It is a property
+        // of the callee's parameter, so it is resolved by callee and argument index.
         if (analyzer_ != nullptr && i < call->arguments.size()) {
             const std::vector<std::pair<std::string, std::string>>* calleeParams = nullptr;
             std::string implicitClass;     // an unqualified call of a method of the current class (implicit `this`)
@@ -850,9 +730,8 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
             }
             if (calleeParams != nullptr && i < calleeParams->size()) {
                 if (isSpanType((*calleeParams)[i].first)) {
-                    // viewed for the call, not given away. A vector this function owns (a local or a parameter) cannot be reached by the callee, so
-                    // nothing can resize it while the span lives; a FIELD (or an element of a container) can: the callee may call a method that
-                    // clears that very field and then read through its span.
+                    // Viewed for the call, not given away. A local or parameter vector cannot
+                    // be reached by the callee; a field or container element can.
                     const Expression* arg = call->arguments[i].get();
                     const auto* argId = dynamic_cast<const Identifier*>(arg);
                     const bool nonLocal = (argId != nullptr && localType_.count(argId->name) == 0 && isVectorType(declaredTypeOf(arg))) ||
@@ -880,16 +759,9 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
             }
         }
         if (receiverIsVector && vectorMethodSharesArg(methodName, i)) {
-            // A container's element pointer kind is decided once, across every
-            // push_back call site targeting it (SmartPointerAnalyzer::
-            // containerElementIsShared) -- vector<unique_ptr<T>> and
-            // vector<shared_ptr<T>> are different C++ types, so it can't vary per
-            // call. Whether THIS specific push shares or moves its argument
-            // depends on whether the argument's OWN pointer kind already matches:
-            //   - element=SHARED, arg already SHARED -> share (copy, arg survives)
-            //   - element=SHARED, arg is UNIQUE       -> must move (wrap-construct
-            //     a shared_ptr from the unique_ptr, consuming it)
-            //   - element=UNIQUE                       -> always moves
+            // The element pointer kind is fixed per container. Shared element and shared
+            // argument: copy, the argument survives. Shared element and unique argument, or
+            // unique element: the argument is moved.
             const std::string argName = asObjectLocalName(call->arguments[i].get());
             const bool elementIsShared = analyzer_ != nullptr &&
                 analyzer_->containerElementIsShared(receiverName);
@@ -901,30 +773,10 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
             }
         }
 
-        // Blanket rule, independent of the receiver/method: an argument whose OWN
-        // pointer type already resolves to SHARED never needs to move into ANY
-        // call (method, constructor via NewExpression at the VariableDeclaration/
-        // AssignmentStatement call sites, or free function) -- a std::shared_ptr
-        // is always safely copyable, so the source stays a live, usable owner
-        // regardless of what the callee does with its own copy. This generalizes
-        // the vector-specific share case above (which additionally has to decide
-        // whether a UNIQUE argument gets wrapped into a shared_ptr construction,
-        // still handled by that branch) to the ordinary case: a parameter that a
-        // method/constructor body stores into an already-shared field is promoted
-        // to SHARED by SmartPointerAnalyzer's own third pass (see Chapter 18), and
-        // once that's true, the argument bound to it is ALSO promoted to SHARED by
-        // that same pass -- so checking the argument's own pointer type here is
-        // sufficient, with no need to separately resolve the callee's summary.
-        //
-        // Restricted to genuinely class-typed arguments: SmartPointerAnalyzer::
-        // getPointerType's suffix-match has no entry at all for a container type
-        // like "std::vector<Node>" (pointerDecisions is only ever keyed by real
-        // class names), and its not-found fallback defaults to SHARED -- applying
-        // this rule to a container argument would incorrectly skip moving it
-        // (confirmed by a regression: vector_moved_into_call_rejected.clg went
-        // from PASS to XFAIL without this guard). A container's own move-vs-share
-        // question is exactly what the vector-specific branch above already
-        // handles per-method; this blanket rule must not also apply to it.
+        // An argument whose own pointer type is shared is never moved into any call: a
+        // shared_ptr is copied and the source stays a live owner. Only class-typed arguments
+        // qualify; the analyzer has no entry for a container type and defaults to shared, so
+        // containers are decided by the vector branch above.
         const std::string argName = asObjectLocalName(call->arguments[i].get());
         const std::string argType = localType_.count(argName) ? localType_.at(argName) : "";
         if (analyzer_ != nullptr && !argName.empty() && classNames_.count(argType) > 0 &&
@@ -934,8 +786,8 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
 
         if (std::string src = asObjectLocalName(call->arguments[i].get()); !src.empty()) {
             if (movedFrom_.count(src) > 0) {
-                // checkExpressionUses ran over the whole statement before any move, so an owner that is already moved here was moved by an
-                // earlier call of this same statement (`f(v) + f(v)`)
+                // checkExpressionUses ran over the whole statement before any move, so this owner
+                // was moved by an earlier call of the same statement (`f(v) + f(v)`).
                 DanglingError e;
                 e.line = call->arguments[i]->loc.line;
                 e.column = call->arguments[i]->loc.column;
@@ -990,7 +842,8 @@ void DanglingChecker::invalidateContainerObservers(const Expression* callExpr) {
     if (member == nullptr) return;
     auto id = dynamic_cast<const Identifier*>(member->object.get());
     if (id == nullptr) {
-        // `other.items.push_back(x)` / `this.items.clear()`: a mutator on a vector reached through a member -- it may be the very field a span views
+        // `other.items.push_back(x)`: a mutator on a vector reached through a member may be
+        // the field a span views.
         if (auto inner = dynamic_cast<const MemberAccess*>(member->object.get());
             inner != nullptr && isVectorType(declaredTypeOf(inner)) && vectorMethodInvalidatesReferences(member->member)) {
             killFieldObservers(inner->member);
@@ -1014,12 +867,7 @@ void DanglingChecker::invalidateContainerObservers(const Expression* callExpr) {
         return;
     }
 
-    // The container may have reallocated -- every existing observer of it (`ref
-    // Node n = v[i];`) is now dangling, the same way endBlockScope kills observers
-    // of an owner whose scope just ended, and the AssignmentStatement branch kills
-    // observers of a reassigned owner. Reuses danglingObservers_ (already unioned
-    // conservatively across branches by mergeBranchStates), so a call inside only
-    // one `if` arm still invalidates on both paths after the merge.
+    // The container may have reallocated: every observer of it is now dangling.
     for (const auto& [obs, owner] : observerOf_) {
         if (owner == id->name) {
             danglingObservers_.insert(obs);
@@ -1055,8 +903,8 @@ void DanglingChecker::killObserversOfOpaqueCalls(const Expression* expr) {
                     }
                 }
                 if (typeIt != localType_.end() && isConservativeOpaqueCall(typeIt->second, member->member)) {
-                    // An unlisted method may KEEP a reference to an object it is handed (`g.attach(h)`). CeeLing would then have to
-                    // follow `h` for as long as `g` lives, which nothing models: refuse, and let the pack state that it does not retain.
+                    // An unlisted method may keep a reference to an object it is handed
+                    // (`g.attach(h)`); nothing models that, so refuse.
                     for (const auto& arg : call->arguments) {
                         std::string argName = asObjectLocalName(arg.get());
                         if (argName.empty()) continue;
@@ -1128,7 +976,7 @@ void DanglingChecker::rejectBorrowFromFieldReceiver(const Expression* init, cons
         auto ft = cf->second.find(field);
         return ft == cf->second.end() ? std::string{} : ft->second;
     };
-    // the type and the spelling of a receiver that is a field or a chain of fields; "" when it is not one
+    // The type and spelling of a receiver that is a field or a chain of fields; "" otherwise.
     std::function<std::string(const Expression*, std::string&)> typeOf = [&](const Expression* e, std::string& text) -> std::string {
         if (auto id = dynamic_cast<const Identifier*>(e)) {
             text = id->name;
@@ -1179,14 +1027,11 @@ void DanglingChecker::checkExpressionUses(const Expression* expr) {
             errors_.push_back(e);
             return;
         }
-        // Use of an observer whose observed object is gone → dangling. The object can
-        // be gone because the owner was moved away, or explicitly killed (reassignment
-        // to a fresh object / scope exit → recorded in danglingObservers_).
+        // Use of an observer whose object is gone: the owner was moved away or killed.
         if (auto it = observerOf_.find(id->name); it != observerOf_.end()) {
             const std::string& owner = it->second;
-            // An alias observer's owner is moved-from BY CONSTRUCTION (the call that
-            // produced the alias moved its argument) -- that alone doesn't mean the
-            // underlying object is gone, only that its explicit death events do.
+            // An alias observer's owner is moved-from by construction, which alone does not
+            // mean the object is gone.
             const bool isAlias = aliasObservers_.find(id->name) != aliasObservers_.end();
             const bool ownerMoved = !isAlias && movedFrom_.find(owner) != movedFrom_.end();
             const bool killed = danglingObservers_.find(id->name) != danglingObservers_.end();
@@ -1213,12 +1058,7 @@ void DanglingChecker::checkExpressionUses(const Expression* expr) {
         return;
     }
     if (auto call = dynamic_cast<const FunctionCall*>(expr)) {
-        // A method call's RECEIVER is a use too (`v.size()` after `v` was moved
-        // must be rejected the same way `v.field` already is via the MemberAccess
-        // branch above) -- pre-existing gap found while testing Phase 2.6 container
-        // fixtures: `call->callee` (the `recv.method` MemberAccess) was never
-        // walked here, only the call arguments. Not container-specific -- the same
-        // gap applied to any class-object method call on a moved-from receiver.
+        // A method call's receiver is a use too (`v.size()` after `v` was moved).
         if (call->callee) {
             checkExpressionUses(call->callee.get());
         }
@@ -1281,7 +1121,7 @@ void DanglingChecker::bindStringView(const std::string& name, const Expression* 
                localType_.count(static_cast<const Identifier*>(static_cast<const MemberAccess*>(viewCall->callee.get())->object.get())->name) > 0 &&
                isStringViewType(localType_.at(static_cast<const Identifier*>(static_cast<const MemberAccess*>(viewCall->callee.get())->object.get())->name)) &&
                stringViewMethodReturnsView(static_cast<const MemberAccess*>(viewCall->callee.get())->member)) {
-        // `v.substr(a, b)` on a view: another view of the SAME string (the scan says substr returns a view)
+        // `v.substr(a, b)` on a view: another view of the same string
         const std::string recv = static_cast<const Identifier*>(static_cast<const MemberAccess*>(viewCall->callee.get())->object.get())->name;
         auto o = observerOf_.find(recv);
         if (o != observerOf_.end()) owner = o->second;
@@ -1344,7 +1184,7 @@ void DanglingChecker::bindSpan(const std::string& name, const Expression* init, 
             auto o = observerOf_.find(id->name);          // a copy of a span follows the same vector
             if (o != observerOf_.end()) owner = o->second;
         } else if (typeIt == localType_.end() && !currentClass_.empty() && isVectorType(declaredTypeOf(id))) {
-            // a vector FIELD of this class: followed as the pseudo owner "@name" (see killFieldObservers)
+            // a vector field of this class: followed as the pseudo owner "@name"
             if (vectorElementType(declaredTypeOf(id)) != myElem) {
                 fail("`" + id->name + "` is a `" + declaredTypeOf(id) + "`, not a vector of `" + myElem + "`",
                      "A span views the elements of a vector of the same element type.");
@@ -1360,7 +1200,7 @@ void DanglingChecker::bindSpan(const std::string& name, const Expression* init, 
                mc != nullptr && dynamic_cast<const Identifier*>(mc->object.get()) != nullptr &&
                localType_.count(static_cast<const Identifier*>(mc->object.get())->name) > 0 &&
                isSpanType(localType_.at(static_cast<const Identifier*>(mc->object.get())->name)) && spanMethodReturnsView(mc->member)) {
-        // `s.subspan(a, n)` / `s.first(n)` / `s.last(n)` on a span: another view of the SAME vector
+        // `s.subspan(a, n)` / `s.first(n)` / `s.last(n)` on a span: another view of the same vector
         if (dropsConst(localType_.at(static_cast<const Identifier*>(mc->object.get())->name))) return;
         auto o = observerOf_.find(static_cast<const Identifier*>(mc->object.get())->name);
         if (o != observerOf_.end()) owner = o->second;
@@ -1398,20 +1238,17 @@ void DanglingChecker::checkBody(const std::vector<StatementPtr>& body,
     currentParamNames_.clear();
     for (const auto& [ptype, pname] : params) currentParamNames_.insert(pname);
 
-    // Parameters are always-moved-into owners (CeeLing bans `ref` parameters), so an
-    // object-typed parameter participates in move tracking exactly like a local
-    // declared via `Node x = ...;` -- register it the same way.
+    // An object-typed parameter is tracked like an object local.
     for (const auto& [type, name] : params) {
         if (isObjectType(type)) {
             objectLocals_.insert(name);
             localType_[name] = type;
         } else if (isStringType(type) || isChannelType(type)) {
-            // Same reasoning as the VariableDeclaration string case: not move-
-            // tracked, but its type must be recorded for ThrowStatement's check.
+            // not move-tracked; the type is recorded for the `throw` check
             localType_[name] = type;
             if (isStringType(type)) stringOwners_.insert(name);
         } else if (isViewType(type)) {
-            localType_[name] = type;     // a view parameter: the caller's string / vector outlives the call, so it has no owner here
+            localType_[name] = type;     // a view parameter: the caller's data outlives the call, so no owner here
         }
     }
 
@@ -1455,8 +1292,8 @@ void DanglingChecker::endBlockScope(const std::set<std::string>& ownersBefore, c
 
 void DanglingChecker::recordLoopExit(bool isContinue) {
     BranchState exit = snapshotBranchState();
-    // Owners declared inside the loop die on the way out; anything observing one of them is
-    // dangling in this recorded copy (the live state continues past the statement unchanged).
+    // Owners declared inside the loop die on the way out; observers of them dangle in this
+    // recorded copy only.
     for (const auto& owner : objectLocals_) {
         if (loopStack_.back().ownersBefore.count(owner) != 0) continue;
         for (const auto& [obs, watched] : observerOf_) {
@@ -1487,8 +1324,7 @@ void DanglingChecker::processLoop(const Expression* condition, const ForStatemen
         restoreBranchState(head);
         if (pass > 0 && condition != nullptr) checkExpressionUses(condition);
         loopStack_.push_back({ownersBefore, {}, {}});
-        // The range-for variable is a fresh owner for each iteration -- registered exactly like a
-        // VariableDeclaration, then cleaned up by endBlockScope like any other block-local.
+        // The range-for variable is a fresh owner for each iteration.
         if (forStmt != nullptr && isObjectType(forStmt->loopVarType)) {
             objectLocals_.insert(forStmt->loopVarName);
             localType_[forStmt->loopVarName] = forStmt->loopVarType;
@@ -1501,9 +1337,8 @@ void DanglingChecker::processLoop(const Expression* condition, const ForStatemen
         LoopContext ctx = std::move(loopStack_.back());
         loopStack_.pop_back();
 
-        // A body ending in break/continue/return/throw never falls off its end: that state is
-        // unreachable and must not flow back to the loop head (the exits recorded above carry the
-        // real states).
+        // A body ending in break/continue/return/throw never falls off its end; the recorded
+        // exits carry the real states.
         const bool fallsThrough = !alwaysExits(body);
         if (fallsThrough) {
             mergeBranchStates(before, post, end);
@@ -1525,8 +1360,8 @@ void DanglingChecker::processLoop(const Expression* condition, const ForStatemen
             nextHead = snapshotBranchState();
         }
         if (condition != nullptr) {
-            // the condition is evaluated again at the top of the next iteration, in the state this iteration ended in: a value its calls moved
-            // (applied once before the loop) and the body did not give back is used after the move
+            // The condition runs again at the top of the next iteration, in the state this one
+            // ended in.
             const BranchState current = snapshotBranchState();
             restoreBranchState(nextHead);
             checkExpressionUses(condition);
@@ -1574,32 +1409,20 @@ void DanglingChecker::mergeBranchStates(const BranchState& before, const BranchS
     movedFrom_ = thenState.movedFrom;
     movedFrom_.insert(elseState.movedFrom.begin(), elseState.movedFrom.end());
 
-    // Observer names: the union of everything either branch declared (a name
-    // declared as an observer in one branch and used only within that branch is
-    // already scope-checked independently; keeping the union here just means a
-    // later use-site lookup can find it, matching how objectLocals_ union already
-    // works for owners declared inside an unconditional tail after the `if`).
+    // Observer names: the union of both branches.
     observerNames_ = thenState.observerNames;
     observerNames_.insert(elseState.observerNames.begin(), elseState.observerNames.end());
 
-    // danglingObservers_: dangling in EITHER branch -> dangling after (an owner
-    // dying at a branch's own scope-exit is a real death on that path, and the
-    // caller can't know which branch ran).
+    // Dangling in either branch means dangling after.
     danglingObservers_ = thenState.danglingObservers;
     danglingObservers_.insert(elseState.danglingObservers.begin(), elseState.danglingObservers.end());
 
     aliasObservers_ = thenState.aliasObservers;
     aliasObservers_.insert(elseState.aliasObservers.begin(), elseState.aliasObservers.end());
 
-    // observerOf_: this is the field the sibling-branch-pollution bug was actually
-    // about. For each observer name touched by EITHER branch, compare what each
-    // branch says it observes (falling back to the pre-if binding if a branch never
-    // touched it):
-    //  - both branches agree (or only one branch touched it and the other kept the
-    //    pre-if binding) -> keep that binding, it's certain either way.
-    //  - the branches disagree (rebound to different owners, or one rebound while
-    //    the other implicitly kept the old one) -> ambiguous; conservative-reject
-    //    rule says mark it dangling rather than guess which binding survives.
+    // observerOf_: for each observer either branch touched, compare what each branch says it
+    // observes (the pre-if binding if a branch left it alone). Agreement keeps the binding;
+    // disagreement is ambiguous, so the observer is marked dangling.
     observerOf_ = before.observerOf;
     std::set<std::string> touched;
     for (const auto& [name, owner] : thenState.observerOf) touched.insert(name);
@@ -1614,8 +1437,8 @@ void DanglingChecker::mergeBranchStates(const BranchState& before, const BranchS
         auto elseIt = elseState.observerOf.find(name);
         const std::string elseOwner = elseIt != elseState.observerOf.end() ? elseIt->second : beforeOwner;
 
-        // A string_view that is bound to a string on one path and to nothing with an owner (a literal, a view parameter: storage that outlives the
-        // function) on the other is dangling after the merge exactly when that one string dies. The two paths do not conflict.
+        // A view bound to a string on one path and to nothing with an owner (a literal, a view
+        // parameter) on the other dangles after the merge only if that string dies.
         auto lt = localType_.find(name);
         const bool isView = lt != localType_.end() && isViewType(lt->second);
         if (isView && thenOwner != elseOwner && (thenOwner.empty() || elseOwner.empty())) {
@@ -1627,14 +1450,8 @@ void DanglingChecker::mergeBranchStates(const BranchState& before, const BranchS
                 observerOf_[name] = thenOwner;
             }
         } else {
-            // Ambiguous: the two branches leave `name` observing different owners
-            // (or one rebinds it while the other leaves it unbound). The use-site
-            // check only consults danglingObservers_ for names that HAVE an
-            // observerOf_ entry (it needs an owner name to report in the
-            // diagnostic), so an entry must still be present here -- pick whichever
-            // branch's owner is non-empty (if any) purely for that message; the
-            // dangling flag below is what actually makes any use after the `if` an
-            // error, independent of which owner name is shown.
+            // Ambiguous. The use-site check needs an observerOf_ entry to report an owner, so
+            // keep one; the dangling flag is what makes a later use an error.
             observerOf_[name] = !thenOwner.empty() ? thenOwner : elseOwner;
             danglingObservers_.insert(name);
         }
@@ -1643,7 +1460,7 @@ void DanglingChecker::mergeBranchStates(const BranchState& before, const BranchS
 
 void DanglingChecker::processStatement(const Statement* stmt) {
     if (auto decl = dynamic_cast<const VariableDeclaration*>(stmt)) {
-        // First: uses on the RHS are evaluated before the declaration completes.
+        // Uses on the RHS are evaluated before the declaration completes.
         checkExpressionUses(decl->expression.get());
 
         if (isStringViewType(decl->type)) {
@@ -1658,25 +1475,18 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         }
         if (isStringType(decl->type) && !decl->isObserver) {
             stringOwners_.insert(decl->identifier);
-            // a fresh string: a view of an earlier string of the same name no longer follows it (the name is a new object)
+            // a fresh string: a view of an earlier string of the same name is dead
             for (const auto& [obs, watched] : observerOf_) {
                 if (watched == decl->identifier) danglingObservers_.insert(obs);
             }
         }
 
         if (decl->isObserver) {
-            // `ref Node b = ...;` — b observes its RHS (if an object local); it does
-            // NOT move it. `ref Node b = nullptr;` records b as an observer with no
-            // owner yet (bound later by assignment).
+            // `ref Node b = ...;` observes its RHS and does not move it. `ref Node b = nullptr;`
+            // records an observer with no owner yet.
             //
-            // A value type has no owner to observe (it's copied, not smart-pointer-
-            // backed) -- AstEmitter::emitStatement's isObserver branch unconditionally
-            // emits the smart-pointer-style `T* b = (a).get();` lowering regardless of
-            // decl->type, which does not even compile for a value type (`.get()`
-            // doesn't exist on it). Reject outright rather than silently registering
-            // observer state that has no corresponding safe codegen -- matches
-            // The design notes' default-reject rule (unprovable safety is rejected, not
-            // passed through).
+            // A value type has no owner to observe and the emitted `.get()` lowering would not
+            // compile for it, so it is rejected.
             if (analyzer_ != nullptr && analyzer_->isValueTypeClass(decl->type)) {
                 DanglingError e;
                 e.line = decl->loc.line;
@@ -1700,9 +1510,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             danglingObservers_.erase(decl->identifier);
             if (isObjectType(decl->type)) {
                 localType_[decl->identifier] = decl->type;
-                // `ref Node n = v[i];` observes the CONTAINER `v` (see
-                // asContainerSubscript) -- an element has no identity of its own to
-                // observe; invalidation is a whole-container reallocation event.
+                // `ref Node n = v[i];` observes the container `v`.
                 if (!boundOwner.empty()) {
                     observerOf_[decl->identifier] = boundOwner;
                 }
@@ -1711,14 +1519,8 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                 }
             }
         } else {
-            // `Node b = a;` — assigning one object local from another moves the source.
-            // EXCEPT for a value type (struct/Iterator-shaped/known-external -- see
-            // isObjectType's own comment): `Foo b = a;` there is an ordinary COPY, not
-            // a move (confirmed by AstEmitter::emitStatement's own isValueType branch,
-            // which emits a plain, non-`std::move`-wrapped copy for exactly this shape)
-            // -- so `a` must stay live. Only a value type passed as a CALL ARGUMENT is
-            // move-constructed (applyCallArgMoves below still applies to it), since
-            // that is a genuinely different codegen shape (`sink(std::move(a))`).
+            // `Node b = a;` moves the source, except for a value type, where it is an ordinary
+            // copy and `a` stays live. A value type passed as a call argument is still moved.
             const bool srcIsValueTypeCopy = analyzer_ != nullptr &&
                 analyzer_->isValueTypeClass(decl->type);
             if (isObjectType(decl->type) && decl->expression && !srcIsValueTypeCopy) {
@@ -1727,34 +1529,19 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                     movedFrom_.insert(src);
                 }
             }
-            // `Node b = f(a);` — a call RHS moves its own object-typed arguments into
-            // the callee, same as any other call (see applyCallArgMoves). Note this
-            // is a no-op for a borrowing-method-call RHS like `a.block(...)`: its
-            // "arguments" are the block's own int coordinates, not `a` itself -- `a`
-            // (the receiver) is untouched by this, exactly as it must be (see the
-            // borrowing-receiver branch below).
+            // A call RHS moves its object-typed arguments into the callee. A borrowing method
+            // call like `a.block(...)` leaves the receiver `a` untouched.
             applyCallArgMoves(decl->expression.get());
-            // `Node b = f(a);` where f's summary says its return value aliases the
-            // parameter that `a` was passed to: `a` is still moved into `f` as usual
-            // (call-argument move, applied below alongside all other call args), but
-            // `b` is NOT a fresh owner -- it observes `a`'s object, the same way an
-            // explicit `ref` would. Reuse the observer machinery directly so the
-            // existing use-site/death-event checks cover it for free.
+            // `Node b = f(a);` where f's summary says the result aliases that parameter: `a` is
+            // still moved, but `b` observes its object like an explicit `ref`.
             std::string aliasedOwner;
             if (isObjectType(decl->type) && decl->expression) {
                 aliasedOwner = resolveCallReturnAlias(decl->expression.get());
             }
-            // `Node b = a.block(...);` (a known-external class's allow-listed
-            // borrowing method): `b` observes RECEIVER `a`, not a moved argument --
-            // `a` stays fully live and usable. Checked as a separate fallback (not
-            // folded into aliasedOwner above) because it must NOT be added to
-            // aliasObservers_ below: aliasObservers_ exists to suppress the "owner
-            // moved" check for an alias whose owner was ALREADY moved into the
-            // aliasing call by construction (an ordinary call argument) -- that does
-            // not apply here, since `a.block(...)` does not consume `a`. Only a
-            // genuinely later reassignment/move of `a` should kill `b` (handled by
-            // the pre-existing AssignmentStatement/applyCallArgMoves paths, which
-            // walk observerOf_ regardless of aliasObservers_ membership).
+            // `Node b = a.block(...);` (an allow-listed borrowing method of an external class):
+            // `b` observes the receiver `a`, which stays live. It is not added to
+            // aliasObservers_, because `a` was not moved by the call; a later reassignment or
+            // move of `a` kills `b`.
             std::string borrowedOwner;
             if (aliasedOwner.empty() && isObjectType(decl->type) && decl->expression) {
                 borrowedOwner = resolveBorrowingMethodReceiver(decl->expression.get());
@@ -1773,16 +1560,12 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                 observerOf_[decl->identifier] = borrowedOwner;
                 localType_[decl->identifier] = decl->type;
             } else if (isObjectType(decl->type)) {
-                // Register the new object-typed owner; a fresh declaration revives
-                // the name.
+                // A fresh declaration revives the name.
                 objectLocals_.insert(decl->identifier);
                 movedFrom_.erase(decl->identifier);
                 localType_[decl->identifier] = decl->type;
             } else if (isStringType(decl->type) || isChannelType(decl->type)) {
-                // `string` isn't an object type (no move/observer tracking), but its
-                // declared type still needs to be recorded so ThrowStatement can
-                // verify a thrown identifier is actually string-typed (see below) --
-                // the only reader of a non-object localType_ entry.
+                // not move-tracked; the type is recorded for the `throw` check
                 localType_[decl->identifier] = decl->type;
             }
         }
@@ -1813,26 +1596,18 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             classFields_.count(currentClass_) > 0 &&
             classFields_.at(currentClass_).count(assign->variable) > 0;
         if (assign->target || isBareFieldStore) {
-            // Member target `a.b = ...`, OR a bare identifier naming a field of the
-            // current class with implicit `this` (`link = other;` inside a method):
-            // both store into / link a field. Neither reassigns or moves the root
-            // object, and neither consumes the RHS — storing an object into a field is
-            // a link/share, not an ownership handoff that abandons the source (a
-            // linked-list node is used again right after linking). A local/observer of
-            // the same name (checked above) shadows the field, matching ordinary scope
-            // precedence. For a member target, also check the receiver isn't already
-            // dead (the RHS was already checked above); a bare field-store's receiver
-            // is the implicit, always-live `this`, so there's nothing extra to check.
+            // A member target `a.b = ...` or a bare field name (`link = other;` in a method)
+            // links a field: it neither moves the root object nor consumes the RHS. A local or
+            // observer of the same name shadows the field. The receiver of a member target
+            // must not already be dead.
             if (assign->target) {
                 checkExpressionUses(assign->target.get());
             }
-            // a store into a field replaces what a span of that field points into (name-based: `h.items = ...` counts too)
+            // a store into a field replaces what a span of that field points into (by name)
             if (auto m = dynamic_cast<const MemberAccess*>(assign->target.get())) killFieldObservers(m->member);
             else if (!assign->target) killFieldObservers(assign->variable);
         } else if (observerNames_.find(assign->variable) != observerNames_.end()) {
-            // Assigning to an observer rebinds what it observes: `b = inner;`. A
-            // plain rebind is a real (non-alias) observation, so it no longer gets
-            // the alias exemption even if `b` was originally alias-derived.
+            // Assigning to an observer rebinds it (`b = inner;`); it loses any alias exemption.
             danglingObservers_.erase(assign->variable);
             aliasObservers_.erase(assign->variable);
             std::string boundOwner;
@@ -1853,18 +1628,10 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                 danglingObservers_.insert(assign->variable);
             }
         } else if (isOperatorAssignMutation(*assign)) {
-            // `n = value;` where `n`'s declared type is a class that declares its
-            // own `operator=`, and `value` is NOT itself the same class (e.g.
-            // `n = "text";`): this is a MUTATING method call on the still-alive
-            // object (`n->operator=(value)`), not an ownership handoff -- `n`'s
-            // identity does not change, so none of the owner-death machinery below
-            // applies. The RHS was already use-checked above; if it's an object
-            // local of a DIFFERENT class this can't happen (AstEmitter/EscapeHatch-
-            // Checker's C++ type system would reject the resulting call at compile
-            // time, same as any other type-mismatched call argument).
+            // `n = "text";` on a class with its own `operator=` is a mutating call on the
+            // live object, not an ownership handoff.
         } else {
-            // Reassigning an OWNER frees the object it used to hold. Any observer of
-            // that owner is now pointing at a destroyed object → mark it dangling.
+            // Reassigning an owner frees the object it held: its observers dangle.
             if (objectLocals_.find(assign->variable) != objectLocals_.end()) {
                 for (const auto& [obs, owner] : observerOf_) {
                     if (owner == assign->variable) {
@@ -1872,19 +1639,16 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                     }
                 }
             }
-            // Reassigning a local revives the name itself (no longer moved-from).
+            // Reassigning a local revives the name.
             movedFrom_.erase(assign->variable);
-            // RHS being another object local moves that source -- unless the source is a shared
-            // handle, which the emitter copies (a refcount bump) and which therefore stays live.
+            // An object-local RHS is moved, unless it is a shared handle (copied, stays live).
             if (std::string src = asObjectLocalName(assign->expression.get());
                 !src.empty() && !isSharedLocal(src)) {
                 movedFrom_.insert(src);
             }
-            // `x = f(a);` — a call RHS moves its own object-typed arguments, same as
-            // any other call site.
             applyCallArgMoves(assign->expression.get());
-            // `w = g.window(...);` (an external class's borrowing method, an opaque class's unlisted one): `w` stops being an owner and
-            // observes the receiver, as in the declaration form above.
+            // `w = g.window(...);` (a borrowing method of an external class): `w` stops being an
+            // owner and observes the receiver, as in the declaration form.
             if (objectLocals_.find(assign->variable) != objectLocals_.end()) {
                 if (std::string borrowedOwner = resolveBorrowingMethodReceiver(assign->expression.get()); !borrowedOwner.empty()) {
                     objectLocals_.erase(assign->variable);
@@ -1895,9 +1659,8 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                     rejectBorrowFromFieldReceiver(assign->expression.get(), assign);
                 }
             }
-            // `x = f(a);` where f's summary says the return aliases a parameter: `x`
-            // becomes an observer of that argument instead of an independent owner,
-            // same reasoning as the VariableDeclaration case above.
+            // `x = f(a);` where f's result aliases a parameter: `x` observes that argument,
+            // as in the declaration case.
             if (objectLocals_.find(assign->variable) != objectLocals_.end()) {
                 if (std::string aliasedOwner = resolveCallReturnAlias(assign->expression.get());
                     !aliasedOwner.empty()) {
@@ -1916,15 +1679,8 @@ void DanglingChecker::processStatement(const Statement* stmt) {
     } else if (auto ifs = dynamic_cast<const IfStatement*>(stmt)) {
         checkExpressionUses(ifs->condition.get());
         applyCallArgMoves(ifs->condition.get());
-        // A branch runs conditionally, so any effect inside it (a move, an observer
-        // rebind, a scope-exit death) is not certain on the path after the `if` --
-        // each branch is analyzed independently from the same starting snapshot, then
-        // the two outcomes are merged conservatively: an effect present in EITHER
-        // branch holds after the `if` (a use after the `if` can't know which branch
-        // ran), and if the branches actively disagree about what an observer points
-        // at, that observer is treated as dangling rather than guessed at (same
-        // "ambiguous -> conservative reject" rule the design notes specify elsewhere). See
-        // mergeBranchStates for the exact per-field rules.
+        // Each branch is analyzed from the same snapshot, then merged conservatively
+        // (mergeBranchStates).
         const BranchState before = snapshotBranchState();
         BranchState thenState = before;
         {
@@ -1947,15 +1703,8 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             endBlockScope(ownersBefore, &stringsBefore);
             elseState = snapshotBranchState();
         }
-        // A branch that unconditionally exits (return/throw, or an if/else
-        // where both arms do) can never reach the code AFTER this `if` --
-        // that code only runs via the OTHER branch, so an exiting branch's
-        // effects must not be merged into the post-`if` state (they'd falsely
-        // "leak" a move/dangling-mark from a path that can't actually reach
-        // there). Only one side can meaningfully exit for this to matter (if
-        // BOTH did, every statement after the `if` is unreachable and this
-        // choice is moot); each case just uses the OTHER branch's state
-        // as-is, skipping the union mergeBranchStates would otherwise do.
+        // A branch that always exits never reaches the code after the `if`, so when only one
+        // side exits, the other side's state is used as-is.
         const bool thenExits = alwaysExits(ifs->body);
         const bool elseExits = !ifs->elseBody.empty() && alwaysExits(ifs->elseBody);
         if (thenExits && !elseExits) {
@@ -1967,15 +1716,11 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         }
     } else if (auto whiles = dynamic_cast<const WhileStatement*>(stmt)) {
         checkExpressionUses(whiles->condition.get());
-        applyCallArgMoves(whiles->condition.get());      // evaluated before the first iteration and again before each next one (processLoop re-checks it)
-        // The body may run zero or more times, so any effect inside it is not certain on the path
-        // after the loop (modeled as a branch against "never runs", reusing the `if` merge rules),
-        // and it runs again from the state the last pass left -- see processLoop.
+        applyCallArgMoves(whiles->condition.get());      // processLoop re-checks it for later iterations
+        // The body runs zero or more times; see processLoop.
         processLoop(whiles->condition.get(), nullptr, whiles->body);
     } else if (auto cdecl = dynamic_cast<const ContainerDeclaration*>(stmt)) {
-        // `std::vector<T> v;` -- no initializer (the one definite-init exception,
-        // see Chapter 17/grammar.js container_declaration). Always a fresh owner;
-        // no RHS uses to check and nothing to move.
+        // `std::vector<T> v;` has no initializer: a fresh owner, nothing to check or move.
         objectLocals_.insert(cdecl->identifier);
         movedFrom_.erase(cdecl->identifier);
         localType_[cdecl->identifier] = cdecl->type;
@@ -1984,8 +1729,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
         applyCallArgMoves(fors->container.get());
         processLoop(nullptr, fors, fors->body);
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
-        // A bare expression statement, e.g. `sink(a);`. First check uses, then
-        // apply move effects: a user function call moves its object-typed args.
+        // e.g. `sink(a);`: check uses, then apply the moves.
         checkExpressionUses(exprStmt->expression.get());
         applyCallArgMoves(exprStmt->expression.get());
     } else if (dynamic_cast<const BreakStatement*>(stmt) != nullptr ||
@@ -2005,12 +1749,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
     } else if (auto throwStmt = dynamic_cast<const ThrowStatement*>(stmt)) {
         checkExpressionUses(throwStmt->expression.get());
         applyCallArgMoves(throwStmt->expression.get());
-        // `throw` is restricted to string-typed operands this slice (CeeLing has no
-        // exception-class hierarchy without inheritance -- see the design notes/the internal notes).
-        // A string literal, a string-typed identifier, or a `+` concatenation of
-        // such (recursively) is fine; anything else (a class object, a container, a
-        // numeric expression, an unresolvable expression) is rejected, per the
-        // conservative-reject rule.
+        // `throw` takes only string-valued operands.
         bool isStringOperand = isStringValuedExpr(throwStmt->expression.get());
         if (!isStringOperand) {
             DanglingError e;
@@ -2024,17 +1763,10 @@ void DanglingChecker::processStatement(const Statement* stmt) {
                      "variable instead.";
             errors_.push_back(e);
         }
-        // No scope-exit logic needed: block-exit is already unconditional (endBlockScope
-        // runs after every if/while/for/try body regardless of a return/throw inside),
-        // so a throw needs no special early-exit machinery -- see Chapter 18.
     } else if (auto tryStmt = dynamic_cast<const TryStatement*>(stmt)) {
-        // The try body may throw at ANY point inside it, not just fail-or-succeed as
-        // a whole -- modeled the same way `while`'s "body runs zero or more times" is
-        // modeled: merge "try body never ran" against "try body ran to completion" to
-        // get the conservative "could have thrown after any prefix" state the catch
-        // block must be analyzed from (we don't know how far execution got before the
-        // throw). The state after the whole construct is a second, ordinary two-way
-        // merge: "try succeeded, no exception" vs "catch ran".
+        // The try body may throw at any point, so the catch block is analyzed from the merge
+        // of "try never ran" and "try ran to completion". The state after the whole construct
+        // merges "try succeeded" with "catch ran".
         const BranchState before = snapshotBranchState();
         const std::set<std::string> ownersBeforeTry = objectLocals_;
         for (const auto& inner : tryStmt->body) {
@@ -2049,9 +1781,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
 
         restoreBranchState(throwEntryState);
         const std::set<std::string> ownersBeforeCatch = objectLocals_;
-        // The caught variable is a string (enforced below); not move-tracked, but its
-        // type is recorded the same way a string local/param is, so a re-throw of it
-        // inside the catch body is recognized as a valid string operand.
+        // The caught variable is a string; its type is recorded so a re-throw of it is valid.
         if (!isStringType(tryStmt->catchType)) {
             DanglingError e;
             e.line = stmt->loc.line;

@@ -165,7 +165,7 @@ int main() {
 ```
 <!-- error: 11_ext_fn_class_rejected.clg -->
 ```
-Error: error[semantic/forbidden-construct]: ext_fn parameter `n` type `Node` is not supported (line 7, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see the internal notes' ext_fn entry).
+Error: error[semantic/forbidden-construct]: ext_fn parameter `n` type `Node` is not supported (line 7, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see guide chapter 11).
 ```
 
 <!-- example: 11_ext_fn_void_rejected.clg -->
@@ -179,7 +179,7 @@ int main() {
 ```
 <!-- error: 11_ext_fn_void_rejected.clg -->
 ```
-Error: error[semantic/forbidden-construct]: ext_fn return type `void` is not supported (line 1, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see the internal notes' ext_fn entry).
+Error: error[semantic/forbidden-construct]: ext_fn return type `void` is not supported (line 1, column 1). ext_fn signatures are restricted to primitive types (int, float, double, bool, string, char) and std::vector<primitive> for now -- a class-typed ext_fn parameter or return needs a hand-written borrow-summary annotation that isn't designed yet (see guide chapter 11).
 ```
 
 (A `Channel` is refused in an `ext_fn` signature too: [chapter 10](10-threads.md).) Return an `int` status and put any other result in a `ref` parameter.
