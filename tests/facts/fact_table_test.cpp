@@ -1,12 +1,13 @@
-// Tests for the fact-pack loader (src/core/generator/fact_table.cpp) and for the packs that ship in the compiler.
+// Tests for the fact-pack loader (src/facts/fact_table.cpp) and for the packs that ship in the compiler.
 // The loader is strict on purpose: everything it does not understand must be an error, never silently skipped.
 
 #include <cstdio>
 #include <string>
 
-#include "generator/fact_table.h"
-#include "generator/sha256.h"
-#include "generator/library_summary.h"
+#include "facts/fact_table.h"
+#include "facts/sha256.h"
+#include "facts/library_summary.h"
+#include "emit/runtime_helpers.h"
 
 namespace {
 

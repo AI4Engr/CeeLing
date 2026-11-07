@@ -1,15 +1,15 @@
-#include "core/cst_to_ast/ast.h"
-#include "core/generator/cpp_generator.h"
-#include "core/generator/dangling_checker.h"
-#include "core/generator/escape_hatch_checker.h"
-#include "core/generator/pairing_checker.h"
-#include "core/generator/closure_desugar.h"
-#include "core/generator/struct_json.h"
-#include "core/generator/channel_check.h"
-#include "core/generator/ast_emitter.h"
-#include "core/generator/smart_pointer_analyzer.h"
-#include "core/generator/fact_table.h"
-#include "core/generator/library_summary.h"
+#include "syntax/ast.h"
+#include "emit/cpp_generator.h"
+#include "passes/dangling_checker.h"
+#include "passes/escape_hatch_checker.h"
+#include "passes/pairing_checker.h"
+#include "passes/closure_desugar.h"
+#include "passes/struct_json.h"
+#include "passes/channel_check.h"
+#include "emit/ast_emitter.h"
+#include "passes/smart_pointer_analyzer.h"
+#include "facts/fact_table.h"
+#include "facts/library_summary.h"
 #include <iostream>
 #include <vector>
 #include <fstream>
@@ -19,7 +19,7 @@
 #include <set>
 
 #ifdef WITH_TREE_SITTER
-#include "core/cst_to_ast/ast_builder.h"
+#include "syntax/ast_builder.h"
 #endif
 
 #ifdef _WIN32

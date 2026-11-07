@@ -10,7 +10,7 @@ bash tests/safety/run_safety_tests.sh
 ## Baseline snapshot
 
 Captured against `build/cling.exe` with **no safety analysis implemented**
-(`src/core/` has zero enforcement logic as of this baseline).
+(`src/` has zero enforcement logic as of this baseline).
 
 | Fixture | Expect | Baseline result |
 |---------|--------|-----------------|

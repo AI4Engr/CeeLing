@@ -29,7 +29,7 @@ endif()
 
 # Include directories
 include_directories(
-    ${CMAKE_SOURCE_DIR}/src/core
+    ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/vendor/tree-sitter/lib/include
     ${CMAKE_SOURCE_DIR}/vendor/tree-sitter/lib/src
     ${CMAKE_SOURCE_DIR}/tree-sitter-ceeling/src
@@ -40,31 +40,30 @@ include(${CMAKE_SOURCE_DIR}/cmake/embed_facts.cmake)
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated)
 cling_embed_facts(${CMAKE_BINARY_DIR}/generated/builtin_facts_data.cpp ${CMAKE_SOURCE_DIR}/facts)
 
-# Source files
+# Source files, by pipeline stage (see src/): syntax -> passes (desugar, check, infer) -> emit, with the library facts they consult
 set(CORE_SOURCES
-    src/core/generator/cpp_generator.cpp
-    src/core/generator/smart_pointer_analyzer.cpp
-    src/core/generator/dangling_checker.cpp
-    src/core/generator/escape_hatch_checker.cpp
-    src/core/generator/pairing_checker.cpp
-    src/core/generator/closure_desugar.cpp
-    src/core/generator/ast_emitter.cpp
-    src/core/generator/library_summary.cpp
-    src/core/generator/fact_table.cpp
-    src/core/generator/sha256.cpp
+    src/syntax/ast_builder.cpp
+    src/syntax/class_hierarchy.cpp
+    src/passes/struct_json.cpp
+    src/passes/closure_desugar.cpp
+    src/passes/channel_check.cpp
+    src/passes/escape_hatch_checker.cpp
+    src/passes/dangling_checker.cpp
+    src/passes/pairing_checker.cpp
+    src/passes/smart_pointer_analyzer.cpp
+    src/facts/fact_table.cpp
+    src/facts/library_summary.cpp
+    src/facts/sha256.cpp
     ${CMAKE_BINARY_DIR}/generated/builtin_facts_data.cpp
-    src/core/generator/class_hierarchy.cpp
+    src/emit/ast_emitter.cpp
+    src/emit/runtime_helpers.cpp
+    src/emit/cpp_generator.cpp
 )
 
 # The parser: tree-sitter (vendor/tree-sitter is a git submodule) with the checked-in generated grammar
 if(NOT EXISTS "${CMAKE_SOURCE_DIR}/vendor/tree-sitter/lib/src/lib.c")
     message(FATAL_ERROR "vendor/tree-sitter is empty: run `git submodule update --init` (or clone with --recursive)")
 endif()
-list(APPEND CORE_SOURCES
-    src/core/cst_to_ast/ast_builder.cpp
-    src/core/generator/struct_json.cpp
-    src/core/generator/channel_check.cpp)
-
 add_library(tree_sitter STATIC vendor/tree-sitter/lib/src/lib.c)
 target_compile_definitions(tree_sitter PRIVATE TREE_SITTER_HIDE_SYMBOLS)
 add_library(cling_grammar STATIC tree-sitter-ceeling/src/parser.c)

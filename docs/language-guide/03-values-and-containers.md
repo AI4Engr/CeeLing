@@ -491,7 +491,7 @@ int main() {
 prose.
 
 **What CeeLing does.** It answers with a rule, not a library: **a call to a function it has no entry for is rejected**. Its table of library facts is small and written by hand
-(`src/core/generator/library_summary.cpp`). The free functions a program can call are:
+(`src/facts/library_summary.cpp`). The free functions a program can call are:
 
 | Name | What it does |
 |---|---|
