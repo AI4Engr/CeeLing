@@ -1,5 +1,6 @@
 # Examples
 
-`account.clg` is a small program used by the debugging section of the Language Guide ([chapter 11](../docs/language-guide/11-talking-to-cpp.md)): compile it with `cling -g account.clg --cpp account.cpp`, build the C++ with `g++ -g -O0`, and step through the `.clg` source in `gdb` (`tools/clgdebug.sh account.clg` does all of it).
+* `hello.clg`: the first program in the README (a vector, an object and a loop). `cling hello.clg --cpp hello.cpp && g++ -std=c++17 hello.cpp -o hello`.
+* `account.clg`: a small program to step through in the debugger: `tools/clgdebug.sh examples/account.clg` (see [guide chapter 11](../docs/language-guide/11-talking-to-cpp.md)).
 
-The guide itself is the collection of examples: every program in [docs/language-guide](../docs/language-guide/README.md) is compiled and run by CTest, and `tests/safety/` holds several hundred small programs that must be accepted or rejected.
+The guide is the larger collection of examples: every program in [docs/language-guide](../docs/language-guide/README.md) is compiled and run by CTest, and `tests/safety/` holds several hundred small programs that must be accepted or rejected.

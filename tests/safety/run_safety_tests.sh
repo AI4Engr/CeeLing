@@ -116,7 +116,7 @@ run_one_fixture() {
             # Use this whenever the claim is a RUNTIME property -- virtual dispatch,
             # exception type matching, shared_ptr aliasing. -fsyntax-only cannot
             # distinguish "dispatches to the override" from "silently calls the base".
-            want_run="$(grep -m1 -oE '//@ run:.*' "$fx" | sed -E 's|^//@ run:[[:space:]]*||')"
+            want_run="$(grep -m1 -oE '//@ run:.*' "$fx" | sed -E 's|^//@ run:[[:space:]]*||' | tr -d '\r')"
             # A fixture may instead declare that the compiled program must DIE at
             # runtime with a diagnostic (a compiler-inserted runtime check firing):
             #   //@ run-fail: out of bounds

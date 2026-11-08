@@ -206,6 +206,26 @@ error[semantic/use-after-move]: use of moved-from value `data`
 
 It works, but it is an after-the-fact check on a language whose moves are not destructive, not a type-system guarantee, and it relies on the checker being right. See [chapter 5](05-moves.md).
 
+## Feature by feature: Rust's safe subset and CeeLing
+
+CeeLing covers several of the mechanisms that make Rust's safe subset safe, in a weaker form: they are inferred over C++ instead of declared with lifetimes, and some are checked at run time instead of compile time. Others are left out on purpose. This is a list, not a score.
+
+| Rust guarantee | CeeLing |
+|---|---|
+| No use after free / dangling references | **Yes, at compile time**, by tracking what each reference observes and when its owner dies. Inferred, no lifetimes in signatures. The open gaps are in [chapter 13](13-contract-and-threats.md) |
+| Ownership and move semantics; use after move is an error | **Yes.** The compiler inserts the moves and rejects a use after one, across calls, branches, loops and nested expressions |
+| No double free, no manual `delete` | **Yes.** `delete`, raw `new` and raw pointers cannot be written; cycles become `weak_ptr` |
+| No iterator invalidation | **Mostly.** A view or reference into a container dies at every call that can reallocate it, and iterators cannot be held at all (whole-vector methods such as `sort` replace them). A loop that grows the container it is walking is not caught yet |
+| Bounds-checked indexing | **Yes, at run time** (`v[i]`, `s[i]`), aborting with the `.clg` line |
+| No null | Not by type; **a run-time check on every object handle**, aborting with the line |
+| No uninitialised reads | **Yes** for locals; number, bool and char fields start at zero |
+| `unsafe` is explicit and bounded | **Yes.** Casts, `union` and `.get()` are sealed; `ext_fn` is the declared boundary, listed by `--report-facts` |
+| `Send` / `Sync`, data-race freedom | **Narrower, on purpose:** `spawn` accepts only plain values and moved objects, `Channel<T>` is the one shared queue. General data-race freedom is not claimed |
+| Exclusive `&mut` / shared `&` aliasing rules | Not attempted. CeeLing tracks lifetimes, not aliasing |
+| Use of existing C++ libraries | **Native.** The output is C++; what each library does with borrowed data comes from fact packs ([chapter 11](11-talking-to-cpp.md)) |
+
+Where the strongest guarantee, full data-race freedom or lifetime-checked APIs are required, use Rust. Where the code already is, or must be, C++, CeeLing gives much of the memory-safety benefit without leaving it.
+
 ## The landscape
 
 None of the following is verified against current sources for this chapter. It is the shape of the field as the project's own notes record it, with the hedges they carry.

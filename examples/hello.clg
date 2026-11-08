@@ -1,0 +1,21 @@
+class Counter {
+public:
+    int total;
+    Counter() { total = 0; }
+    void add(int n) { total = total + n; }
+};
+
+int main() {
+    std::vector<int> scores;
+    scores.push_back(3);
+    scores.push_back(5);
+
+    Counter c = new Counter();
+    int i = 0;
+    while (i < scores.size()) {
+        c.add(scores[i]);
+        i = i + 1;
+    }
+    std::cout << "total = " << c.total << std::endl;
+    return 0;
+}
