@@ -16,7 +16,7 @@ makes the bug impossible, stops it at run time, or leaves it where it was), and 
 
 Every issue has a heading with its number and the function it is about, and then:
 
-* **In cJSON.** The code, quoted by the guide's checker from `cjson-cling/upstream/` (cJSON 1.7.19, commit `c859b25` as recorded in `upstream/VERSION`), and what is wrong with it. Where the defect is
+* **In cJSON.** The code, quoted by the guide's checker from `cjson-cling/upstream/` (cJSON 1.7.19, commit `c859b25`, the git submodule `upstream/`), and what is wrong with it. Where the defect is
   deterministic there is a **C twin**: a small C program, built with `gcc` against that same source, that shows it. A twin that depends on undefined behaviour says so, and where a defect could not be
   reproduced the text says that instead.
 * **In cjson-cling.** The port's code for the same job, the mechanism, and a CeeLing program built against the port, with what it printed.
