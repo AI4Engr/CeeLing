@@ -17,6 +17,8 @@ python -I docs/language-guide/examples/check.py check --cling build/cling       
 python -I docs/language-guide/examples/check.py write --cling build/cling        # regenerate the quoted outputs after a message changes
 ```
 
+Two guide examples quote g++ 16 diagnostics (`06_const_ref_temporary`, `12_demand_use`), so `check.py` reports them on older compilers; examples that need a sibling project (cjson-cling, gdb) are skipped when it is absent (`GUIDE_PROJECT_CJSON_CLING` points at it).
+
 The generated parser `tree-sitter-ceeling/src/parser.c` is checked in. After editing `tree-sitter-ceeling/grammar.js`, run `tree-sitter generate` in that directory (`npm install -g tree-sitter-cli`) and commit the result.
 
 ## The rule for changes
