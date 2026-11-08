@@ -158,7 +158,7 @@ Several owners become `shared_ptr`; a back link that closes a cycle becomes `wea
 
 ## Relation to C++ and Rust
 
-CeeLing is C++ with a restricted, checked surface, not a new runtime: it compiles to C++ and links to existing C++ libraries as they are. It covers several of the mechanisms that make Rust's safe subset safe, in a weaker form (inferred instead of declared with lifetimes, partly checked at run time instead of compile time), and leaves others out on purpose. The feature-by-feature comparison is in [guide chapter 17](docs/language-guide/17-comparisons.md#feature-by-feature-rusts-safe-subset-and-ceeling). Where the strongest guarantee is required, use Rust.
+CeeLing is C++ with a restricted, checked surface, not a new runtime: it compiles to C++ and links to existing C++ libraries as they are. It covers several of the mechanisms that make Rust's safe subset safe, in a weaker form (inferred instead of declared with lifetimes, partly checked at run time instead of compile time), and leaves others out on purpose. The feature-by-feature comparison is in [guide chapter 17](docs/language-guide/17-comparisons.md#feature-by-feature-rusts-safe-subset-and-ceeling). Where the strongest guarantee is required, use Rust. The objections that come up most (is it a C replacement, is an inferred `shared_ptr` just garbage collection, why not sanitizers and hardened libraries) are answered in [the same chapter](docs/language-guide/17-comparisons.md#questions-people-ask).
 
 ## Evidence: libraries written in CeeLing
 
@@ -217,7 +217,7 @@ The pack for `VectorXd` was scanned from the Eigen headers (69 facts, bound to t
 
 **A good fit:** teams that already write C++ and want fewer memory errors in new code, libraries that must stay usable from plain C++, and anyone who wants to see how far inference can go without lifetime annotations.
 
-**Not a fit (yet):** projects that need Rust's full guarantees, a stable 1.0 language, or to move a large existing C++ code base over unchanged. CeeLing is for new code that sits beside existing C++, not a converter for it.
+**Not a fit (yet):** projects that need Rust's full guarantees, a stable 1.0 language, or to move a large existing C++ code base over unchanged. CeeLing is for new code that sits beside existing C++, not a converter for it, and not a smaller language to replace C: it adds checking to C++, it does not shrink it.
 
 ## Documentation
 

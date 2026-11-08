@@ -226,6 +226,30 @@ CeeLing covers several of the mechanisms that make Rust's safe subset safe, in a
 
 Where the strongest guarantee, full data-race freedom or lifetime-checked APIs are required, use Rust. Where the code already is, or must be, C++, CeeLing gives much of the memory-safety benefit without leaving it.
 
+## Questions people ask
+
+These are the objections that come up when the project is described in public; a discussion thread about Rust, C++ and Zig prompted this list. Each answer says what the design does and where the evidence is missing. Statements about other projects are from general knowledge and were not re-verified.
+
+### Is it a replacement for C, or for C++?
+
+Neither. It is for new code in a C++ project, next to C++ libraries that stay as they are. Program size and memory safety are separate axes: Rust is large and safe, C is small and unsafe, and CeeLing moves along the safety axis while keeping C++'s libraries. Its visible language is smaller than C++ (code outside it is rejected), but it is not minimal, and it does not try to be. Someone who wants a small language to replace C is better served by Zig or by C itself.
+
+### Rust's cost is its size, not its borrow checker
+
+A common report in that discussion is that the borrow checker itself makes sense and what wears people out is the size of the language and the lifetime annotations it asks for. CeeLing is a bet on that observation: no annotations, ownership inferred, and the price is a weaker guarantee and a checker that refuses more ([chapter 1](01-why-ceeling.md#what-it-costs-honestly)). Whether the bet holds for other people is untested; there has been no user study, only the four projects in [chapter 18](18-status.md).
+
+### Is an inferred `shared_ptr` just garbage collection?
+
+By one common definition reference counting is a kind of garbage collection, and the pointers CeeLing infers include `shared_ptr`. What it does: `unique_ptr` when a single owner can be shown, `shared_ptr` when it cannot ("ambiguous reads as shared", [chapter 4](04-ownership.md)), `weak_ptr` on a cycle. Destruction is still deterministic, there is no tracing and no pause. The cost is real, though: in app-cling 87% of declarations are shared ([chapter 16](16-case-study-app-cling.md)), so for a program shaped like that the model is closer to reference counting than to single ownership. The compiler does not yet print this count for a program; it is on the TODO list.
+
+### Is it the first safe dialect of a C-like language?
+
+No. Cyclone (a research dialect of C with region-based memory and checked pointers, which influenced Rust), CCured (infers a pointer kind for each pointer in C and inserts run-time checks) and Checked C (annotations that give C pointers bounds) all tried to make C-family code safe. As I recall, they asked for porting, annotation or fatter pointers, and none became mainstream. CeeLing shares CCured's mix of inference and run-time checks, and differs in two ways: it does not try to accept existing source, and its output is plain C++ that calls existing C++ libraries directly. That is a difference of approach, not evidence that it will fare better.
+
+### Why not hardened libraries, sanitizers and static analysis?
+
+Hardened standard-library modes check `operator[]` bounds inside the library, which has the same effect as CeeLing's bounds check. AddressSanitizer finds use after free and overflows on the paths a test runs. The compiler's own lifetime warnings find simple dangling references. None of them rejects a program whose dangling reference no test executes; CeeLing rejects it at compile time (the `head` example in the README). CeeLing's own tests use the sanitizers for the same reason: they find what a test reaches. What has not been done is the side-by-side count: running those tools over cJSON's 33 issues and comparing with the table in [chapter 15](15-case-study-cjson.md). Until then this is a design argument, not a measurement.
+
 ## The landscape
 
 None of the following is verified against current sources for this chapter. It is the shape of the field as the project's own notes record it, with the hedges they carry.
@@ -237,6 +261,7 @@ None of the following is verified against current sources for this chapter. It i
 | **C++ profiles** | unchanged C++ | all of it | rules checked on existing code; the committee's lifetime paper aims at catching common dangling | the committee's chosen direction; not in C++26 |
 | **cppfront / Cpp2** | a new syntax that transpiles to C++ | all of it | bounds, null and initialisation checks; per its own documentation it does not aim for 100 percent | experimental |
 | **Carbon** | a new syntax | via C++ interop | memory safety is a design effort | experimental |
+| **Cyclone / CCured / Checked C** | dialects of C | C only | region types, inferred pointer kinds with run-time checks, bounds annotations | research projects or niche; see above |
 | **CeeLing** | Java-flavoured, C++-looking | plain C++ output; the facts table limits what is trusted | provenance and death events inferred; no annotations; the gaps in chapter 13 | working compiler, tested on real libraries ([chapter 18](18-status.md)) |
 
 What differs, in one line each.
