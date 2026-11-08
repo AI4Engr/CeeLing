@@ -154,11 +154,10 @@ from a field, `ref` on a primitive or a vector). Not a safety hole, but "CeeLing
 
 **Documents that disagree with the compiler.** These I found while writing the guide, and the guide follows the compiler:
 
-- the design notes say `std::string` parameters are "not yet admitted" for the read-only `const&` inference; the compiler does it ([chapter 3](03-values-and-containers.md), and `cjson-cling/PERFORMANCE.md`).
+- the design notes say `std::string` parameters are "not yet admitted" for the read-only `const&` inference; the compiler does it ([chapter 3](03-values-and-containers.md), and `cjson-cling/docs/performance.md`).
 - the design notes and the internal notes call "definite initialization" a static check; it covers locals only.
 - the internal notes said CeeLing has no `auto`; it parsed and passed through, and is refused since 2026-11-02 ([chapter 6](06-dangling-references.md)).
 - the internal notes' statement that the repository has no `LICENSE` file is out of date: the file exists, here and in each sibling project.
-- `cjson-cling/TODO.md` still gives a memory ratio of 2.2; `PERFORMANCE.md` gives 1.8.
 - The `cling_safety_contract_baseline` test is not run with `--strict`, so a missed reject shows as XFAIL, not as a failure.
 
 ## Not in the language yet

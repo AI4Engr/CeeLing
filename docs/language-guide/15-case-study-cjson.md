@@ -90,14 +90,14 @@ public:
 ```
 
 `next` and `child` own; `prev` is the one hint the port needs (`//@ptr weak`), because a back link is exactly what the compiler cannot guess from names alone. The port's API differs from the C one where C
-returns a pointer into someone else's memory (`cjson-cling/GAPS.md` lists every difference).
+returns a pointer into someone else's memory (`cjson-cling/docs/api-differences.md` lists every difference).
 
-Equivalence is measured, not assumed. These figures are as the project's own documents state them (`cjson-cling/TODO.md`, `PERFORMANCE.md`, the scripts in `cjson-cling/tests/`); I did not re-run them for this chapter.
+Equivalence is measured, not assumed. These figures are as the project's own documents state them (`cjson-cling/docs/testing.md`, `docs/performance.md`, the scripts in `cjson-cling/tests/`); I re-ran the unit tests (776 checks) and the 33-issue matrix on 2026-11-08, and did not re-run the rest.
 
 * **Differential test, core.** The port and upstream parse the same bytes (upstream's own inputs, the 115 files of `tests/diff/corpus`, and 1.5 million mutations); success, error position, end offset and every
   printed byte must match. The internal notes: no divergence.
 * **Differential test, Utils.** Pointer lookup, sorting, patch generation and application, merge patches, against the RFC 6902 suites shipped with upstream: about 620,000 comparisons, no divergence (the internal notes).
-* **Upstream's own unit tests**, ported to CeeLing programs: 20 programs, 776 checks, all pass (the internal notes; skipped cases are marked in the files).
+* **Upstream's own unit tests**, ported to CeeLing programs: 18 programs, 776 checks, all pass (the internal notes counted 20 programs; the folder holds 18, and the 776 was re-run on 2026-11-08; skipped cases are marked in the files).
 * **Under sanitizers** (AddressSanitizer and UBSan, in WSL, with the pooled allocator off so a use-after-free is visible): the 776 unit checks, 756 thousand differential parses, 350 thousand Utils comparisons
   and the 20 memory-class triggers give no report except the two stack overflows that are documented below as still open (06b and 09b) (the internal notes). Upstream's own C is not sanitized in that run; the claim
   under test is about the port.
@@ -132,8 +132,9 @@ abnormally, not how.
 
 All five share one root: someone calls `free` while someone else still holds a pointer. In CeeLing there is no `free`, no `delete`, no raw pointer to dangle and no `.get()` to extract one
 ([chapter 8](08-sealed-escape-hatches.md)), so the sentence cannot be written. Ownership is inferred ([chapter 4](04-ownership.md)): a node reachable from two places is shared and lives as long as the last
-handle does. The port's `deleteItem` exists so that a call keeps its meaning, but it takes its argument and drops it, and handing an object over is a move ([chapter 5](05-moves.md)), so using the variable
-afterwards is the use-after-free C allows, as a compile-time error:
+handle does. The port's `deleteItem` exists so that a call keeps its meaning. In the port `Item` is a shared handle (a node is reachable from its parent and from the caller), so `deleteItem(x)` drops only the callee's copy: the tree lives until the last
+handle goes, and a later use of `x` compiles and is safe, because nothing was freed under it (I checked this by compiling it). Where a handle has exactly one owner, handing it over is a move ([chapter 5](05-moves.md)) and the same
+use afterwards is a compile-time error. This miniature has one owner, so it shows the rule, not the port:
 
 <!-- example: 15_cjson_01_delete_then_use.clg -->
 ```cpp
@@ -834,7 +835,7 @@ int main() {
 failed at 3; then empty input: item=0 errorPos=0
 ```
 
-There is no `cJSON_GetErrorPtr` in the port (`GAPS.md`). That is a change of interface made while porting, and the language is what made it natural: the old design needs a file-scope variable, which
+There is no `cJSON_GetErrorPtr` in the port (`docs/api-differences.md`). That is a change of interface made while porting, and the language is what made it natural: the old design needs a file-scope variable, which
 CeeLing rejects (issue 32).
 
 **Verdict: cannot happen.**
@@ -1218,7 +1219,7 @@ status 0 doc <nothing to print>
 ```
 
 **Verdict: cannot happen**, as a crash. This is the one place where the port does something arguably worse than C: it treats the malformed node as the empty path, which means "the root", and the
-`remove` empties the document. A CeeLing string cannot be null, so the library had to say something for "no value"; the choice is recorded in `GAPS.md`.
+`remove` empties the document. A CeeLing string cannot be null, so the library had to say something for "no value"; the choice is recorded in `docs/api-differences.md`.
 
 ### Issue 13: unchecked `cJSON_malloc` in `cJSON_Utils.c`
 
@@ -1750,7 +1751,7 @@ int main(void) {
 }
 ```
 
-**In cjson-cling.** `deleteItem` is empty on purpose (the argument is consumed and the generated destructor, shown above, releases the chain iteratively):
+**In cjson-cling.** `deleteItem` is empty on purpose (the callee's handle is dropped, and the generated destructor, shown above, releases the chain iteratively when the last handle goes):
 
 <!-- source: cjson-cling/src/cjson_item.clg "void deleteItem(Item item)" -->
 ```cpp
@@ -2234,7 +2235,7 @@ caller A asks again: error at 3
 
 **Verdict: cannot happen**, for this library's own state. Two threads sharing one tree are outside what is checked unless they go through `spawn` and `Channel` ([chapter 10](10-threads.md)); the port's
 `tests/run_threads.sh` checks something narrower, that threads each building their own trees through the pooled allocator do not corrupt each other (8 threads, no corruption, according to
-`PERFORMANCE.md`; the same test with one global free list segfaults).
+`docs/performance.md`; the same test with one global free list segfaults).
 
 ## Part 5. Logic bugs: issues 14 to 29 and 33
 
@@ -4029,7 +4030,7 @@ constant. The attribution of each row to the port comes from the earlier version
 
 ## Speed and memory
 
-Safe is not free. `cjson-cling/PERFORMANCE.md` (gcc 16.2 `-O2`, bounds and null checks ON, built with `--pool-shared`, a 20 MB document of small records, best of 3) reports:
+Safe is not free. `cjson-cling/docs/performance.md` (gcc 16.2 `-O2`, bounds and null checks ON, built with `--pool-shared`, a 20 MB document of small records, best of 3) reports:
 
 | | upstream cJSON | cjson-cling |
 |---|---|---|
@@ -4039,11 +4040,8 @@ Safe is not free. `cjson-cling/PERFORMANCE.md` (gcc 16.2 `-O2`, bounds and null 
 | memory held by the tree | 207 MB | 380 MB (1.8 times) |
 
 Every kind of token is at parity or faster except very long strings (6 percent behind on parse). The price is memory: a reference-counted node with a weak back link and two inline strings is larger than C's 64
-bytes. Switching both checks off changes the speed by about 5 percent on this document (`PERFORMANCE.md`). The first port was 1.6 times slower than C; the cost was the node, and a per-thread pooled allocator
+bytes. Switching both checks off changes the speed by about 5 percent on this document (`docs/performance.md`). The first port was 1.6 times slower than C; the cost was the node, and a per-thread pooled allocator
 closed it. These figures are the project's, not re-measured here, and they are one program on one machine.
-
-Two documents disagree about the memory figure. `cjson-cling/TODO.md` still says 2.2 times (457 against 207 MB); `PERFORMANCE.md` says 1.8 times (380 against 207 MB) after the node's fields were reordered and
-the pool's alignment fixed. `PERFORMANCE.md` is the later document and is the one used here.
 
 ## What this shows, and what it does not
 
