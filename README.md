@@ -2,10 +2,10 @@
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-orange.svg)
 
-**A memory-safe dialect of C++ that compiles to plain C++17.**
-You write Java-like code with no `*`, `&`, `delete`, `std::move` or lifetime annotations. The compiler infers who owns what, chooses `unique_ptr` / `shared_ptr` / `weak_ptr`, inserts the moves, and rejects at compile time any program that could contain a dangling reference or a use after move. Your code calls `std`, Eigen or any C++ library directly; the output is ordinary C++ that anyone can build without CeeLing.
+**A memory-safe dialect of C++, inspired by Rust, that compiles to plain C++17.**
+Write Java-like code with no `*`, `&`, `delete`, `std::move` or lifetime annotations. The compiler infers ownership, picks the smart pointers, inserts the moves, and rejects dangling references and use after move at compile time. It calls `std`, Eigen or any C++ library directly, and the output builds without CeeLing.
 
-> **Status: pre-1.0.** A working compiler, developed on Windows (MinGW-w64, g++ 16) and checked on Linux (Ubuntu 22.04, g++ 11). There are no release packages yet: build from source (below). The language is deliberately small, and code outside it is rejected rather than guessed at. CeeLing does **not** give Rust's full guarantees; the boundary is stated next.
+> **Status: pre-1.0.** Works on Windows (MinGW-w64) and Linux (Ubuntu 22.04, g++ 11); no release packages yet, build from source. The language is small on purpose: code outside it is rejected, not guessed at. CeeLing does **not** give Rust's full guarantees; the table below states the boundary.
 
 ## What it guarantees, and what it does not
 
