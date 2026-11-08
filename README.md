@@ -1,7 +1,7 @@
 # CeeLing
 
-**A memory-safe dialect of C++ that transpiles to plain C++.**
-Write Java-like code with no `*`, `&`, `delete`, `std::move` or lifetime annotations. The compiler infers ownership, picks `unique_ptr` / `shared_ptr` / `weak_ptr`, inserts the moves, and refuses any program that could contain a dangling reference or a use after move.
+**Rust-style memory safety for C++, with no annotations and no rewrite of your libraries.**
+CeeLing is a memory-safe dialect of C++ that transpiles to plain C++. You write Java-like code with no `*`, `&`, `delete`, `std::move` or lifetime annotations. The compiler infers who owns what, chooses `unique_ptr` / `shared_ptr` / `weak_ptr`, inserts the moves, and **rejects at compile time** any program that could contain a dangling reference or a use after move. Out-of-bounds indexing and null dereferences are caught at run time with the source line, raw pointers and casts are sealed, and the one escape hatch (`ext_fn`) is explicit, like `unsafe`.
 
 ```
  hello.clg ──► cling ──► hello.cpp ──► g++ / clang++ / MSVC
@@ -9,7 +9,7 @@ Write Java-like code with no `*`, `&`, `delete`, `std::move` or lifetime annotat
               inference
 ```
 
-The output is ordinary C++17. A library written in CeeLing is used from C++ as a normal header and source file; its users do not need CeeLing.
+The output is ordinary C++17: your code calls `std`, Eigen or any C++ library directly (no bindings), and a library written in CeeLing is used from C++ as a normal header and source file, so its users do not need CeeLing. It has been used to rewrite [real libraries](#real-programs-written-in-ceeling): all of cJSON, DEFLATE/zlib, a YAML library and a desktop shell.
 
 > **Status.** A working compiler, pre-1.0, developed and tested on Windows (MinGW-w64) with the generated code checked under g++. The language is deliberately small: code outside it is rejected, not guessed at. Read [what it promises](#what-it-promises) before relying on it.
 
@@ -122,6 +122,26 @@ That covers the code CeeLing checked. It does **not** claim Rust-equivalent safe
 
 The positioning is deliberate: safer than hand-written C++ while keeping the C++ ecosystem (std, Eigen, your own libraries) and requiring no annotations. Where the strongest guarantee is needed, use Rust.
 
+## Compared with Rust
+
+Most of what makes Rust's safe subset safe is implemented. The difference is *how* it is established (inference over C++ instead of lifetime annotations) and what is deliberately left out. This is a feature-by-feature list, not a percentage; [chapter 17](docs/language-guide/17-comparisons.md) gives the reasoning.
+
+| Rust guarantee | CeeLing |
+|---|---|
+| No use after free / dangling references | **Yes, at compile time**, by tracking what each reference observes and when its owner dies. Inferred, no lifetimes in signatures. The open gaps are listed in [chapter 13](docs/language-guide/13-contract-and-threats.md) |
+| Ownership and move semantics; use after move is an error | **Yes.** The compiler inserts the moves and rejects a use after one, across calls, branches, loops and nested expressions |
+| No double free, no manual `delete` | **Yes.** `delete`, raw `new` and raw pointers cannot be written; cycles become `weak_ptr` |
+| No iterator invalidation | **Mostly.** A view or reference into a container dies at every call that can reallocate it, and iterators cannot be held at all (whole-vector methods such as `sort` replace them). A loop that grows the container it is walking is not caught yet |
+| Bounds-checked indexing | **Yes, at run time** (`v[i]`, `s[i]`), aborting with the `.clg` line |
+| No null | Not by type; **a run-time check on every object handle**, aborting with the line |
+| No uninitialised reads | **Yes** for locals; number, bool and char fields start at zero |
+| `unsafe` is explicit and bounded | **Yes.** Casts, `union` and `.get()` are sealed; `ext_fn` is the declared boundary, listed by `--report-facts` |
+| `Send` / `Sync`, data-race freedom | **Narrower, on purpose:** `spawn` accepts only plain values and moved objects, `Channel<T>` is the one shared queue. General data-race freedom is not claimed |
+| Exclusive `&mut` / shared `&` aliasing rules | Not attempted. CeeLing tracks lifetimes, not aliasing |
+| Use of existing C++ libraries | **Native.** The output is C++; what each library does with borrowed data comes from fact packs |
+
+Where the strongest guarantee, full data-race freedom or lifetime-checked APIs are required, use Rust. Where the code already is, or must be, C++, CeeLing gives most of the memory-safety benefit without leaving it.
+
 ## Case study: cJSON's 33 published issues
 
 To test the claim on a real library, all of **cJSON 1.7.19** was ported to CeeLing (`cjson-cling`, 2,907 lines of `.clg`, a sibling project) and each of the 33 issues published against it was reproduced in C and examined in the port. Chapter 15 of the guide shows, for every issue, the defective C code, a C program that demonstrates it, the port's code and the mechanism. (These are the 33 numbered issues of the published list, not CVE identifiers.)
@@ -181,6 +201,19 @@ The triggers are reconstructions from the descriptions (the smallest program tha
 </details>
 
 Safe is not free. On a 20 MB document the port parses at 86 MB/s against 81 MB/s for upstream, prints at 105 against 69 and frees the tree at 947 against 168, but holds the tree in 1.8 times the memory (bounds and null checks on, `--pool-shared`). These are the project's own figures from one program on one machine (chapter 15).
+
+## Real programs written in CeeLing
+
+The language is exercised by libraries written for their own sake, not as tests. Each lives in its own repository; [chapter 18](docs/language-guide/18-status.md) says what each one shows and what it does not.
+
+| Project | What it is | Result |
+|---|---|---|
+| **cjson-cling** | All of cJSON 1.7.19 and its Utils (JSON Pointer, Patch, Merge Patch, sorting): 2,907 lines of CeeLing and a 52-line number shim | The 33-issue case study above; differential tests against upstream; clean sanitizer runs. Built with both run-time checks on |
+| **zlib-cling** | DEFLATE and the zlib format, about 3,500 lines | Verified in both directions against real zlib on the 15.7 MB Silesia corpus; compress 0.97 times and decompress 1.10 times the time of zlib-rs on the author's machine, with bounds checks off (a checked build is one flag away) |
+| **yaml-cling** | A YAML library with the yaml-cpp API, used by a plain C++ project through generated headers | A graph-shaped library (nodes, vectors and maps of nodes, strings) written without raw pointers, consumed without CeeLing |
+| **app-cling** | A desktop application shell: a web page calls commands written in CeeLing over a small native layer | The threading model (`spawn`, `Channel`) in real use, under AddressSanitizer, UBSan and ThreadSanitizer, with lock-removal controls; a prototype |
+
+Writing them found compiler defects, one of them a silent miscompilation (`1.0e30` compiled as `1.0`); each was fixed with a regression fixture ([chapter 15](docs/language-guide/15-case-study-cjson.md)).
 
 ## Using C++ libraries
 
