@@ -14,7 +14,7 @@ Two layers, and the line between them is the point:
 - **`src/`** is CeeLing, checked by the compiler: the dispatcher, the file policy (what path a page may reach), the list of programs it may start, window bookkeeping, settings, menus, dialogs.
 - **`shim/`** is hand-written C++, not checked by anything: it opens the window, queues calls, opens files and runs programs, as small primitives taking and returning numbers, strings and vectors of those. The project's rule is that a decision never lives here.
 
-The sizes, measured by the project's own scripts on the code as it stands (the generator compiles the modules, then runs `scripts/ceeling_stats.sh` on the result and `scripts/shim_lines.sh`; it needs the sibling projects `app-cling` and `cjson-cling`):
+The sizes, measured by the project's own scripts on the code as it stands (the generator compiles the modules, then runs `scripts/ceeling_stats.sh` on the result and `scripts/shim_lines.sh`; it needs the sibling projects `app-cling` and `cJSON-cling`):
 
 <!-- command: 16_app_cling_stats.py -->
 ```
@@ -114,7 +114,7 @@ public:
             ...
 ```
 
-`decodeOpenWindowArgs` is not written anywhere in the program. A call to `decode<StructName>` makes the compiler write the decoder, which checks the type of each field and names the path of a wrong one. `16_app_decode_args.clg` is the same idea with a stand-in for the page (it needs `cjson-cling`, as app-cling does):
+`decodeOpenWindowArgs` is not written anywhere in the program. A call to `decode<StructName>` makes the compiler write the decoder, which checks the type of each field and names the path of a wrong one. `16_app_decode_args.clg` is the same idea with a stand-in for the page (it needs `cJSON-cling`, as app-cling does):
 
 <!-- example: 16_app_decode_args.clg -->
 ```
@@ -256,7 +256,7 @@ None of this source contains a pointer type, a `delete`, a `std::move`, a `.get(
 
 The source never says who owns what. For every class field, every container of objects, every method result and every object a closure captures, the compiler chose `unique_ptr` (one owner), `shared_ptr` (several) or `weak_ptr` (looks, does not own). The rules and their purpose are in [chapter 4](04-ownership.md); the point of this section is what they did on a program with 19 files.
 
-The table is produced by `16_app_cling_pointers.py`, which does what `app-cling/scripts/build.sh` does: runs the pointer-demands step ([chapter 12](12-many-files.md)), compiles each module to a header and a `.cpp`, and reads the pointer kinds out of the generated C++. A row is one declaration, or a group of identical ones (the 13 closures that all capture `files` are one row). Modules are in the project's build order, then the four modules of `cjson-cling` that the program links.
+The table is produced by `16_app_cling_pointers.py`, which does what `app-cling/scripts/build.sh` does: runs the pointer-demands step ([chapter 12](12-many-files.md)), compiles each module to a header and a `.cpp`, and reads the pointer kinds out of the generated C++. A row is one declaration, or a group of identical ones (the 13 closures that all capture `files` are one row). Modules are in the project's build order, then the four modules of `cJSON-cling` that the program links.
 
 **How to read the "reason" column.** The compiler records why it chose a kind, but it prints almost nothing of it. The comment at the top of a generated `.cpp` that older documents mention exists only in the legacy generator, and it lists the first pass, before the later rules promote things. The one place the final reason is written out is the demands file the build uses (`--ptr-demands-out`), and only for fields of other modules' classes. So each reason starts with a word that says where it comes from:
 

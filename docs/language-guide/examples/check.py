@@ -120,7 +120,10 @@ def run(cmd, cwd=None, timeout=120):
 
 def project_dir(name):
     env = os.environ.get('GUIDE_PROJECT_' + name.upper().replace('-', '_'))
-    for p in (env, os.path.join(os.path.dirname(REPO), name)):
+    parent = os.path.dirname(REPO)
+    candidates = [env, os.path.join(parent, name)]
+    candidates += [os.path.join(parent, d) for d in sorted(os.listdir(parent)) if d.lower() == name.lower()]   # a clone is cJSON-cling
+    for p in candidates:
         if p and os.path.isdir(p):
             return os.path.abspath(p)
     return None

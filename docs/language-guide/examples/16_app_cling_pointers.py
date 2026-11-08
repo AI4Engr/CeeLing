@@ -40,7 +40,9 @@ def missing(message):
 
 def locate():
     app = os.environ.get('GUIDE_PROJECT_APP_CLING') or os.path.join(os.path.dirname(REPO), 'app-cling')
-    cjson = os.environ.get('GUIDE_PROJECT_CJSON_CLING') or os.path.join(os.path.dirname(REPO), 'cjson-cling')
+    cjson = os.environ.get('GUIDE_PROJECT_CJSON_CLING') or next(
+        (os.path.join(os.path.dirname(REPO), d) for d in sorted(os.listdir(os.path.dirname(REPO))) if d.lower() == 'cjson-cling'),
+        os.path.join(os.path.dirname(REPO), 'cjson-cling'))
     if not os.path.isfile(os.path.join(app, 'scripts', 'modules.sh')):
         missing('project app-cling not found (set GUIDE_PROJECT_APP_CLING)')
     if not os.path.isfile(os.path.join(cjson, 'src', 'cjson_item.clg')):

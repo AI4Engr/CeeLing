@@ -344,9 +344,9 @@ removed one defensive `std::string(...)` copy in `Watches::flush`, because name-
 A page or a client sends JSON, and reading it field by field with hand-written helpers is where mistakes live. A call to `decode<Name>(item)`, where `<Name>` is a `struct` declared in this file and nobody
 declared a function `decode<Name>`, makes the compiler **write the decoder**. There is no new syntax: the text is generated as ordinary CeeLing and parsed, so every checker sees it.
 
-**What it needs.** The names of cjson-cling (`Item`, `isObject`, `isString`, `isNumber`, `isBool`, `isTrue`, `isArray`, `isNull`, `getObjectItem`, `getArraySize`, `getArrayItem`), visible through
+**What it needs.** The names of cJSON-cling (`Item`, `isObject`, `isString`, `isNumber`, `isBool`, `isTrue`, `isArray`, `isNull`, `getObjectItem`, `getArraySize`, `getArrayItem`), visible through
 `#include "cjson_api.clh"`. Nothing else, and not the whole library: the examples here use `12_mini_item.clg`, a stand-in of 40 lines with just those names and a way to build a document by hand, so they run
-without cjson-cling. One example below uses the real thing.
+without cJSON-cling. One example below uses the real thing.
 
 <!-- example: 12_mini_item.clg -->
 ```cpp
@@ -569,7 +569,7 @@ int main() {
 untitled 800 | Doc 640
 ```
 
-**With the real library.** The same decoder against cjson-cling's parser (this example is built with that project's own `tests/build.sh`, so it needs cjson-cling beside this repository):
+**With the real library.** The same decoder against cJSON-cling's parser (this example is built with that project's own `tests/build.sh`, so it needs cJSON-cling beside this repository):
 
 <!-- example: 12_decode_cjson.clg -->
 ```cpp
@@ -781,6 +781,6 @@ DialogArgs readDialogArgs(Item args) {
 | Feature | Needs |
 |---|---|
 | `#include "x.clh"`, `--cpp x.h`, the pointer-demand flags | only the compiler |
-| `decodeX(item)` | the names of cjson-cling (or a stand-in that defines them, as `12_mini_item.clg` does) |
-| `12_decode_cjson.clg` and the cJSON examples of [chapter 15](15-case-study-cjson.md) | the cjson-cling project, built by its `tests/build.sh` |
+| `decodeX(item)` | the names of cJSON-cling (or a stand-in that defines them, as `12_mini_item.clg` does) |
+| `12_decode_cjson.clg` and the cJSON examples of [chapter 15](15-case-study-cjson.md) | the cJSON-cling project, built by its `tests/build.sh` |
 | `scripts/pointer_demands.sh` and `scripts/build.sh` | app-cling, as drivers for a many-module project |

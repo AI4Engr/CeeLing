@@ -3,8 +3,8 @@
 The earlier chapters argue that CeeLing removes classes of memory bugs. This one tests the argument on a real library with an independently published bug list: **cJSON 1.7.19**, a widely
 vendored C JSON parser, and the 33 issues Joshua Rogers published against it in 2026 (*33 Vulnerabilities in cJSON*).
 
-The method has three steps. Port the whole library to CeeLing (`cjson-cling`, a sibling project kept next to this repository). Show that the port behaves like the original. Then take each of the 33
-issues and show three things: **how cJSON does it** (the defective C code, quoted from the real source, and why it fails), **how cjson-cling does it** (the port's code for the same job, and the mechanism that
+The method has three steps. Port the whole library to CeeLing (`cJSON-cling`, a sibling project kept next to this repository). Show that the port behaves like the original. Then take each of the 33
+issues and show three things: **how cJSON does it** (the defective C code, quoted from the real source, and why it fails), **how cJSON-cling does it** (the port's code for the same job, and the mechanism that
 makes the bug impossible, stops it at run time, or leaves it where it was), and **the verdict**. The result is a table of outcomes, not a slogan, and the interesting part is where the answer is "nothing".
 
 > **A caveat that matters.** The article was not available while this chapter was written. Each defect is described here from the one-line descriptions in the notes of the earlier version of this
@@ -16,10 +16,10 @@ makes the bug impossible, stops it at run time, or leaves it where it was), and 
 
 Every issue has a heading with its number and the function it is about, and then:
 
-* **In cJSON.** The code, quoted by the guide's checker from `cjson-cling/upstream/` (cJSON 1.7.19, commit `c859b25`, the git submodule `upstream/`), and what is wrong with it. Where the defect is
+* **In cJSON.** The code, quoted by the guide's checker from `cJSON-cling/upstream/` (cJSON 1.7.19, commit `c859b25`, the git submodule `upstream/`), and what is wrong with it. Where the defect is
   deterministic there is a **C twin**: a small C program, built with `gcc` against that same source, that shows it. A twin that depends on undefined behaviour says so, and where a defect could not be
   reproduced the text says that instead.
-* **In cjson-cling.** The port's code for the same job, the mechanism, and a CeeLing program built against the port, with what it printed.
+* **In cJSON-cling.** The port's code for the same job, the mechanism, and a CeeLing program built against the port, with what it printed.
 * **Verdict.** One of: *cannot happen* (the unsafe operation cannot be written), *stopped at run time* (the program aborts and names the `.clg` line), *partly*, *not prevented*, *avoided by the
   library's own discipline* (not by the language), or *same bug* (a logic error: memory-safe in C too, and reproduced exactly).
 
@@ -50,7 +50,7 @@ That is the honest shape: CeeLing removes the bugs that come from manual memory 
 
 ## What was built, and how the port is shown to behave like the original
 
-`cjson-cling` is a port of `cJSON.c` and `cJSON_Utils.c` (JSON Pointer, Patch, Merge Patch, sorting): 2,907 lines of `.clg` in `src/`, plus a 52-line hand-written C++ shim (`shim/cjson_num.h`)
+`cJSON-cling` is a port of `cJSON.c` and `cJSON_Utils.c` (JSON Pointer, Patch, Merge Patch, sorting): 2,907 lines of `.clg` in `src/`, plus a 52-line hand-written C++ shim (`shim/cjson_num.h`)
 for number to text (`printf("%g")`) and text to number (`strtod`). The shim is the library's only trusted code. The real data structure is kept: a node has `next`, `prev` and `child`, and the first child's `prev` points
 at the last child. What C expresses with a convention, CeeLing expresses in the node's type:
 
@@ -89,9 +89,9 @@ public:
 ```
 
 `next` and `child` own; `prev` is the one hint the port needs (`//@ptr weak`), because a back link is exactly what the compiler cannot guess from names alone. The port's API differs from the C one where C
-returns a pointer into someone else's memory (`cjson-cling/docs/api-differences.md` lists every difference).
+returns a pointer into someone else's memory (`cJSON-cling/docs/api-differences.md` lists every difference).
 
-Equivalence is measured, not assumed. These figures are as the project's own documents state them (`cjson-cling/docs/testing.md`, `docs/performance.md`, the scripts in `cjson-cling/tests/`); I re-ran the unit tests (776 checks) and the 33-issue matrix on 2026-11-08, and did not re-run the rest.
+Equivalence is measured, not assumed. These figures are as the project's own documents state them (`cJSON-cling/docs/testing.md`, `docs/performance.md`, the scripts in `cJSON-cling/tests/`); I re-ran the unit tests (776 checks) and the 33-issue matrix on 2026-11-08, and did not re-run the rest.
 
 * **Differential test, core.** The port and upstream parse the same bytes (upstream's own inputs, the 115 files of `tests/diff/corpus`, and 1.5 million mutations); success, error position, end offset and every
   printed byte must match. The internal notes: no divergence.
@@ -245,7 +245,7 @@ status 0
 first child of the original: type byte 0xDD (a live number has 0x08)
 ```
 
-**In cjson-cling.** A reference node does not own its children, it shares them (`createArrayReference` stores the same handle), and the port's `overwriteItem` copies fields and frees nothing:
+**In cJSON-cling.** A reference node does not own its children, it shares them (`createArrayReference` stores the same handle), and the port's `overwriteItem` copies fields and frees nothing:
 
 <!-- source: cjson-cling/src/cjson_item.clg "Item createArrayReference" -->
 ```cpp
@@ -382,7 +382,7 @@ int main(void) {
 }
 ```
 
-**In cjson-cling.** `currentPatch` is a handle, and a handle keeps its node alive. Removing `/p` drops the document's handle to the patch array, not the node the loop is standing on:
+**In cJSON-cling.** `currentPatch` is a handle, and a handle keeps its node alive. Removing `/p` drops the document's handle to the patch array, not the node the loop is standing on:
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "int applyPatchesImpl" -->
 ```cpp
@@ -516,7 +516,7 @@ int main(void) {
 }
 ```
 
-**In cjson-cling.** The port never deletes the target; a replaced node is simply no longer referenced by the result:
+**In cJSON-cling.** The port never deletes the target; a replaced node is simply no longer referenced by the result:
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "Item mergePatchImpl" -->
 ```cpp
@@ -663,7 +663,7 @@ int main(void) {
 replace returned 1, root->child == root: 1
 ```
 
-**In cjson-cling.**
+**In cJSON-cling.**
 
 <!-- source: cjson-cling/src/cjson_item.clg "bool replaceItemViaPointer" -->
 ```cpp
@@ -798,7 +798,7 @@ failed at 3
 after cJSON_ParseWithOpts(NULL): item=0, the error pointer is still the old one: 1
 ```
 
-**In cjson-cling.** The error is a value in the result, not a pointer into the caller's text, and there is no saved state:
+**In cJSON-cling.** The error is a value in the result, not a pointer into the caller's text, and there is no saved state:
 
 <!-- source: cjson-cling/src/cjson_parse.clg "class ParseResult" -->
 ```cpp
@@ -946,7 +946,7 @@ int main(void) {
 
 The C twin dies with a segmentation fault at `parent->child->prev = item->prev`. (Exit status and message vary by system; the write is to a small address near zero.)
 
-**In cjson-cling.** The port's function is the same code, line for line:
+**In cJSON-cling.** The port's function is the same code, line for line:
 
 <!-- source: cjson-cling/src/cjson_item.clg "Item detachItemViaPointer" -->
 ```cpp
@@ -1075,7 +1075,7 @@ int main(void) {
 
 The twin crashes at `object->string` with `object == NULL`.
 
-**In cjson-cling.**
+**In cJSON-cling.**
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "if (path.valuestring.length() == 0) {" -->
 ```cpp
@@ -1181,7 +1181,7 @@ int main(void) {
 
 After the type check, the first use is `path->valuestring[0]` (quoted under issue 11), and the twin dies there.
 
-**In cjson-cling.** A `string` is a value and cannot be null, so `getObjectItem(...).valuestring` always has some text. The "no value" state still exists as a flag (`hasValuestring`), and a node can be put
+**In cJSON-cling.** A `string` is a value and cannot be null, so `getObjectItem(...).valuestring` always has some text. The "no value" state still exists as a flag (`hasValuestring`), and a node can be put
 in it by hand, because the fields are public. What the port does with it:
 
 <!-- example: 15_cjson_12_string_without_value.clg -->
@@ -1282,7 +1282,7 @@ int main(void) {
 }
 ```
 
-**In cjson-cling.** There is no `malloc`. The text is built from `string` values:
+**In cJSON-cling.** There is no `malloc`. The text is built from `string` values:
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "PointerResult findPointerFromObjectTo" -->
 ```cpp
@@ -1458,7 +1458,7 @@ int main(void) {
 }
 ```
 
-**In cjson-cling.** The direct form is refused by the three lines of library code from issue 4:
+**In cJSON-cling.** The direct form is refused by the three lines of library code from issue 4:
 
 <!-- source: cjson-cling/src/cjson_item.clg "if (replacement == parent) {" -->
 ```cpp
@@ -1588,7 +1588,7 @@ int main(void) {
 }
 ```
 
-**In cjson-cling.** The port has the same cap, the same recursion, the same behaviour:
+**In cJSON-cling.** The port has the same cap, the same recursion, the same behaviour:
 
 <!-- source: cjson-cling/src/cjson_item.clg "Item child = item.child;" -->
 ```cpp
@@ -1750,7 +1750,7 @@ int main(void) {
 }
 ```
 
-**In cjson-cling.** `deleteItem` is empty on purpose (the callee's handle is dropped, and the generated destructor, shown above, releases the chain iteratively when the last handle goes):
+**In cJSON-cling.** `deleteItem` is empty on purpose (the callee's handle is dropped, and the generated destructor, shown above, releases the chain iteratively when the last handle goes):
 
 <!-- source: cjson-cling/src/cjson_item.clg "void deleteItem(Item item)" -->
 ```cpp
@@ -1877,7 +1877,7 @@ equal 1
 The time is not checked by the guide's tool. Measured with a throwaway driver while writing this (`gcc -O0`, one run each, this machine, `clock()` around the call only): depth 20, 0.017 s; 22, 0.065 s;
 24, 0.269 s; 26, 1.09 s; 28, 4.38 s. Four times per two levels.
 
-**In cjson-cling.** The port has the same structure:
+**In cJSON-cling.** The port has the same structure:
 
 <!-- source: cjson-cling/src/cjson_api.clg "if (a.type == Object) {" -->
 ```cpp
@@ -1990,7 +1990,7 @@ self-assign 0 value hello world
 
 The twin reproduces the wrong refusal (`self-assign 0`). The pointer comparison itself is undefined behaviour, and on a flat address space the compiler does what the numbers say; nothing here crashed.
 
-**In cjson-cling.** There are no pointers to compare. A string is a value, so the question "does the new text overlap the old buffer?" has no meaning, and the self-assignment simply works:
+**In cJSON-cling.** There are no pointers to compare. A string is a value, so the question "does the new text overlap the old buffer?" has no meaning, and the self-assignment simply works:
 
 <!-- source: cjson-cling/src/cjson_api.clg "bool setValuestring" -->
 ```cpp
@@ -2082,7 +2082,7 @@ nan->-2147483648 1e30->2147483647
 
 This output is what x86-64 with this `gcc` does (`INT_MIN`); the standard promises nothing, and another target or compiler may print something else. `cJSON_SetNumberHelper` has the same shape.
 
-**In cjson-cling.** CeeLing's `int(x)` is a `static_cast`, which is still undefined for `NaN` and for out-of-range values, so the language does not help here. The port avoids it the way a careful C author
+**In cJSON-cling.** CeeLing's `int(x)` is a `static_cast`, which is still undefined for `NaN` and for out-of-range values, so the language does not help here. The port avoids it the way a careful C author
 would:
 
 <!-- source: cjson-cling/src/cjson_item.clg "int saturateToInt" -->
@@ -2174,7 +2174,7 @@ caller B: parse succeeded
 caller A asks again: the error pointer is NULL: 1
 ```
 
-**In cjson-cling.** The compiler rejects file-scope variables, so the port could not have written `global_error`:
+**In cJSON-cling.** The compiler rejects file-scope variables, so the port could not have written `global_error`:
 
 <!-- example: 15_cjson_32_file_scope_rejected.clg -->
 ```cpp
@@ -2347,7 +2347,7 @@ returned 1 object {"a":2,"b":1}
 blocks still allocated after cJSON_Delete: 2
 ```
 
-**In cjson-cling.** The same code, reproduced:
+**In cJSON-cling.** The same code, reproduced:
 
 <!-- source: cjson-cling/src/cjson_item.clg "bool addItemToArray" -->
 ```cpp
@@ -2447,7 +2447,7 @@ status 0 doc {"a":1,"":9}
 
 `b` loses its key and its `next`, so `c` is cut off the list (and leaked) and `b` prints with an empty name.
 
-**In cjson-cling.** The port's `overwriteItem` (quoted under issue 1) copies the same fields, links included:
+**In cJSON-cling.** The port's `overwriteItem` (quoted under issue 1) copies the same fields, links included:
 
 <!-- example: 15_cjson_24_overwrite_wipes_siblings.clg -->
 ```cpp
@@ -2540,7 +2540,7 @@ status 0 doc {"a~/":1}
 
 The member that `/a~1b` should create is `a/b`; the twin shows it created `a~/`.
 
-**In cjson-cling.** The port reproduces the same walk, byte for byte, because the differential test compares against it:
+**In cJSON-cling.** The port reproduces the same walk, byte for byte, because the differential test compares against it:
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "string decodePointerInPlace" -->
 ```cpp
@@ -2648,7 +2648,7 @@ status 0 doc {"a~2b":1}
 
 The last `else` is the branch in question. The `add` succeeds with status 0 and the key is whatever text was there, `a~2b`.
 
-**In cjson-cling.** The same branch:
+**In cJSON-cling.** The same branch:
 
 <!-- example: 15_cjson_16_pointer_invalid_escape.clg -->
 ```cpp
@@ -2715,7 +2715,7 @@ found 10
 
 `18446744073709551616` is `2^64`; it wraps to 0 and the pointer names the first element. (The wrap is unsigned arithmetic, which C defines; the bug is that nobody checked.)
 
-**In cjson-cling.** There is no 64-bit `size_t` to wrap, so the port emulates the wrap with two 32-bit halves to stay identical:
+**In cJSON-cling.** There is no 64-bit `size_t` to wrap, so the port emulates the wrap with two 32-bit halves to stay identical:
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "PointerIndex decodeArrayIndex" -->
 ```cpp
@@ -2829,7 +2829,7 @@ int main(void) {
 found 10
 ```
 
-**In cjson-cling.**
+**In cJSON-cling.**
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "int position = start;" -->
 ```cpp
@@ -2921,7 +2921,7 @@ int main(void) {
 the root
 ```
 
-**In cjson-cling.**
+**In cJSON-cling.**
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "Item getItemFromPointer" 8 -->
 ```cpp
@@ -3003,7 +3003,7 @@ status 0 doc {"b":2}
 
 In the case-sensitive entry point, `remove /a` should find nothing (the member is `A`) and fail with status 13. It removes `A` and reports success.
 
-**In cjson-cling.**
+**In cJSON-cling.**
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "Item detachPath" -->
 ```cpp
@@ -3122,7 +3122,7 @@ int main(void) {
 status 7 doc {}
 ```
 
-**In cjson-cling.** The port keeps the order, and the data is gone just the same; only the freeing is not its doing:
+**In cJSON-cling.** The port keeps the order, and the data is gone just the same; only the freeing is not its doing:
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "if (opcode == 2 || opcode == 3) {" -->
 ```cpp
@@ -3245,7 +3245,7 @@ merge patch {"B":1,"a":null,"B":null}
 A case-insensitive sort puts `a` before `B`; `strcmp` puts `B` (66) before `a` (97). The patch both keeps and removes `B`. (The obvious trigger, two keys that differ *only* by case, does not show a loss. This one was found by
 searching small key sets for a case where applying the generated patch does not give the target document.)
 
-**In cjson-cling.**
+**In cJSON-cling.**
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "Item generateMergePatchImpl" 23 -->
 ```cpp
@@ -3345,7 +3345,7 @@ merge patch: none
 
 Two levels down, `a` and `A` count as the same key, so the difference between the two documents is lost and no patch is produced at all.
 
-**In cjson-cling.**
+**In cJSON-cling.**
 
 <!-- source: cjson-cling/src/cjson_utilities.clg "if (!compareJson(fromChild, toChild, caseSensitive)) {" -->
 ```cpp
@@ -3438,7 +3438,7 @@ minified {"a":"x\\","b": 1 }
 
 The string `"x\\"` (an escaped backslash, then the real closing quote) swallows its closing quote; the rest of the text is treated as string content, so the space in `"b": 1 }` survives.
 
-**In cjson-cling.** `minify` returns the minified text instead of working in place, and keeps the rule:
+**In cJSON-cling.** `minify` returns the minified text instead of working in place, and keeps the rule:
 
 <!-- source: cjson-cling/src/cjson_api.clg "} else if (c == 34) {" -->
 ```cpp
@@ -3535,7 +3535,7 @@ printed [0.3,123456789.12345679,1]
 
 `0.30000000000000004` prints as `0.3` and `1.0000000000000002` as `1`: both are within one `DBL_EPSILON` of the original, neither is the original. `123456789.123456789` does fail the test and gets 17 digits.
 
-**In cjson-cling.** The same two-step print, through the shim's `printf("%g")`:
+**In cJSON-cling.** The same two-step print, through the shim's `printf("%g")`:
 
 <!-- source: cjson-cling/src/cjson_print.clg "bool printNumber" -->
 ```cpp
@@ -3626,7 +3626,7 @@ printed ["ab"]
 
 The escape `\u12G4` is read as U+0000, and the string is cut at that NUL byte: `ab`.
 
-**In cjson-cling.**
+**In cJSON-cling.**
 
 <!-- source: cjson-cling/src/cjson_parse.clg "int parseHex4" -->
 ```cpp
@@ -3710,7 +3710,7 @@ int main(void) {
 printed [null,0,null]
 ```
 
-**In cjson-cling.** The conversion is the shim's `strtod`, and the only check is the same "nothing was parsed":
+**In cJSON-cling.** The conversion is the shim's `strtod`, and the only check is the same "nothing was parsed":
 
 <!-- source: cjson-cling/src/cjson_parse.clg "bool parseNumber" -->
 ```cpp
@@ -3810,7 +3810,7 @@ infinities: NOT equal
 
 (The object walk in `cJSON_Compare` is quoted under issue 10; `compare_double` under issue 26.)
 
-**In cjson-cling.**
+**In cJSON-cling.**
 
 <!-- source: cjson-cling/src/cjson_item.clg "bool compareDouble" -->
 ```cpp
@@ -3921,7 +3921,7 @@ int main(void) {
 
 For `{a:1}` the bad key starts at byte 1; upstream reports 2.
 
-**In cjson-cling.**
+**In cJSON-cling.**
 
 <!-- source: cjson-cling/src/cjson_parse.clg "bool failString" -->
 ```cpp
@@ -4029,9 +4029,9 @@ constant. The attribution of each row to the port comes from the earlier version
 
 ## Speed and memory
 
-Safe is not free. `cjson-cling/docs/performance.md` (gcc 16.2 `-O2`, bounds and null checks ON, built with `--pool-shared`, a 20 MB document of small records, best of 3) reports:
+Safe is not free. `cJSON-cling/docs/performance.md` (gcc 16.2 `-O2`, bounds and null checks ON, built with `--pool-shared`, a 20 MB document of small records, best of 3) reports:
 
-| | upstream cJSON | cjson-cling |
+| | upstream cJSON | cJSON-cling |
 |---|---|---|
 | parse | 81 MB/s | 86 MB/s |
 | print | 69 MB/s | 105 MB/s |
@@ -4069,7 +4069,7 @@ The guide's own check builds every program in this chapter against the sibling p
 python3 -I docs/language-guide/examples/check.py check 15_ --chapters 15-
 ```
 
-The project's own scripts, from the `cjson-cling` folder, are the larger runs behind the figures:
+The project's own scripts, from the `cJSON-cling` folder, are the larger runs behind the figures:
 
 ```
 bash tests/run_vulns.sh                     # the 20 memory-class programs (outcomes self-checked) and the logic-class driver

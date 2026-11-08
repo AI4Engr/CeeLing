@@ -672,7 +672,7 @@ build is one flag away); the cJSON port ships with both on.
 
 * Bounds: **+5.5 % on decompression, +11.3 % on compression** of the zlib port, over 12 Silesia files with identical output. One program (40 subscript sites in the decoder, 145 in the
   encoder); I have no number for other code.
-* Null: one branch per access. On the cJSON port, building with `--no-bounds-checks --no-null-checks` shows what both checks cost together: about 5% on the benchmark document (`cjson-cling/PERFORMANCE.md`); one program, one machine.
+* Null: one branch per access. On the cJSON port, building with `--no-bounds-checks --no-null-checks` shows what both checks cost together: about 5% on the benchmark document (`cJSON-cling/PERFORMANCE.md`); one program, one machine.
 
 ## What it does not cover
 

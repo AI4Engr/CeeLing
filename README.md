@@ -26,7 +26,7 @@ Requirements: CMake 3.16+, a C++17 compiler (g++, clang++ or MinGW-w64) and Git.
 **Linux / macOS**
 
 ```bash
-git clone --recursive <repository-url> && cd CeeLing      # vendor/tree-sitter is a submodule
+git clone --recursive https://github.com/AI4Engr/CeeLing && cd CeeLing      # vendor/tree-sitter is a submodule
 cmake -S . -B build && cmake --build build --parallel
 ./build/cling examples/hello.clg --cpp hello.cpp
 g++ -std=c++17 hello.cpp -o hello && ./hello
@@ -35,7 +35,7 @@ g++ -std=c++17 hello.cpp -o hello && ./hello
 **Windows (PowerShell, MinGW-w64)**
 
 ```powershell
-git clone --recursive <repository-url>; cd CeeLing
+git clone --recursive https://github.com/AI4Engr/CeeLing; cd CeeLing
 cmake -S . -B build -G Ninja; cmake --build build --parallel      # or -G "MinGW Makefiles"
 .\build\cling.exe examples\hello.clg --cpp hello.cpp
 g++ -std=c++17 hello.cpp -o hello; .\hello.exe
@@ -166,7 +166,7 @@ These are libraries written for their own sake, each in its own repository. [Cha
 
 | Project | What it is |
 |---|---|
-| **cjson-cling** | All of cJSON 1.7.19 and its Utils: 2,907 lines of CeeLing and a 52-line number shim |
+| **[cJSON-cling](https://github.com/AI4Engr/cJSON-cling)** | All of cJSON 1.7.19 and its Utils: 2,907 lines of CeeLing and a 52-line number shim |
 | **zlib-cling** | DEFLATE and the zlib format, about 3,500 lines; verified in both directions against real zlib on a 15.7 MB corpus |
 | **yaml-cling** | A YAML library with the yaml-cpp API, used by a plain C++ project through generated headers |
 | **app-cling** | A desktop application shell whose commands are written in CeeLing; exercises the threading model under sanitizers |

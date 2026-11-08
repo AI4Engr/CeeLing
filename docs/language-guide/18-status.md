@@ -47,7 +47,7 @@ int main() {
 }
 ```
 
-(The example is compiled with `--no-bounds-checks --no-null-checks`.) `zlib-cling` is built with both off for speed parity with its Rust reference; `cjson-cling` with both on. The cost measured on zlib-cling is 5.5
+(The example is compiled with `--no-bounds-checks --no-null-checks`.) `zlib-cling` is built with both off for speed parity with its Rust reference; `cJSON-cling` with both on. The cost measured on zlib-cling is 5.5
 percent on decompression and 11.3 percent on compression.
 
 ## Stated gaps
@@ -154,7 +154,7 @@ from a field, `ref` on a primitive or a vector). Not a safety hole, but "CeeLing
 
 **Documents that disagree with the compiler.** These I found while writing the guide, and the guide follows the compiler:
 
-- the design notes say `std::string` parameters are "not yet admitted" for the read-only `const&` inference; the compiler does it ([chapter 3](03-values-and-containers.md), and `cjson-cling/docs/performance.md`).
+- the design notes say `std::string` parameters are "not yet admitted" for the read-only `const&` inference; the compiler does it ([chapter 3](03-values-and-containers.md), and `cJSON-cling/docs/performance.md`).
 - the design notes and the internal notes call "definite initialization" a static check; it covers locals only.
 - the internal notes said CeeLing has no `auto`; it parsed and passed through, and is refused since 2026-11-02 ([chapter 6](06-dangling-references.md)).
 - the internal notes' statement that the repository has no `LICENSE` file is out of date: the file exists, here and in each sibling project.
@@ -213,7 +213,7 @@ The language is exercised by libraries that were written for their own sake, not
 
 | Project | What it is | What it showed |
 |---|---|---|
-| **cjson-cling** | All of cJSON 1.7.19 and its Utils (JSON Pointer, Patch, Merge Patch, sorting): 2,907 lines of `.clg` and a 52-line number shim. | The 33-issue case study ([chapter 15](15-case-study-cjson.md)); differential tests against upstream; clean sanitizer runs; and a compiler defect list that was fixed along the way. Built with both run-time checks on. |
+| **cJSON-cling** | All of cJSON 1.7.19 and its Utils (JSON Pointer, Patch, Merge Patch, sorting): 2,907 lines of `.clg` and a 52-line number shim. | The 33-issue case study ([chapter 15](15-case-study-cjson.md)); differential tests against upstream; clean sanitizer runs; and a compiler defect list that was fixed along the way. Built with both run-time checks on. |
 | **yaml-cling** | A YAML library with the yaml-cpp API, transpiled and consumed by a plain C++ project through generated headers and sources. | That a graph-shaped library (nodes, vectors and maps of nodes, strings) can be written without raw pointers, and that its users never need CeeLing. Milestone-gated; its own the internal notes are the status. |
 | **zlib-cling** | DEFLATE and the zlib format, about 3,500 lines of algorithm code and a small shim. | Real-corpus parity: verified in both directions against real zlib on the 12-file, 15.7 MB Silesia corpus; compress 0.97 times and decompress 1.10 times the time of zlib-rs on the author's machine (its README). Built with the bounds checks off, which is stated there. It drove `reserve`, `copyWithin`, `int64` and the read-only parameter inference. |
 | **app-cling** | A Wails-like desktop shell: a web page calls commands written in CeeLing, over a small native shim. | The threads model (`spawn`, `Channel`) in real use, with ASan, UBSan and ThreadSanitizer runs and lock-removal controls; 282 headless checks recorded in its the internal notes; the struct decoders. A prototype. |

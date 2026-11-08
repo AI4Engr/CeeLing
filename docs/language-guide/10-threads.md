@@ -954,6 +954,6 @@ but a channel. Whoever needs the strongest guarantee, or race freedom for arbitr
 - **app-cling,** a desktop-application framework written in CeeLing: its `src/app.clg` has 7 `spawn(closure Job ...)` expressions (the `proc.run` command, the dialogs, the close confirmation, the notification) and a
   `Channel` carries file requests from workers to the main thread. Its `tests/run_sanitizers.sh` runs the end-to-end tests under AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer, plus *negative
   controls*: the same run against a build with a lock removed must report races, or the clean run would prove nothing. (Not re-run for this guide.)
-- **cjson-cling** has `tests/run_threads.sh`: eight threads each parse, print and drop their own documents through the pooled port.
+- **cJSON-cling** has `tests/run_threads.sh`: eight threads each parse, print and drop their own documents through the pooled port.
 
 Next: [chapter 11, Talking to C++](11-talking-to-cpp.md), the other trusted boundary.

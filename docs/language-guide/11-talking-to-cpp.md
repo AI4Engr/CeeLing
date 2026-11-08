@@ -120,7 +120,7 @@ error[semantic/forbidden-construct]: call to unknown function/method `myCube`
 ### A header as the shim
 
 Most shims are a header the `.clg` file includes. A line `#include "x.h"` that is not a `.clh` is copied into the generated C++ unread, so the declaration CeeLing sees and the definition g++ sees meet in the output.
-This is the pattern cjson-cling and zlib-cling use (`#include "../shim/cjson_num.h"` above `ext_fn double cjson_strtod_at(...)`).
+This is the pattern cJSON-cling and zlib-cling use (`#include "../shim/cjson_num.h"` above `ext_fn double cjson_strtod_at(...)`).
 
 <!-- source: CeeLing/docs/language-guide/examples/11_clamp_shim.h "inline int clampTo" -->
 ```
