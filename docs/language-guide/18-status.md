@@ -194,6 +194,7 @@ Error: Syntax error at line 1, column 7, node type 'ERROR', near: int. Suggestio
 
 The list, roughly in the order it would help real programs:
 
+- **`auto` is not supported and is not planned.** Every check works from a variable's declared type, and `auto` is how iterators, views of temporaries and Eigen expression templates are written in C++. Supporting it would mean typing every expression of every linked C++ library. The declaration is refused, numbers included ([chapter 2](02-language.md)); write the type.
 - **Container literals and named constants.** Both came from zlib-cling, where a table is 19 `push_back` calls and `65535` is written 18 times.
 - **Compound assignment, `^`, ternary, `ref int` out-parameters or multiple return values.**
 - **Generics beyond the one narrow form** (a generic method whose return type is the type parameter): classes and free functions, analysed per instantiation.

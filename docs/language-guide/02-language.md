@@ -804,8 +804,7 @@ int main() {
 ```
 
 **Where it stops.** Two pointer-looking spellings get past CeeLing and are stopped by g++ instead: `*a` on a class that has no `operator*`, and `a + 1` on a handle. The C++ output does not
-compile, so no program with them runs, but the message is g++'s. `auto` is accepted for numbers (`auto n = 5;`) and breaks for objects (`auto a = new Node(3);` generates C++ that g++
-rejects); write the type.
+compile, so no program with them runs, but the message is g++'s. `auto` is refused outright (below).
 
 ## Classes
 
@@ -2281,6 +2280,25 @@ The standard containers are generic as written (`std::vector<Node>`, `std::map<s
 
 Each item below was tried with the compiler. Most are a syntax error, because the grammar has no production for them. That is the cheap way to seal a feature, and it is why the message is
 usually "Syntax error" and not an explanation; the ones with explanations say so.
+
+**`auto`.** Write the type. CeeLing cannot support `auto`, and this is a design limit rather than a missing feature. Every check works from the declared type of a variable: whether it is an owner, an observer, a view or a plain value decides what happens when something it refers to dies. `auto` hides that type. In C++ it is also how the dangerous cases are written: an iterator, a `string_view` of a temporary, or an Eigen expression template such as `a * b` that keeps references to its operands. To follow them the compiler would have to type every C++ expression of every library it links, which is the work of a C++ front end and is not planned. So the declaration is refused for numbers too, and the fix is to name the type, which for Eigen also forces the expression to be evaluated into an owned value:
+
+<!-- example: 02_no_auto.clg -->
+```cpp
+#include <Eigen/Dense>
+
+int main() {
+    Eigen::MatrixXd a = Eigen::MatrixXd::Identity(2, 2);
+    auto e = a * a;                 // in C++ this holds a lazy expression that refers to `a`
+    return 0;
+}
+```
+<!-- error: 02_no_auto.clg -->
+```
+error[semantic/forbidden-construct]: `auto` has no known type
+  --> 02_no_auto.clg:5:5
+  help: CeeLing passes `auto` to C++ unchanged, so nothing could follow what the variable holds (an iterator, a view, a lazy expression): that is how a dangling reference gets past the checker. Write the type, e.g. `int`, `string` or a class name.
+```
 
 **A ternary.** Use `if`.
 

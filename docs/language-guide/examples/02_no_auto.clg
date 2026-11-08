@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: `auto` has no known type
+#include <Eigen/Dense>
+
+int main() {
+    Eigen::MatrixXd a = Eigen::MatrixXd::Identity(2, 2);
+    auto e = a * a;                 // in C++ this holds a lazy expression that refers to `a`
+    return 0;
+}
