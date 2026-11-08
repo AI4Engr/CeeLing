@@ -2,9 +2,9 @@
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-orange.svg)
 
-**A memory-safe dialect of C++, inspired by Rust, that compiles to plain C++17.**
+**A Rust-inspired, memory-safe dialect of C++ that compiles to plain C++17.**
 
-CeeLing is not a new Rust-like language. It keeps your existing C++ libraries and adds two things: Rust-like safety (dangling references and use after move are rejected at compile time) and Java-like object handling (no `*`, `&`, `delete`, `std::move` or lifetime annotations; the compiler infers ownership and inserts the moves). The output is ordinary C++ that builds without CeeLing.
+CeeLing makes existing C++ code safer without leaving the C++ ecosystem. You can continue using your current C++ libraries while gaining Rust-inspired guarantees: dangling references and use-after-move are rejected at compile time. Its Java-like object model eliminates manual pointer and move syntax—there is no *, &, delete, std::move, or lifetime annotation. The compiler infers ownership and inserts moves automatically. The generated code is standard C++17 and can be built with an ordinary C++ toolchain, without CeeLing.
 
 > **Status: pre-1.0.** Works on Windows (MinGW-w64) and Linux (Ubuntu 22.04, g++ 11); no release packages yet, build from source. The language is small on purpose: code outside it is rejected, not guessed at. It does **not** give Rust's full guarantees; the table below states the boundary.
 
