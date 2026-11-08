@@ -188,7 +188,30 @@ The memory errors (1 to 13) are mostly removed or turned into a located abort; t
 
 ## Using C++ libraries
 
-What the compiler assumes about a library call is data, not code: plain-text fact packs say which methods borrow, which invalidate a container's views and which return fresh values. The facts for `std::vector`, `string`, `string_view`, `optional` and `map` are generated from the real standard library declarations. For your own library, `tools/cling-scan` drafts a pack from a header, `--report-facts` lists every fact a program relied on and `--strict` refuses facts no person reviewed. An unlisted method is assumed to borrow its receiver, so the default is the cautious one. See [chapter 11](docs/language-guide/11-talking-to-cpp.md) and the [pack format](docs/internals/facts-format.md).
+**From C++ into CeeLing code.** The output is a normal `.cpp` and `.h`, so a C++ project links it like any other library and needs no CeeLing at build time:
+
+```
+cling stats.clg --cpp stats.cpp          # implementation
+cling stats.clg --cpp stats.h            # header
+g++ -std=c++17 main.cpp stats.cpp -o app # main.cpp does #include "stats.h" and calls total(v)
+```
+
+**From CeeLing into C++ libraries.** What the compiler assumes about a library call is data, not code: plain-text *fact packs* say which methods borrow, which invalidate a container's views and which return fresh values. The facts for `std::vector`, `string`, `string_view`, `optional` and `map` are generated from the real standard library declarations. For your own library, `tools/cling-scan` drafts a pack from a header, `--report-facts` lists every fact a program relied on and `--strict` refuses facts no person reviewed. An unlisted method is assumed to borrow its receiver, so the default is the cautious one.
+
+**Example: Eigen.** A block expression refers to the storage of the matrix it came from. With the real Eigen headers and a two-line pack for `Eigen::VectorXd`:
+
+```
+Eigen::VectorXd v = Eigen::VectorXd::Ones(4);
+Eigen::VectorXd head = v.head(2);        // refers to v's storage
+v = Eigen::VectorXd::Ones(8);            // v is replaced
+std::cout << head.size();
+```
+```
+error[semantic/use-after-move]: use of dangling observer `head` (its owner `v` is gone)
+  help: `head` observes `v`, which no longer has a live owner
+```
+
+The pack for `VectorXd` was scanned from the Eigen headers (69 facts, bound to the headers by SHA-256) and checked against the real library under AddressSanitizer. Expression templates held through `auto` cannot be written at all: `auto` is a compile error. Eigen, jsoncpp and yaml-cpp are the libraries the scanner has been tried on; the facts are a scanner's draft until a person reviews them. See [chapter 11](docs/language-guide/11-talking-to-cpp.md), [chapter 12](docs/language-guide/12-many-files.md) and the [pack format](docs/internals/facts-format.md).
 
 ## Who it is for
 
