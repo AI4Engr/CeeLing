@@ -124,7 +124,7 @@ The positioning is deliberate: safer than hand-written C++ while keeping the C++
 
 ## Compared with Rust
 
-Most of what makes Rust's safe subset safe is implemented. The difference is *how* it is established (inference over C++ instead of lifetime annotations) and what is deliberately left out. This is a feature-by-feature list, not a percentage; [chapter 17](docs/language-guide/17-comparisons.md) gives the reasoning.
+CeeLing covers several of the mechanisms that make Rust's safe subset safe, in a weaker form: they are inferred over C++ instead of declared with lifetimes, and some are checked at run time instead of compile time. Others are left out on purpose. This is a feature-by-feature list, not a score; [chapter 17](docs/language-guide/17-comparisons.md) gives the reasoning.
 
 | Rust guarantee | CeeLing |
 |---|---|
