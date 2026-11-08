@@ -336,7 +336,7 @@ The table is produced by `16_app_cling_pointers.py`, which does what `app-cling/
 | app | (closures) | result of `call()` (Item) in 33 closures | shared_ptr | rule: a closure implements a virtual method, and such signatures are shared so a hierarchy agrees |
 | cjson_item | Item | field `child` (Item) | shared_ptr | compiler: passed to a read-only free-function parameter (must survive the call); passed to a read-only method parameter (must survive the call) |
 | cjson_item | Item | field `next` (Item) | shared_ptr | compiler: bidirectional ownership needs a shared forward edge; copied between a field and another variable, so both are owners |
-| cjson_item | Item | field `prev` (Item) | weak_ptr | hint: `//@ptr weak Item.prev` at line 18 |
+| cjson_item | Item | field `prev` (Item) | weak_ptr | hint: `//@ptr weak Item.prev` at line 13 |
 | cjson_item | (free functions) | results of 36 free functions (Item): `addArrayToObject`, `addBoolToObject`, `addFalseToObject`, ... | shared_ptr | none: not printed, no pattern found |
 | cjson_parse | ParseResult | field `item` (Item) | shared_ptr | rule: class Item has a weak field (Item.prev), so every handle to an instance of Item is shared (compiler: "instances of this class participate in weak back-references") |
 | cjson_parse | (free functions) | results of 3 free functions (ParseResult): `parseBuffer`, `parseWithLengthOptsResult`, `parseWithOptsResult` | unique_ptr | default: no rule made it shared |

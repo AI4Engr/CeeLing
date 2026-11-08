@@ -62,8 +62,7 @@ public:
     //@ptr weak Item.prev
     Item prev;
     Item child;
-    // Declared widest first: the layout follows declaration order, and interleaving 1- and 4-byte fields
-    // between the 8- and 32-byte ones cost 8 bytes of padding per node (a node is the unit of memory here).
+    // Widest first: interleaving small fields between the large ones cost 8 bytes of padding per node.
     string valuestring;
     string key;
     double valuedouble;
@@ -995,7 +994,7 @@ int main() {
 ```
 <!-- output: 15_cjson_05_detach_null_child.clg -->
 ```
-cling: null dereference at line 449
+cling: null dereference at line 439
 ```
 
 The line it names is `parent.child.prev = item.prev;` in `src/cjson_item.clg`. The exit status is 3.
@@ -1123,7 +1122,7 @@ int main() {
 ```
 <!-- output: 15_cjson_11_patch_null_root.clg -->
 ```
-cling: null dereference at line 608
+cling: null dereference at line 607
 ```
 
 The comment in the port's source says what the line is: upstream's unguarded dereference, kept, so that the language's check is what catches it.
