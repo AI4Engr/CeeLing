@@ -1,12 +1,12 @@
 # 16. CeeLing, Rust, Circle and C++ profiles
 
 CeeLing is not the first attempt at a safer way to write C++-shaped programs, and it is not the strongest. This chapter says what CeeLing chose not to be, where that leaves it behind Rust, and how it
-sits among the other approaches. Everything that is a statement about CeeLing's design is checked against the compiler or the design notes. Statements about other projects are from general knowledge, are kept short,
+sits among the other approaches. Everything that is a statement about CeeLing's design is checked against the compiler or the design records in `docs/design/`. Statements about other projects are from general knowledge, are kept short,
 and were **not re-verified** for this chapter; read them as orientation, not as citations.
 
 ## The position
 
-The goal, settled in the design notes, is **measurably safer than hand-written C++ while keeping the C++ ecosystem and requiring no lifetime annotations.** Compatibility matters more than guarantee
+The goal is **measurably safer than hand-written C++ while keeping the C++ ecosystem and requiring no lifetime annotations.** Compatibility matters more than guarantee
 strength. CeeLing is deliberately not trying to match Rust:
 
 - Rust-style safety for C++ exists as a path already (Circle and the "Safe C++" proposal, P3390): lifetime-annotated references, borrow checking and a rewritten standard library. It gives a stronger guarantee
@@ -137,7 +137,7 @@ See above. CeeLing allows aliases and mutation. This is a design choice, not a f
 
 `rustc`'s borrow checker is trusted: rarely unsound and validated over years, including by formal work. CeeLing's analysis is new, self-built and tested by fixtures. Each implementation hole is a route to undefined behaviour.
 Two ways around the checker were found by hand in two days (an unknown call inside `try`; a `ref` bound to a field, a getter or a temporary) and fixed; the cJSON port found further compiler defects, one of them a silent
-miscompilation ([chapter 15](15-case-study-cjson.md)). The list of things the checker does not cover at all (iterators, views, uninitialised fields, cycles) is in [chapter 13](13-contract-and-threats.md). "Measurably safer
+miscompilation ([chapter 15](15-case-study-cjson.md)). The list of things the checker does not cover at all (iterators, cycles) is in [chapter 13](13-contract-and-threats.md). "Measurably safer
 than C++" is a claim to be tested, not a certificate.
 
 ### 4. Ecosystem safety is by curation
@@ -257,7 +257,7 @@ None of the following is verified against current sources for this chapter. It i
 | | Syntax | C++ libraries | How dangling is handled | Status (as recalled, not re-verified) |
 |---|---|---|---|---|
 | **Rust** | its own: `&`, `&mut`, lifetimes | by `unsafe extern` for C; no route for C++ templates | borrow checker, lifetimes in signatures | shipped, mature |
-| **Circle / "Safe C++" (P3390)** | C++ superset plus a `safe` context | usable; in my understanding calling legacy C++ from `safe` requires `unsafe` | Rust-style lifetimes and exclusivity | not adopted by the ISO committee; neither it nor profiles made C++26 (per the design notes) |
+| **Circle / "Safe C++" (P3390)** | C++ superset plus a `safe` context | usable; in my understanding calling legacy C++ from `safe` requires `unsafe` | Rust-style lifetimes and exclusivity | not adopted by the ISO committee; neither it nor profiles made C++26 (as recalled) |
 | **C++ profiles** | unchanged C++ | all of it | rules checked on existing code; the committee's lifetime paper aims at catching common dangling | the committee's chosen direction; not in C++26 |
 | **cppfront / Cpp2** | a new syntax that transpiles to C++ | all of it | bounds, null and initialisation checks; per its own documentation it does not aim for 100 percent | experimental |
 | **Carbon** | a new syntax | via C++ interop | memory safety is a design effort | experimental |

@@ -1,4 +1,5 @@
 //@ expect: accept
+//@ run: 0
 class Counter {
 public:
     int n;                             // never given a value
@@ -7,6 +8,6 @@ public:
 
 int main() {
     Counter c = new Counter();
-    std::cout << c.n << std::endl;     // accepted today: prints whatever the memory held
+    std::cout << c.n << std::endl;     // the field starts at zero
     return 0;
 }

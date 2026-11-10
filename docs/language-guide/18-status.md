@@ -1,7 +1,7 @@
 # 17. Status and roadmap
 
 What is built and tested, what is a stated gap, what is planned, what real programs have been written in CeeLing, and the licence. No phases and no history: this is the state of the language as the
-documents and the compiler agree on it, with the places where they disagree named. The itemised list is the internal notes; this page groups it.
+documents and the compiler agree on it, with the places where they disagree named. This page is the list, grouped.
 
 ## What exists and is tested
 
@@ -154,15 +154,14 @@ from a field, `ref` on a primitive or a vector). Not a safety hole, but "CeeLing
 
 **Documents that disagree with the compiler.** These I found while writing the guide, and the guide follows the compiler:
 
-- the design notes say `std::string` parameters are "not yet admitted" for the read-only `const&` inference; the compiler does it ([chapter 3](03-values-and-containers.md), and `cJSON-cling/docs/performance.md`).
-- the design notes and the internal notes call "definite initialization" a static check; it covers locals only.
-- the internal notes said CeeLing has no `auto`; it parsed and passed through, and is refused since 2026-11-02 ([chapter 6](06-dangling-references.md)).
-- the internal notes' statement that the repository has no `LICENSE` file is out of date: the file exists, here and in each sibling project.
+- an earlier statement that `std::string` parameters are "not yet admitted" for the read-only `const&` inference is out of date; the compiler does it ([chapter 3](03-values-and-containers.md), and `cJSON-cling/docs/performance.md`).
+- "definite initialization" is a static check for locals only; number, bool and char fields start at zero instead ([chapter 8](08-sealed-escape-hatches.md)).
+- `auto` used to parse and pass through; it is refused since 2026-11-02 ([chapter 6](06-dangling-references.md)).
 - The `cling_safety_contract_baseline` test is not run with `--strict`, so a missed reject shows as XFAIL, not as a failure.
 
 ## Not in the language yet
 
-These are planned or wanted, in the internal notes, and rejected today. Two examples that fail on purpose:
+These are planned or wanted, and rejected today. Two examples that fail on purpose:
 
 <!-- example: 18_not_yet_literal.clg -->
 ```cpp
@@ -214,9 +213,9 @@ The language is exercised by libraries that were written for their own sake, not
 | Project | What it is | What it showed |
 |---|---|---|
 | **cJSON-cling** | All of cJSON 1.7.19 and its Utils (JSON Pointer, Patch, Merge Patch, sorting): 2,907 lines of `.clg` and a 52-line number shim. | The 33-issue case study ([chapter 15](15-case-study-cjson.md)); differential tests against upstream; clean sanitizer runs; and a compiler defect list that was fixed along the way. Built with both run-time checks on. |
-| **yaml-cling** | A YAML library with the yaml-cpp API, transpiled and consumed by a plain C++ project through generated headers and sources. | That a graph-shaped library (nodes, vectors and maps of nodes, strings) can be written without raw pointers, and that its users never need CeeLing. Milestone-gated; its own the internal notes are the status. |
+| **yaml-cling** | A YAML library with the yaml-cpp API, transpiled and consumed by a plain C++ project through generated headers and sources. | That a graph-shaped library (nodes, vectors and maps of nodes, strings) can be written without raw pointers, and that its users never need CeeLing. Milestone-gated. |
 | **zlib-cling** | DEFLATE and the zlib format, about 3,500 lines of algorithm code and a small shim. | Real-corpus parity: verified in both directions against real zlib on the 12-file, 15.7 MB Silesia corpus; compress 0.97 times and decompress 1.10 times the time of zlib-rs on the author's machine (its README). Built with the bounds checks off, which is stated there. It drove `reserve`, `copyWithin`, `int64` and the read-only parameter inference. |
-| **app-cling** | A Wails-like desktop shell: a web page calls commands written in CeeLing, over a small native shim. | The threads model (`spawn`, `Channel`) in real use, with ASan, UBSan and ThreadSanitizer runs and lock-removal controls; 282 headless checks recorded in its the internal notes; the struct decoders. A prototype. |
+| **app-cling** | A Wails-like desktop shell: a web page calls commands written in CeeLing, over a small native shim. | The threads model (`spawn`, `Channel`) in real use, with ASan, UBSan and ThreadSanitizer runs and lock-removal controls; 982 headless checks (re-run on 2026-11-09); the struct decoders. A prototype. |
 
 These are figures from the projects' own documents; I did not rerun them. Each project's claim is limited as this guide's is: its `.clg` code is checked, its shims and the libraries it calls are not.
 

@@ -70,7 +70,7 @@ int main() {
 ```
 
 **Where it stops.** `int` is 32 bits. CeeLing adds **no** overflow check, no narrowing check and no division-by-zero check: `2147483647 + 1` wraps (it is undefined behaviour in C++, and
-the generated code is C++), `int x = 3.7;` truncates, and `5 / 0` crashes the program. These were verified by running them, and the design notes do not list them among the run-time
+the generated code is C++), `int x = 3.7;` truncates, and `5 / 0` crashes the program. These were verified by running them; none is among the run-time
 checks. If you write `long` or `size_t`, the compiler does not know the name and passes it through to C++ unchecked; do not rely on that, use `int` or `int64`.
 
 ## `byte` and `char`
@@ -291,7 +291,7 @@ cling: index out of bounds at line 4 (index 9, size 5)
 ```
 
 **Where it stops.** The check covers `[]`. `substr` with a position past the end is not checked by CeeLing: the C++ library throws `std::out_of_range`, and `catch (string e)` does not catch
-it, so the program terminates (this is what the design notes list as not covered):
+it, so the program terminates (one of the gaps listed in [chapter 7](07-run-time-checks.md)):
 
 <!-- example: 03_string_substr.clg -->
 ```cpp
@@ -466,7 +466,7 @@ int countChars(const std::string& s) {
 ```
 
 `shout` appends to its parameter, so it keeps a by-value `std::string`; `text` printed `hello` afterwards. The read-only case is skipped for constructors, `virtual` and `override`
-methods and classes in an inheritance hierarchy (their signatures must stay identical), which keep the copy. This inference is described in the internal notes, not in the design notes.
+methods and classes in an inheritance hierarchy (their signatures must stay identical), which keep the copy. The rule is in the compiler's smart-pointer analysis (`smart_pointer_params.cpp`); this is its description.
 
 ## The library functions a program may call
 
@@ -662,7 +662,7 @@ error[semantic/use-after-move]: use of moved-from value `a`
 (If the object is already shared with something else, `push_back` shares it instead and the local stays usable; whether it is shared is decided by the analysis of
 [chapter 4](04-ownership.md).) A reference into a vector is invalidated by `push_back`, `pop_back` and `resize`: that is chapter 1 section 2 and [chapter 6](06-dangling-references.md).
 
-**Where it stops.** `pop_back()` on an empty vector, and iterators past `end()`, are not checked (the design notes). Element types seen in the tests are primitives, `string` and objects.
+**Where it stops.** `pop_back()` on an empty vector, and iterators past `end()`, are not checked ([chapter 7](07-run-time-checks.md)). Element types seen in the tests are primitives, `string` and objects.
 
 ### `resize`, `reserve` and `copyWithin`: primitive elements only
 
@@ -905,7 +905,7 @@ int sumAll(const std::vector<int>& data) {
 ```
 
 (The call site in the generated code still says `std::move(v)`; a `const&` parameter takes nothing from it, which is why `v.size()` prints 3.) The rule's motivating case is
-zlib-cling's `decodeSymbol`, which copied four tables of about 512 entries per symbol: passing them by `const&` measured 9.7 times faster decompression (the design notes).
+zlib-cling's `decodeSymbol`, which copied four tables of about 512 entries per symbol: passing them by `const&` measured 9.7 times faster decompression (measured on zlib-cling, a sibling project; not re-run for this guide).
 
 <!-- example: 03_vector_moved.clg -->
 ```cpp

@@ -244,8 +244,7 @@ int fillText(std::string& out) {
 ```
 
 **A known bug, shown by this example.** The call `sumAll(v)` is emitted as `sumAll(std::move(v))`, though the parameter is a `const&`. It compiles and the call is correct, but the local `v` is left in the standard's "valid
-but unspecified" state, and the checker does not mark it moved, so reading `v` afterwards compiles and gives nothing reliable. The bug is recorded in the internal notes ("Known bug: `ext_fn ref` container arguments wrongly `std::move`d at
-the call site"); passing a *field* is not affected. Until it is fixed, do not read a local vector after handing it to an `ext_fn ref`.
+but unspecified" state, and the checker does not mark it moved, so reading `v` afterwards compiles and gives nothing reliable. The bug is known and not yet fixed in the compiler; passing a *field* is not affected. Until it is fixed, do not read a local vector after handing it to an `ext_fn ref`.
 
 ### A container is moved in by default
 
@@ -387,8 +386,7 @@ experiment, `gfx_init` and its relatives, used to be built in; imgui-cling now k
 `diagonal`, which are treated as borrowing their receiver. That is [chapter 6](06-dangling-references.md) (a `block` that dangles is rejected; an unlisted method such as `topRows` is refused). The machine this guide
 was checked on has no Eigen installed, so no Eigen program is compiled here; only the rejections, which need no Eigen headers, are shown there.
 
-**Not built:** vendor-maintained declaration files for other libraries. The internal notes records the format (a table of borrow, invalidate and move facts plus an accepted and a rejected test per contentious line), and says
-nothing was built. Until it exists, a library other than the ones above is reached through `ext_fn` shims over primitives, not directly.
+**Not built:** vendor-maintained declaration files for other libraries. The design (a table of borrow, invalidate and move facts plus an accepted and a rejected test per contentious line) is in [third-party-inference.md](../design/third-party-inference.md); no such registry exists. Until it exists, a library other than the ones above is reached through `ext_fn` shims over primitives, not directly.
 
 ## The generated C++ is an ordinary library
 

@@ -259,7 +259,7 @@ int main() {
 ```
 
 **Expression templates (row 6).** `auto e = a * b;` over Eigen matrices is refused (`auto` has no known type); it used to be accepted, and the danger needs a matrix that dies before `e` is used. The Eigen view
-methods listed in the table are the narrow exception (from the internal notes; I did not re-run those fixtures, and I found none for them in `tests/safety`).
+methods listed in the table are the narrow exception (two rejection fixtures, `tests/safety/eigen_block_dangles_*_rejected.clg`, cover them; see [the Eigen design record](../design/eigen-views.md)).
 
 **Reference cycles (row 12).** A class whose field points back at its owner leaks if the compiler infers `shared_ptr` for it. The inference gives `weak_ptr` to fields named `prev`, `previous`,
 `parent`, `back` or `owner` in classes with several members of their own type, or when a `//@ptr weak Class.field` hint says so. It does not look for cycles:
@@ -298,14 +298,14 @@ public:
 ```
 
 `boss` became `shared_ptr` and the emitter holds the listener, so both stay alive forever. This is a leak, not a corruption: it is outside the contract, and it is the reason `owner` and `parent`
-are good names to use. A probe with a counting destructor, recorded in the internal notes, found all three listeners of a similar program still alive after the last outside handle was released.
+are good names to use. A probe with a counting destructor (not kept as a fixture) found all three listeners of a similar program still alive after the last outside handle was released.
 
 **`variant` (row 17).** `std::variant` is accepted as any other library type. Reading the wrong alternative is the type confusion the row is about; `std::get` throws `std::bad_variant_access`, which
 `catch (string e)` does not catch, so the program terminates rather than misreads. The row's "guard variant" part was never built.
 
-**Uninitialised fields (row 18).** The rule is for locals. A class field of primitive type that the constructor does not set is not initialised by the generated C++:
+**Uninitialised fields (row 18).** Closed since 2026-11-01. A number, `bool` or `char` field starts at zero: the generated C++ declares it as `int n{};`, so a constructor that forgets it leaves a defined value, and a read of it is not a read of memory that was never set ([chapter 8](08-sealed-escape-hatches.md)). The program below used to print whatever the memory held; it now prints 0. What stays unchecked is whether zero is the *right* value.
 
-<!-- example: 13_gap_uninit_field.clg -->
+<!-- example: 13_uninit_field_zero.clg -->
 ```cpp
 class Counter {
 public:
@@ -315,14 +315,14 @@ public:
 
 int main() {
     Counter c = new Counter();
-    std::cout << c.n << std::endl;     // accepted today: prints whatever the memory held
+    std::cout << c.n << std::endl;     // the field starts at zero
     return 0;
 }
 ```
-
-The compiler accepts it, and the generated constructor body is empty. Object-typed fields are safe (an empty handle, which the null check catches). The design notes lists row 18 as "static, require
-definite-init" without this qualification; the internal notes say the same for fields ("safe: the emitter always default-constructs the smart pointer"), which is true for handles and not for
-primitives. I report it as a gap.
+<!-- output: 13_uninit_field_zero.clg -->
+```
+0
+```
 
 **Smaller gaps, all documented where they live.**
 

@@ -792,7 +792,7 @@ binds it without moving anything, so `v` keeps its contents, and the checker doe
 argument from the use-after-move rule.) A vector parameter that is mutated (`push_back`, `pop_back`, `resize`, a subscript write), stored or returned stays by value and consumes its
 argument, as `05_use_after_move_vector` shows.
 
-The project's notes record what this was worth in the one case measured: zlib-cling's `decodeSymbol` copied four tables of about 512 entries on every decoded symbol, and passing them
+What this was worth in the one case measured (zlib-cling, a sibling project; not re-run for this guide): its `decodeSymbol` copied four tables of about 512 entries on every decoded symbol, and passing them
 as `const&` alone made decompression 9.7 times faster.
 
 **Known gap, found while writing this chapter.** The read-only classification is looked up by *parameter name* somewhere in the pipeline. In a program with `int describe(Box n)` (which only

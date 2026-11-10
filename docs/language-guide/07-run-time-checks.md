@@ -44,7 +44,7 @@ int main() {
 a neighbouring heap word, print zero, crash or carry on. `g++ -Wall -Wextra` says nothing. C++ has opt-in tools, none a statement about the source: `v.at(i)` (below), `-D_GLIBCXX_ASSERTIONS`
 (I ran this twin with it: it aborts with `Assertion '__n < this->size()' failed`), sanitizers (not installed on this machine, so not run), hardened library modes. One trap I did run:
 libstdc++ switches its own assertions on in *unoptimized* builds only, so this twin aborts at `-O0` and prints a stale number at `-O2`. The same source behaves differently by build flag
-(the measurement is in the internal notes).
+(measured with g++ on one machine; not kept as a test).
 
 **What CeeLing does.** The subscript becomes a checked access that stops with the line, the index and the size:
 
@@ -668,7 +668,7 @@ int main() {
 `--no-bounds-checks`; nothing in the `.clg` file records which was used. The zlib port ships built with both checks off, to match the speed of the Rust zlib it is compared with (a checked
 build is one flag away); the cJSON port ships with both on.
 
-**Cost** (the design notes, "Current status"; protocol in the internal notes):
+**Cost** (measured on sibling projects; not re-run for this guide):
 
 * Bounds: **+5.5 % on decompression, +11.3 % on compression** of the zlib port, over 12 Silesia files with identical output. One program (40 subscript sites in the decoder, 145 in the
   encoder); I have no number for other code.
@@ -676,7 +676,7 @@ build is one flag away); the cJSON port ships with both on.
 
 ## What it does not cover
 
-These are the limits as the design notes list them. The claim at the top of the chapter stops here.
+These are the known limits. The claim at the top of the chapter stops here.
 
 **`pop_back()` on an empty vector.** It is not a subscript. The compiler accepts it and emits it unchanged, which is undefined behaviour (on this machine the program crashed). C++'s own
 `-D_GLIBCXX_ASSERTIONS` does catch this one; CeeLing's check does not.

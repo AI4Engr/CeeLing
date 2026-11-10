@@ -1173,8 +1173,8 @@ int main() {
 }
 ```
 
-Behaviour does not change; only where the memory comes from. The project's notes record the motivating measurement: on the cJSON port, whose parser is dominated by node allocation,
-parse throughput went from 50 to 84 MB/s (the C original measured 79 MB/s on the same machine). What it costs: `unique_ptr` objects are not pooled (a custom deleter would change the
+Behaviour does not change; only where the memory comes from. The motivating measurement is on the cJSON port, whose parser is dominated by node allocation: [its performance page](https://github.com/AI4Engr/cJSON-cling/blob/main/docs/performance.md) reports 50 MB/s for the first port against 80 for the C original, and 86 against 81 after a pooled allocator and changes to the parser and printer (the allocator was not measured alone there).
+What it costs: `unique_ptr` objects are not pooled (a custom deleter would change the
 handle's type); memory taken by the pool is kept for reuse and never returned to the system; the free lists are per thread. It is off by default.
 
 ## What the inference cannot decide, and what it costs

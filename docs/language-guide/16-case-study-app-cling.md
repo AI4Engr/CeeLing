@@ -32,7 +32,7 @@ win    2409 lines of code (976 shared + 1433 in win/); 2873 physical lines  OVER
 posix  1363 lines of code (976 shared + 387 in posix/); 1682 physical lines  OVER THE LIMIT of 1000
 ```
 
-Read it as follows. The program is about 6,300 lines of CeeLing (code only, comments and blank lines left out) in 19 files. Its trusted native layer is 2,409 lines of C++ for Windows (976 shared files plus 1,433 for the OS) and 1,363 for Linux. So on Windows a little over a quarter of the application's code is code the compiler does not check. The script also prints "OVER THE LIMIT of 1000": the project once set that limit, then dropped it as a rule (`app-cling/TODO.md`), and its README still quotes the old figure of 1,059 lines. This chapter uses the measured one.
+Read it as follows. The program is about 6,300 lines of CeeLing (code only, comments and blank lines left out) in 19 files. Its trusted native layer is 2,409 lines of C++ for Windows (976 shared files plus 1,433 for the OS) and 1,363 for Linux. So on Windows a little over a quarter of the application's code is code the compiler does not check. The script also prints "OVER THE LIMIT of 1000": the project once set that limit and then dropped it as a rule. This chapter uses the measured figures.
 
 That is the first honest number about what CeeLing does for a real program: it checks the majority of the application, and it does not check the rest. What the rest can do is bounded by a list of 72 declared functions, below.
 
@@ -791,7 +791,7 @@ Where the language was in the way, from the same document, each of which cost re
 
 ## What the program does not tell you
 
-- It is one program, written by the people who wrote the compiler, to test the compiler. That is a reason to trust the account of what went wrong (it is in the project's notes) and a reason to doubt that an outside team would have found the same things easy.
+- It is one program, written by the people who wrote the compiler, to test the compiler. That is a reason to trust the account of what went wrong (the account below includes what went wrong) and a reason to doubt that an outside team would have found the same things easy.
 - The pointer table says what the compiler chose, not that the choice was needed. The `pattern` rows are the script's reading.
 - The numbers are of this program on this compiler. A new rule in the analysis changes the table, and this is why the chapter prints it from a command instead of copying it.
 - Nobody has measured the cost of 590 `shared_ptr` against 81 `unique_ptr` here. The project builds with `--pool-shared`, an allocator for shared objects, and measured the checks, not the pointers.

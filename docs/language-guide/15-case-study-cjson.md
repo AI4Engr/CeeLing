@@ -7,8 +7,7 @@ The method has three steps. Port the whole library to CeeLing (`cJSON-cling`, a 
 issues and show three things: **how cJSON does it** (the defective C code, quoted from the real source, and why it fails), **how cJSON-cling does it** (the port's code for the same job, and the mechanism that
 makes the bug impossible, stops it at run time, or leaves it where it was), and **the verdict**. The result is a table of outcomes, not a slogan, and the interesting part is where the answer is "nothing".
 
-> **A caveat that matters.** The article was not available while this chapter was written. Each defect is described here from the one-line descriptions in the notes of the earlier version of this
-> chapter, checked against upstream's code. The triggers are *reconstructions*: the smallest program that does what the description says, not the author's proofs of concept. A reconstruction can miss
+> **A caveat that matters.** The article was not available while this chapter was written. Each defect is described here from a one-line description of it, checked against upstream's code. The triggers are *reconstructions*: the smallest program that does what the description says, not the author's proofs of concept. A reconstruction can miss
 > the exact path an original exploit takes. For every issue the text says whether the C behaviour was reproduced here, and how. Each "cannot happen" below therefore rests on a *mechanism*
 > (what the language no longer lets you write), not only on a passing test.
 
@@ -94,11 +93,11 @@ returns a pointer into someone else's memory (`cJSON-cling/docs/api-differences.
 Equivalence is measured, not assumed. These figures are as the project's own documents state them (`cJSON-cling/docs/testing.md`, `docs/performance.md`, the scripts in `cJSON-cling/tests/`); I re-ran the unit tests (776 checks) and the 33-issue matrix on 2026-11-08, and did not re-run the rest.
 
 * **Differential test, core.** The port and upstream parse the same bytes (upstream's own inputs, the 115 files of `tests/diff/corpus`, and 1.5 million mutations); success, error position, end offset and every
-  printed byte must match. The internal notes: no divergence.
-* **Differential test, Utils.** Pointer lookup, sorting, patch generation and application, merge patches, against the RFC 6902 suites shipped with upstream: about 620,000 comparisons, no divergence (the internal notes).
-* **Upstream's own unit tests**, ported to CeeLing programs: 18 programs, 776 checks, all pass (the internal notes counted 20 programs; the folder holds 18, and the 776 was re-run on 2026-11-08; skipped cases are marked in the files).
+  printed byte must match. Recorded result: no divergence.
+* **Differential test, Utils.** Pointer lookup, sorting, patch generation and application, merge patches, against the RFC 6902 suites shipped with upstream: about 620,000 comparisons, no divergence (recorded result).
+* **Upstream's own unit tests**, ported to CeeLing programs: 18 programs, 776 checks, all pass (re-run on 2026-11-08; skipped cases are marked in the files).
 * **Under sanitizers** (AddressSanitizer and UBSan, in WSL, with the pooled allocator off so a use-after-free is visible): the 776 unit checks, 756 thousand differential parses, 350 thousand Utils comparisons
-  and the 20 memory-class triggers give no report except the two stack overflows that are documented below as still open (06b and 09b) (the internal notes). Upstream's own C is not sanitized in that run; the claim
+  and the 20 memory-class triggers give no report except the two stack overflows that are documented below as still open (06b and 09b) (recorded result). Upstream's own C is not sanitized in that run; the claim
   under test is about the port.
 
 A sanitizer run shows no error on the inputs it saw. It is evidence, not proof, and the fuzzer is mutation-based: it never builds a cyclic tree by hand.
@@ -1505,7 +1504,7 @@ int main() {
 }
 ```
 
-**Verdict: partly.** The direct form is refused, by library code. The indirect cycle is still there; the sanitizer run reports `AddressSanitizer: stack-overflow` for this program (the internal notes).
+**Verdict: partly.** The direct form is refused, by library code. The indirect cycle is still there; the sanitizer run reports `AddressSanitizer: stack-overflow` for this program (recorded result).
 
 ### Issue 8: `cJSON_Duplicate` cap too high for the stack
 
@@ -4025,7 +4024,7 @@ The case study was also a test of CeeLing, and it failed that test several times
 | measuring speed | one `malloc` per node made the parser 1.6 times slower than C | an opt-in per-thread pooled allocator (`--pool-shared`) | `cf869af` |
 
 The `1.0e30` row is the one to remember: a soundness bug, in which the compiler accepted a malformed program and changed its meaning without a word, was found because a vulnerability trigger needed a large
-constant. The attribution of each row to the port comes from the earlier version of this chapter; a commit subject says so only for `fa366fe` ("found reviewing the cJSON port") and, for `23b8dae`, in its body ("found while starting the cJSON port").
+constant. The attribution of each row to the port is from the project's record at the time; a commit subject says so only for `fa366fe` ("found reviewing the cJSON port") and, for `23b8dae`, in its body ("found while starting the cJSON port").
 
 ## Speed and memory
 
