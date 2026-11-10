@@ -1,0 +1,18 @@
+//@ expect: reject
+//@ error: use of dangling observer `b` (its owner `a` is gone)
+//@ reason: `b = a.col(0)` observes `a`; handing `a` to a function moves it away, so `b` dangles. Taking the view itself does not move `a` (the receiver stays usable).
+//
+// No Eigen headers are needed to reject this (see eigen_block_dangles_after_reassign_rejected.clg).
+#include <Eigen/Dense>
+
+void use(Eigen::MatrixXd m) { }
+void sink(Eigen::MatrixXd m) { }
+
+int main() {
+    Eigen::MatrixXd a = Eigen::MatrixXd::Identity(3, 3);
+    Eigen::MatrixXd b = a.col(0);
+    use(a.row(1));
+    sink(a);
+    use(b);
+    return 0;
+}

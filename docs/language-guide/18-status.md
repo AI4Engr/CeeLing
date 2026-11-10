@@ -19,8 +19,8 @@ documents and the compiler agree on it, with the places where they disagree name
 | Generated JSON decoders for structs (`decodeX`) | working | [3](03-values-and-containers.md) |
 
 The safety contract is tested by `tests/safety/`: 306 fixtures (186 that must compile, 120 that must be refused), 154 of them also run with their output asserted and 7 that must die at run time with a stated message. Every
-accepted fixture's generated C++ is compiled by `g++`. A second suite splits each splittable fixture across two files and requires the same verdict (239 fixtures). The guide's own examples are another suite, compiled
-and run by the same compiler. How to read these is [chapter 13](13-contract-and-threats.md); I counted fixtures and did not run the suites for this chapter.
+accepted fixture's generated C++ is compiled by `g++`. A second suite splits each splittable fixture across two files and requires the same verdict (279 fixtures). The guide's own examples are another suite, compiled
+and run by the same compiler. How to read these is [chapter 13](13-contract-and-threats.md); the fixture and cross-file counts were re-run on 2026-11-09.
 
 ## The run-time checks, and how a program is built
 

@@ -184,7 +184,7 @@ These are libraries written for their own sake, each in its own repository. [Cha
 
 The memory errors (1 to 13) are mostly removed or turned into a located abort; the 17 logic errors remain, because a language that checks memory cannot know that `~1` must decode to `/`. The defective C, a C program that triggers each one, the port's code and the full 33-row table are in [chapter 15](docs/language-guide/15-case-study-cjson.md), with the speed and memory figures.
 
-**Tests.** 385 safety fixtures that must be rejected, or accepted, compiled and run with their output asserted; 565 guide examples checked by the test suite; seeded dangling programs for every scanned `std::vector` and `string` method, with negative controls that must fail.
+**Tests.** 387 safety fixtures that must be rejected, or accepted, compiled and run with their output asserted; 565 guide examples checked by the test suite; seeded dangling programs for every scanned `std::vector` and `string` method, with negative controls that must fail.
 
 ## Using C++ libraries
 
@@ -223,7 +223,7 @@ The pack for `VectorXd` was scanned from the Eigen headers (69 facts, bound to t
 
 * **[Language Guide](docs/language-guide/README.md)**: 18 chapters, every example checked by the test suite. Start with [why CeeLing](docs/language-guide/01-why-ceeling.md) and [the language](docs/language-guide/02-language.md).
 * [Safety contract and threats](docs/language-guide/13-contract-and-threats.md), [how the compiler works](docs/language-guide/14-how-it-works.md), [status](docs/language-guide/18-status.md).
-* [Design records](docs/design/): Eigen views, inferring the facts of third-party libraries.
+* [All documentation](docs/README.md), including the [design records](docs/design/): Eigen views, inferring the facts of third-party libraries.
 
 ## Contributing
 

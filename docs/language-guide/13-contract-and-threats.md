@@ -365,8 +365,8 @@ The promise is checked by programs, not by reading the checker.
   does not fail an ordinary run; with `--strict` it is a failure. The CTest target (`cling_safety_contract_baseline`) does not pass `--strict`, so a regression that starts accepting a program it used to reject would show as
   XFAIL, not as a red test. I did not run the suite for this chapter, so I cannot report the present XFAIL count; the runner prints it on its `Summary:` line.
   An over-rejection (an accept fixture refused) is always a hard failure.
-- **Across files.** `tests/separate/run_cross_file_test.sh` splits each of the 239 splittable fixtures into a library file and a `main` file and requires the same verdict: 94 rejects stay rejects, 141 accepts stay
-  accepts, and four are rejected only when split, each with a stated reason. 65 fixtures are all `main` and cannot be split.
+- **Across files.** `tests/separate/run_cross_file_test.sh` splits each of the 279 splittable fixtures into a library file and a `main` file and requires the same verdict: 122 rejects stay rejects, 153 accepts stay
+  accepts, and four are rejected only when split, each with a stated reason. 108 fixtures cannot be split (106 are all `main`, 2 have no `main`).
 - **The guide itself.** Every example in this book is compiled by the same compiler each time the guide is checked, and the messages quoted are the ones printed.
 - **Real libraries** exercise it from the outside: [chapter 15](15-case-study-cjson.md), and the other projects in [chapter 18](18-status.md).
 

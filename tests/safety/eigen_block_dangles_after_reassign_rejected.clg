@@ -1,0 +1,16 @@
+//@ expect: reject
+//@ error: use of dangling observer `b` (its owner `a` is gone)
+//@ reason: `block` is on the Eigen list of calls that return a view of their receiver, so `b` observes `a`; reassigning `a` replaces its storage and `b` dangles.
+//
+// No Eigen headers are needed to reject this: the include is passed through unread and the checker works from the declared types and the facts in facts/eigen.clfacts.
+#include <Eigen/Dense>
+
+void use(Eigen::MatrixXd m) { }
+
+int main() {
+    Eigen::MatrixXd a = Eigen::MatrixXd::Identity(3, 3);
+    Eigen::MatrixXd b = a.block(0, 0, 2, 2);
+    a = Eigen::MatrixXd::Identity(5, 5);
+    use(b);
+    return 0;
+}

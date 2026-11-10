@@ -214,8 +214,8 @@ int main() {
 1 7
 ```
 
-**Evidence, not proof.** `tests/separate/run_cross_file_test.sh` takes the 239 `tests/safety` programs that can be split, cuts each into a library file and a `main` file, and requires the same verdict: 94 rejects stay
-rejects, 141 accepts stay accepts, none is lost. Four are rejected *only* when split, each listed with its reason in `tests/separate/split_equivalence.py`: a `spawn` of a class defined in another file, a `decodeX` outside the declaring file, and a pointer
+**Evidence, not proof.** `tests/separate/run_cross_file_test.sh` takes the 279 `tests/safety` programs that can be split, cuts each into a library file and a `main` file, and requires the same verdict: 122 rejects stay
+rejects, 153 accepts stay accepts, none is lost. Four are rejected *only* when split, each listed with its reason in `tests/separate/split_equivalence.py`: a `spawn` of a class defined in another file, a `decodeX` outside the declaring file, and a pointer
 hint (`//@ptr`) separated from its function. The first is the one to know. The thread rule needs the class to be closed, and a class in another file might have subclasses the compiler cannot see from here:
 
 <!-- example: 12_cross_spawn.clg -->
