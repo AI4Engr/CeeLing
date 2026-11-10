@@ -7,7 +7,7 @@
 > downloadable packs with a lock file (section 13) and the LAPACK test (section 11). Read the sections for the reasoning behind these choices; for behaviour, read the Language Guide
 > ([chapter 11](../language-guide/11-talking-to-cpp.md), [chapter 18](../language-guide/18-status.md)) and the code.
 
-## 1. The problem, stated by what the compiler does today
+## 1. The problem, as it stood when this was written
 
 * The compiler knows a third-party library only through **hard-coded C++ tables** in `library_summary.cpp`: the `std::` names, eight Eigen view methods, a few old `gfx_*` names. A private
   library is therefore *unusable*: every call to it is "unknown function/method", which is rejected (`default-reject`). The only door is `ext_fn`, which takes primitives and
@@ -127,7 +127,7 @@ rejects are measured, not hidden). False accepts are the failure that breaks the
 
 ## 8. Risks and what is not solved
 
-* **A confidently wrong inference is a hole in the guarantee**, exactly like a wrong `ext_fn` line. TODO's Eigen measurement already found one: `Unit`/`UnitX` static factories look like
+* **A confidently wrong inference is a hole in the guarantee**, exactly like a wrong `ext_fn` line. The first Eigen measurement already found one: `Unit`/`UnitX` static factories look like
   "borrows receiver" and are really "borrows a temporary". The conservative-direction rule, the review step and the seeded-bug corpus are the defences; none is a proof.
 * **Facts that live only in documentation** (a method invalidates because the manual says so, with no code path to derive it from) cannot be inferred. They fall to the conservative default or to
   a human declaration.
@@ -138,7 +138,9 @@ rejects are measured, not hidden). False accepts are the failure that breaks the
 * **Effort and certainty.** Phase 0 is certain and small. Phase 1 is well supported by the prototype. Phases 2 and 3 are research-grade: I would not promise them before phase 1 shows
   how much of a real private library the signature facts already settle.
 
-## 9. Decisions needed
+## 9. Decisions (all four were taken)
+
+The questions as they were put, with what was decided.
 
 1. Is `cling-scan` as a **separate, optional LLVM tool** the right boundary (recommended), or should any LLVM be allowed into the compiler build?
 2. Should **unknown type names be rejected** (breaking: programs that today rely on pass-through, such as `auto` and `string_view`, stop compiling until facts exist)? Recommended, but it is the
@@ -146,6 +148,8 @@ rejects are measured, not hidden). False accepts are the failure that breaks the
 3. Which **private-library stand-in** do we use for phase 4? Candidates: one of our own sibling projects' dependencies (webview's C API is too thin), or a small open-source C++ library of the
    kind companies write internally.
 4. Is `trusted include` (tier 2) acceptable as the first shipped step, before any scanner exists?
+
+What was decided: (1) yes, a separate optional tool, `tools/cling-scan`, with a text backend, a libclang backend and a LibTooling backend that give the same verdicts; (2) yes, unknown type names are compile errors since 2026-11-02; (3) the stand-ins used were a private class, jsoncpp's `Json::Value`, yaml-cpp's `YAML::Node` and Eigen's `VectorXd`, and the LAPACK test of section 11 was not built; (4) the trusted tier shipped as `opaque`.
 
 ## 10. The standard library: scan all of it (revised after discussion)
 

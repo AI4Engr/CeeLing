@@ -3,10 +3,10 @@
 ## Build and test
 
 ```bash
-git clone --recursive <repository>
+git clone --recursive https://github.com/AI4Engr/CeeLing && cd CeeLing
 cmake -S . -B build                   # add -G Ninja for a faster build
 cmake --build build --parallel
-ctest --test-dir build                # the whole suite; a few tests skip themselves when g++, WSL, Eigen or jsoncpp are missing
+ctest --test-dir build                # the whole suite (about 6 minutes; cling_scan_probe is the slow one); a few tests skip themselves when g++, WSL, Eigen or jsoncpp are missing
 ```
 
 Useful single runs:
@@ -45,6 +45,6 @@ The language guide is part of the test suite. If a change alters a message or an
 | `facts/` | the library facts shipped inside the compiler (`std`, Eigen, `span`); format in [docs/internals/facts-format.md](docs/internals/facts-format.md) |
 | `tests/` | the safety fixtures and the fact, scan, separate-compilation and debugging tests |
 | `tools/` | `cling-scan` (fact scanners), the fact gauge and probes |
-| `docs/language-guide/` | the guide; `docs/design/` design records |
+| `docs/` | [index](docs/README.md): `language-guide/` the guide (a test suite too), `design/` design records, `internals/` formats |
 
 The pipeline is: parse (`syntax`), desugar closures and struct decoders (`passes`), check, infer pointer kinds (`passes`), emit (`emit`).
