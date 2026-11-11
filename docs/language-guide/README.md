@@ -38,7 +38,7 @@ Every program in the guide is a file in [`examples/`](examples/README.md), compi
 13. [The contract and the threat model](13-contract-and-threats.md): what is promised, row by row, and what is open.
 14. [How the analysis works](14-how-it-works.md): summaries, provenance, death events.
 15. [Case study: cJSON](15-case-study-cjson.md): all 33 published vulnerabilities, in C and in CeeLing.
-16. [Case study: app-cling](16-case-study-app-cling.md): a real program, and the pointers the compiler inferred for it.
+16. [Case study: Pronao](16-case-study-pronao.md): a real program, and the pointers the compiler inferred for it.
 17. [CeeLing, Rust, Circle and profiles](17-comparisons.md): an honest comparison.
 18. [Status and roadmap](18-status.md).
 

@@ -3,7 +3,7 @@
 //@ reason: Regression guard, honestly limited: the bug that prompted it (the container scan took `current`, a string,
 //@ reason: for a same-named `Item current` local of another file merged in through an include, and emitted
 //@ reason: `std::shared_ptr<>(current)`) cannot be reproduced in ONE file, so the test that failed before the fix is
-//@ reason: app-cling's own build (src/app.clg splitFields + cjson-cling's Item); this fixture covers the plain case.
+//@ reason: Pronao's own build (src/app.clg splitFields + cjson-cling's Item); this fixture covers the plain case.
 //@ run: 3 a,bb,ccc x
 
 std::vector<string> split(string text) {

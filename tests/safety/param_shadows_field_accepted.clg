@@ -2,7 +2,7 @@
 //@ run: 2 1 10 4
 //@ reason: A parameter hides a field of the same name, as in C++ and Java. The emitter used to turn EVERY bare name that matches a field of the class into
 //@ reason: `this->name`, even when a parameter of that name is in scope: `choose(vector names) { chosen = names; }` in a class that also has a field `names`
-//@ reason: assigned the FIELD (`this->chosen = this->names`) -- it compiled, ran and silently used the wrong vector (found by app-cling's command list, whose
+//@ reason: assigned the FIELD (`this->chosen = this->names`) -- it compiled, ran and silently used the wrong vector (found by Pronao's command list, whose
 //@ reason: tests caught it only because the answer was wrong). Covers a vector parameter, an int parameter used in an expression, and the constructor.
 
 class Reg {

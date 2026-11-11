@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""What CeeLing did for app-cling, in numbers: app-cling's own scripts/ceeling_stats.sh run on C++ generated now, and scripts/shim_lines.sh.
+"""What CeeLing did for Pronao, in numbers: Pronao's own scripts/ceeling_stats.sh run on C++ generated now, and scripts/shim_lines.sh.
 
-Compiles the modules exactly as 16_app_cling_pointers.py does (it is imported from the file next to this one), then runs the two scripts of the sibling project
-app-cling. Exit status 77 and a message on stderr if app-cling, cjson-cling, the compiler or bash is missing.
+Compiles the modules exactly as 16_pronao_pointers.py does (it is imported from the file next to this one), then runs the two scripts of the sibling project
+app-cling. Exit status 77 and a message on stderr if Pronao, cjson-cling, the compiler or bash is missing.
 """
 import importlib.util
 import os
@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-spec = importlib.util.spec_from_file_location('app_cling_pointers', os.path.join(HERE, '16_app_cling_pointers.py'))
+spec = importlib.util.spec_from_file_location('pronao_pointers', os.path.join(HERE, '16_pronao_pointers.py'))
 pointers = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pointers)
 

@@ -11,7 +11,7 @@ public:
     Window(int h, string t) { handle = h; title = t; }
 };
 
-class WindowBook {                         // like app-cling's WindowBook: a vector of objects and a lookup
+class WindowBook {                         // like Pronao's WindowBook: a vector of objects and a lookup
 public:
     std::vector<Window> items;
     WindowBook() { }

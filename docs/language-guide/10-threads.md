@@ -481,7 +481,7 @@ error[semantic/forbidden-construct]: statement at file scope
   help: File-scope variables are not supported (global mutable state has no owner and no lifetime the checker can reason about). Put the value in a function, or pass it as a parameter or a class field.
 ```
 
-**Where it stops.** The rule is conservative. A tree of objects (cJSON's `Item`, with `weak` parent links) can never be sent: serialize it to a `string` and rebuild it in the thread, as app-cling does with its JSON
+**Where it stops.** The rule is conservative. A tree of objects (cJSON's `Item`, with `weak` parent links) can never be sent: serialize it to a `string` and rebuild it in the thread, as Pronao does with its JSON
 arguments. Data that travels into a thread is a `struct` or a `string`, and the program is arranged around that.
 
 ## `Channel<T>`: the one thing threads share
@@ -578,7 +578,7 @@ int main() {
 2 FILE:/etc/x
 ```
 
-This is why `Channel` exists: the worker needs something only the creating thread may do (in app-cling, reading a file through a policy object that lives on the main thread), so it sends a request that contains its
+This is why `Channel` exists: the worker needs something only the creating thread may do (in Pronao, reading a file through a policy object that lives on the main thread), so it sends a request that contains its
 own reply channel. A send copies, so the sender keeps its value; the edges are deliberate:
 
 <!-- example: 10_channel_copies.clg -->
@@ -942,7 +942,7 @@ int main() {
 - **Anything outside CeeLing's memory:** files, sockets, windows. Two jobs writing one file race as in any language.
 - **The number of threads** beyond the pool's cap, and the order in which queued jobs run.
 - **Hidden state in a trusted type.** Objects are checked by their fields' types; a library type whose internals share state is not looked into.
-- **Correctness.** "No data race" is not "right": app-cling had a file watch that answered before the operating system was watching. Not a memory-safety bug, so the language could not catch it; the test suite did.
+- **Correctness.** "No data race" is not "right": Pronao had a file watch that answered before the operating system was watching. Not a memory-safety bug, so the language could not catch it; the test suite did.
 
 The claim is not larger because proving that no two threads touch the same memory with a write needs exclusivity tracking, a read/write distinction and `Send`/`Sync`-style propagation through every type: the
 lifetime and mutability machinery CeeLing gave up to keep C++ libraries and to write no annotations ([chapter 17](17-comparisons.md) compares with Rust). So the model is narrow instead: threads share nothing
@@ -951,7 +951,7 @@ but a channel. Whoever needs the strongest guarantee, or race freedom for arbitr
 ## What backs it
 
 - **The compiler:** `tests/safety/spawn_*` and `channel_*` programs; accepted ones are compiled *and run*, so "the job really got a copy" is asserted, not read off the source.
-- **app-cling,** a desktop-application framework written in CeeLing: its `src/app.clg` has 7 `spawn(closure Job ...)` expressions (the `proc.run` command, the dialogs, the close confirmation, the notification) and a
+- **Pronao,** a desktop-application framework written in CeeLing: its `src/app.clg` has 7 `spawn(closure Job ...)` expressions (the `proc.run` command, the dialogs, the close confirmation, the notification) and a
   `Channel` carries file requests from workers to the main thread. Its `tests/run_sanitizers.sh` runs the end-to-end tests under AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer, plus *negative
   controls*: the same run against a build with a lock removed must report races, or the clean run would prove nothing. (Not re-run for this guide.)
 - **cJSON-cling** has `tests/run_threads.sh`: eight threads each parse, print and drop their own documents through the pooled port.

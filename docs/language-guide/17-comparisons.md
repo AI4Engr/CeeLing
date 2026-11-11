@@ -240,7 +240,7 @@ A common report in that discussion is that the borrow checker itself makes sense
 
 ### Is an inferred `shared_ptr` just garbage collection?
 
-By one common definition reference counting is a kind of garbage collection, and the pointers CeeLing infers include `shared_ptr`. What it does: `unique_ptr` when a single owner can be shown, `shared_ptr` when it cannot ("ambiguous reads as shared", [chapter 4](04-ownership.md)), `weak_ptr` on a cycle. Destruction is still deterministic, there is no tracing and no pause. The cost is real, though: in app-cling 87% of declarations are shared ([chapter 16](16-case-study-app-cling.md)), so for a program shaped like that the model is closer to reference counting than to single ownership. The compiler does not yet print this count for a program; it is on the TODO list.
+By one common definition reference counting is a kind of garbage collection, and the pointers CeeLing infers include `shared_ptr`. What it does: `unique_ptr` when a single owner can be shown, `shared_ptr` when it cannot ("ambiguous reads as shared", [chapter 4](04-ownership.md)), `weak_ptr` on a cycle. Destruction is still deterministic, there is no tracing and no pause. The cost is real, though: in Pronao 87% of declarations are shared ([chapter 16](16-case-study-pronao.md)), so for a program shaped like that the model is closer to reference counting than to single ownership. The compiler does not yet print this count for a program; it is on the TODO list.
 
 ### Is it the first safe dialect of a C-like language?
 

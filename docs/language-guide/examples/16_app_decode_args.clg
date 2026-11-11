@@ -7,7 +7,7 @@
 #include "cjson_api.clh"
 #include "cjson_parse.clh"
 
-struct OpenArgs {                      // the shape of one command's argument (app-cling's window.open has this shape)
+struct OpenArgs {                      // the shape of one command's argument (Pronao's window.open has this shape)
 public:
     string title;
     int width;

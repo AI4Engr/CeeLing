@@ -1,12 +1,12 @@
-# 16. Case study: app-cling
+# 16. Case study: Pronao
 
 The cJSON chapter tested the safety claims on a library with a published bug list. This chapter looks at a different kind of program: an application, written the way a CeeLing user would write one, with objects, closures, threads and many files. The question is not "how many bugs does it remove" but "what does the language do for a real program, what does it do to it, and where do you see the cost".
 
-**app-cling** (`C:\project\app-cling`) is a framework for desktop applications. A window shows a web page (the system WebView, WebView2 on Windows); the page calls named *commands*, and the commands are CeeLing code: reading a file the program has allowed, running a program from a fixed list, opening a second window, watching a folder, showing a dialog. The page never touches the operating system. It sends `["fs.read", {"path": "notes.txt"}]` and gets a JSON reply or an error. Its own README calls it a prototype, and that is the right way to read the numbers below: this is a program written to test the language, not a product with users.
+**Pronao** ([github.com/AI4Engr/pronao](https://github.com/AI4Engr/pronao), a sibling folder `pronao` next to this repository) is a framework for desktop applications. A window shows a web page (the system WebView, WebView2 on Windows); the page calls named *commands*, and the commands are CeeLing code: reading a file the program has allowed, running a program from a fixed list, opening a second window, watching a folder, showing a dialog. The page never touches the operating system. It sends `["fs.read", {"path": "notes.txt"}]` and gets a JSON reply or an error. Its own README calls it a prototype, and that is the right way to read the numbers below: this is a program written to test the language, not a product with users.
 
 ```
 page (JavaScript)  ->  native layer shim/ (C++, trusted)  ->  CeeLing program src/*.clg (checked)
- cling.fs.read(..)       queue, window, OS primitives          dispatcher, file policy, every decision
+ pronao.fs.read(..)       queue, window, OS primitives          dispatcher, file policy, every decision
 ```
 
 Two layers, and the line between them is the point:
@@ -14,9 +14,9 @@ Two layers, and the line between them is the point:
 - **`src/`** is CeeLing, checked by the compiler: the dispatcher, the file policy (what path a page may reach), the list of programs it may start, window bookkeeping, settings, menus, dialogs.
 - **`shim/`** is hand-written C++, not checked by anything: it opens the window, queues calls, opens files and runs programs, as small primitives taking and returning numbers, strings and vectors of those. The project's rule is that a decision never lives here.
 
-The sizes, measured by the project's own scripts on the code as it stands (the generator compiles the modules, then runs `scripts/ceeling_stats.sh` on the result and `scripts/shim_lines.sh`; it needs the sibling projects `app-cling` and `cJSON-cling`):
+The sizes, measured by the project's own scripts on the code as it stands (the generator compiles the modules, then runs `scripts/ceeling_stats.sh` on the result and `scripts/shim_lines.sh`; it needs the sibling projects `pronao` and `cJSON-cling`):
 
-<!-- command: 16_app_cling_stats.py -->
+<!-- command: 16_pronao_stats.py -->
 ```
 $ scripts/ceeling_stats.sh <work directory>
 CeeLing source (src/*.clg): 6345 lines of code (comments and blank lines left out)
@@ -40,7 +40,7 @@ That is the first honest number about what CeeLing does for a real program: it c
 
 Nothing in the source looks unusual if you have read Java. Here is a command, `fs.read`, as it is registered. Just above it, `FileGate files = gate;` copies the application's file policy into a local; the closure captures that local and a number, by value:
 
-<!-- source: app-cling/src/app.clg "closure Command [files, maxReadBytes] (Item args)" 12 -->
+<!-- source: pronao/src/app.clg "closure Command [files, maxReadBytes] (Item args)" 12 -->
 ```
         command("fs.read", closure Command [files, maxReadBytes] (Item args) {
             string path = requiredString(args, "path");
@@ -61,7 +61,7 @@ Nothing in the source looks unusual if you have read Java. Here is a command, `f
 
 **Errors are values with a code.** The only thing CeeLing code can throw is a string. By convention it is `code: text`, and the dispatcher turns it into the page's `{code, message}`:
 
-<!-- source: app-cling/src/core.clg "string errorCodeOf(string thrown) {" -->
+<!-- source: pronao/src/core.clg "string errorCodeOf(string thrown) {" -->
 ```
 string errorCodeOf(string thrown) {
     int n = errorPrefixLength(thrown);
@@ -76,7 +76,7 @@ The dispatcher calls the command inside a `try`, catches the string, and answers
 
 **A command that acts on "its" window** captures a small shared object (`CallContext who = dispatcher.caller;`, just above it), not a global. `window.open` also reads its arguments into a `struct` that the compiler decodes from the JSON itself ([chapter 3](03-values-and-containers.md) describes structs):
 
-<!-- source: app-cling/src/windows.clg "struct OpenWindowArgs {" -->
+<!-- source: pronao/src/windows.clg "struct OpenWindowArgs {" -->
 ```
 struct OpenWindowArgs {
 public:
@@ -95,7 +95,7 @@ public:
 };
 ```
 
-<!-- source: app-cling/src/app.clg "closure Command [who, book, max] (Item args)" 14 -->
+<!-- source: pronao/src/app.clg "closure Command [who, book, max] (Item args)" 14 -->
 ```
         command("window.open", closure Command [who, book, max] (Item args) {
             OpenWindowArgs given = readOpenWindowArgs(args);
@@ -114,7 +114,7 @@ public:
             ...
 ```
 
-`decodeOpenWindowArgs` is not written anywhere in the program. A call to `decode<StructName>` makes the compiler write the decoder, which checks the type of each field and names the path of a wrong one. `16_app_decode_args.clg` is the same idea with a stand-in for the page (it needs `cJSON-cling`, as app-cling does):
+`decodeOpenWindowArgs` is not written anywhere in the program. A call to `decode<StructName>` makes the compiler write the decoder, which checks the type of each field and names the path of a wrong one. `16_app_decode_args.clg` is the same idea with a stand-in for the page (it needs `cJSON-cling`, as Pronao does):
 
 <!-- example: 16_app_decode_args.clg -->
 ```
@@ -122,7 +122,7 @@ public:
 #include "cjson_api.clh"
 #include "cjson_parse.clh"
 
-struct OpenArgs {                      // the shape of one command's argument (app-cling's window.open has this shape)
+struct OpenArgs {                      // the shape of one command's argument (Pronao's window.open has this shape)
 public:
     string title;
     int width;
@@ -163,7 +163,7 @@ invalid_argument: `width` must be a number
 
 **A command that takes long** starts a thread. `spawn` takes a closure; what it may capture is plain values only, so the program copies what it needs into locals first, and the worker answers the page itself:
 
-<!-- source: app-cling/src/app.clg "spawn(closure Job [exe, argv, cwd, env, timeoutMs, maxBytes, id, handle] () {" 8 -->
+<!-- source: pronao/src/app.clg "spawn(closure Job [exe, argv, cwd, env, timeoutMs, maxBytes, id, handle] () {" 8 -->
 ```
             spawn(closure Job [exe, argv, cwd, env, timeoutMs, maxBytes, id, handle] () {
                 string out = "";
@@ -180,7 +180,7 @@ invalid_argument: `width` must be a number
 
 **A worker that needs the main thread** sends a request on a `Channel` and waits for the reply on another. The main loop answers from a *pump*, a closure it runs when a worker wakes it. The product has the mechanism (`Pump`, `onPump`, `wakeMain` in `later.clg` and `app.clg`); the product's own commands do not use a `Channel` yet, and the test program does:
 
-<!-- source: app-cling/tests/headless_main.clg "closure Pump [toMain] (FileGate gate)" 12 -->
+<!-- source: pronao/tests/headless_main.clg "closure Pump [toMain] (FileGate gate)" 12 -->
 ```
     app.onPump("files", closure Pump [toMain] (FileGate gate) {
         while (toMain.wait(0)) {
@@ -233,7 +233,7 @@ int main() {
         }
         done.send("worker got: " + text);
     });
-    if (toMain.wait(5000)) {          // in app-cling this loop is a Pump that the main loop runs when a worker wakes it
+    if (toMain.wait(5000)) {          // in Pronao this loop is a Pump that the main loop runs when a worker wakes it
         Request r = toMain.take();
         r.reply.send(gate.read(r.path));
     }
@@ -256,7 +256,7 @@ None of this source contains a pointer type, a `delete`, a `std::move`, a `.get(
 
 The source never says who owns what. For every class field, every container of objects, every method result and every object a closure captures, the compiler chose `unique_ptr` (one owner), `shared_ptr` (several) or `weak_ptr` (looks, does not own). The rules and their purpose are in [chapter 4](04-ownership.md); the point of this section is what they did on a program with 19 files.
 
-The table is produced by `16_app_cling_pointers.py`, which does what `app-cling/scripts/build.sh` does: runs the pointer-demands step ([chapter 12](12-many-files.md)), compiles each module to a header and a `.cpp`, and reads the pointer kinds out of the generated C++. A row is one declaration, or a group of identical ones (the 13 closures that all capture `files` are one row). Modules are in the project's build order, then the four modules of `cJSON-cling` that the program links.
+The table is produced by `16_pronao_pointers.py`, which does what `pronao/scripts/build.sh` does: runs the pointer-demands step ([chapter 12](12-many-files.md)), compiles each module to a header and a `.cpp`, and reads the pointer kinds out of the generated C++. A row is one declaration, or a group of identical ones (the 13 closures that all capture `files` are one row). Modules are in the project's build order, then the four modules of `cJSON-cling` that the program links.
 
 **How to read the "reason" column.** The compiler records why it chose a kind, but it prints almost nothing of it. The comment at the top of a generated `.cpp` that older documents mention exists only in the legacy generator, and it lists the first pass, before the later rules promote things. The one place the final reason is written out is the demands file the build uses (`--ptr-demands-out`), and only for fields of other modules' classes. So each reason starts with a word that says where it comes from:
 
@@ -270,7 +270,7 @@ The table is produced by `16_app_cling_pointers.py`, which does what `app-cling/
 | `default` | no rule made it shared; unique is where the analysis starts |
 | `none` | the compiler prints no reason and the script found no pattern |
 
-<!-- command: 16_app_cling_pointers.py -->
+<!-- command: 16_pronao_pointers.py -->
 ```
 | module | class | member | kind | reason |
 |---|---|---|---|---|
@@ -347,12 +347,12 @@ Members that are unique when their module is compiled alone and shared once the 
 
 Declarations behind the table (a row for methods, free functions or captures can stand for several):
                                                   unique shared   weak
-  app-cling    fields and container elements           6     32      0
-  app-cling    results of methods                     12      6      0
-  app-cling    results of free functions               1      3      0
-  app-cling    objects captured by closures            0     51      0
-  app-cling    results of closure methods              0     33      0
-  app-cling    all declarations                       19    125      0
+  pronao       fields and container elements           6     32      0
+  pronao       results of methods                     12      6      0
+  pronao       results of free functions               1      3      0
+  pronao       objects captured by closures            0     51      0
+  pronao       results of closure methods              0     33      0
+  pronao       all declarations                       19    125      0
   cjson-cling  fields and container elements           0      3      1
   cjson-cling  results of methods                      0      0      0
   cjson-cling  results of free functions               6     40      0
@@ -360,9 +360,9 @@ Declarations behind the table (a row for methods, free functions or captures can
   cjson-cling  results of closure methods              0      0      0
   cjson-cling  all declarations                        6     43      1
 
-app-cling declares 36 classes and 8 structs. A struct is stored by value, so it has no pointer kind to choose and no row in the table.
+Pronao declares 36 classes and 8 structs. A struct is stored by value, so it has no pointer kind to choose and no row in the table.
 
-Every pointer token in the generated .cpp files of the 19 app-cling modules (the count of scripts/ceeling_stats.sh), by where it stands:
+Every pointer token in the generated .cpp files of the 19 Pronao modules (the count of scripts/ceeling_stats.sh), by where it stands:
                                                    unique shared   weak
   field or container element in a class body            6     32      0
   captured object in a closure class                    0     51      0
@@ -372,7 +372,7 @@ Every pointer token in the generated .cpp files of the 19 app-cling modules (the
   all                                                  81    590      0
 Parameters are not listed in the table: a parameter of class type follows the kind of its class where it is declared.
 
-How the two counts meet (app-cling modules only; each class is written into its own .cpp as well as its .h, and a method result appears in the class and in the definition):
+How the two counts meet (Pronao modules only; each class is written into its own .cpp as well as its .h, and a method result appears in the class and in the definition):
   unique  fields, elements and captures: table   6, .cpp   6   results: 2 x (methods + closure methods) + free functions =  25, .cpp  25   agree
   shared  fields, elements and captures: table  83, .cpp  83   results: 2 x (methods + closure methods) + free functions =  81, .cpp  81   agree
   weak    fields, elements and captures: table   0, .cpp   0   results: 2 x (methods + closure methods) + free functions =   0, .cpp   0   agree
@@ -398,7 +398,7 @@ public:
     Window(int h, string t) { handle = h; title = t; }
 };
 
-class WindowBook {                         // like app-cling's WindowBook: a vector of objects and a lookup
+class WindowBook {                         // like Pronao's WindowBook: a vector of objects and a lookup
 public:
     std::vector<Window> items;
     WindowBook() { }
@@ -478,7 +478,7 @@ public:
 
 The book's elements and its `get` result are `shared_ptr`; the journal's elements are `unique_ptr`, because `entries[i].text` is read where it stands. The difference is one line in the source and no annotation.
 
-**The command table is the typical case.** `16_app_command_table.clg` is app-cling's `Dispatcher` and a few commands in miniature:
+**The command table is the typical case.** `16_app_command_table.clg` is Pronao's `Dispatcher` and a few commands in miniature:
 
 <!-- example: 16_app_command_table.clg -->
 ```
@@ -580,7 +580,7 @@ The vector of commands is a vector of `shared_ptr` because the dispatcher copies
 
 **A few are unique, and for the plain reason that one place owns them.** `App.dispatcher`, `laters`, `pumps` and `drops` have one owner. So do `SettingsStore.gate` and `WindowMemory.gate`: each of those classes makes its *own* `FileGate` (`gate = new FileGate();`), because the settings file must not be reachable through the page's gate. The same field name in `DropRules` is shared, because that class is given the application's gate (`gate = files;`) and so is `App.gate`. One name, four classes, two kinds, and the difference is visible in the source: who made the object. The results of the 11 `FileGate` methods and of `Dispatcher.handle` are unique because each returns a fresh object to a single caller.
 
-**Only one `weak_ptr` exists in the whole program, and it is not in app-cling.** It is `Item.prev` in the JSON library, which carries an explicit `//@ptr weak Item.prev` hint. Because `Item` has a weak field, the compiler makes every handle to an `Item` shared (the rule's own words are in the table), which is why every free function that returns a JSON tree is shared. `16_app_weak_prev.clg` shows the shape in a few lines; it uses the naming rule (a field called `prev` next to `next`) instead of a hint:
+**Only one `weak_ptr` exists in the whole program, and it is not in Pronao.** It is `Item.prev` in the JSON library, which carries an explicit `//@ptr weak Item.prev` hint. Because `Item` has a weak field, the compiler makes every handle to an `Item` shared (the rule's own words are in the table), which is why every free function that returns a JSON tree is shared. `16_app_weak_prev.clg` shows the shape in a few lines; it uses the naming rule (a field called `prev` next to `next`) instead of a hint:
 
 <!-- example: 16_app_weak_prev.clg -->
 ```
@@ -654,9 +654,9 @@ public:
 };
 ```
 
-app-cling's own classes have no back pointer, by design. The one reference cycle that did exist (the dispatcher owned its commands and the window commands captured the dispatcher, so it leaked at exit) was found by LeakSanitizer, not by the compiler, and removed by moving the shared state into two small objects, `CommandRules` and `CallContext`, that the commands hold instead of the dispatcher:
+Pronao's own classes have no back pointer, by design. The one reference cycle that did exist (the dispatcher owned its commands and the window commands captured the dispatcher, so it leaked at exit) was found by LeakSanitizer, not by the compiler, and removed by moving the shared state into two small objects, `CommandRules` and `CallContext`, that the commands hold instead of the dispatcher:
 
-<!-- source: app-cling/src/dispatch.clg "CommandRules rules;" -->
+<!-- source: pronao/src/dispatch.clg "CommandRules rules;" -->
 ```
     CommandRules rules;
     CallContext caller;
@@ -683,7 +683,7 @@ CeeLing does not detect cycles ([chapter 13](13-contract-and-threats.md), row 12
 
 The one `Failure` closure is how a worker that throws still answers the page. It captures the call id and the window handle, both plain values:
 
-<!-- source: app-cling/src/dispatch.clg "onJobFailure(closure Failure [id, appHandle] (string message) {" 4 -->
+<!-- source: pronao/src/dispatch.clg "onJobFailure(closure Failure [id, appHandle] (string message) {" 4 -->
 ```
                 onJobFailure(closure Failure [id, appHandle] (string message) {
                     replyError(appHandle, id, errorCodeOf(message), errorTextOf(message));
@@ -696,7 +696,7 @@ What this does and does not give you is the threat model of [chapter 10](10-thre
 
 ## The run-time checks, counted and priced
 
-The compiler inserted **520** checked subscripts (`cling::at`, bounds) and **612** checked dereferences (`cling::nn`, null), and 67 `std::move` calls where ownership passes. app-cling is built with both checks on. A check names the `.clg` line and stops the program; it is `abort()`, not an exception ([chapter 7](07-run-time-checks.md)).
+The compiler inserted **520** checked subscripts (`cling::at`, bounds) and **612** checked dereferences (`cling::nn`, null), and 67 `std::move` calls where ownership passes. Pronao is built with both checks on. A check names the `.clg` line and stops the program; it is `abort()`, not an exception ([chapter 7](07-run-time-checks.md)).
 
 What a failed check looks like, in a command that trusts a number from the page (`16_app_index_abort.clg`; the page sent 3 and the list has 2 entries). The program stops at the line, with the index and the size; the first call, which was in range, had already answered:
 
@@ -742,7 +742,7 @@ The program is 19 files, not one. (The project's own document says 17; it was wr
 
 The list of modules, in the order each comes after the ones it includes, is one line of the project (`scripts/modules.sh`):
 
-<!-- source: app-cling/scripts/modules.sh "APP_MODULES=" 1 -->
+<!-- source: pronao/scripts/modules.sh "APP_MODULES=" 1 -->
 ```
 APP_MODULES="text core files assets settings links placement menu dispatch fscommands dialogs notify programs later watches windows theme drops app"
     ...
@@ -758,7 +758,7 @@ Everything the compiler does not see is the native layer and what it calls. The 
 
 Here are two of the 72, as `files.clg` declares them. The `ref string out` is the one parameter form `ext_fn` allows, an out-parameter; the compiler takes the rest on trust:
 
-<!-- source: app-cling/src/files.clg "ext_fn int app_fs_read(int h, int maxBytes, ref string out);" 1 -->
+<!-- source: pronao/src/files.clg "ext_fn int app_fs_read(int h, int maxBytes, ref string out);" 1 -->
 ```
 ext_fn int app_fs_read(int h, int maxBytes, ref string out);
     ...

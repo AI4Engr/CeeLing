@@ -48,7 +48,7 @@ A feature that has no C++ problem behind it (a convenience such as `enum` or `na
 ## Chapters
 
 `01-why-ceeling` `02-language` `03-values-and-containers` `04-ownership` `05-moves` `06-dangling-references` `07-run-time-checks` `08-sealed-escape-hatches` `09-closures` `10-threads`
-`11-talking-to-cpp` `12-many-files` `13-contract-and-threats` `14-how-it-works` `15-case-study-cjson` `16-case-study-app-cling` `17-comparisons` `18-status`, each `.md`, in this folder. Link to chapters by these names.
+`11-talking-to-cpp` `12-many-files` `13-contract-and-threats` `14-how-it-works` `15-case-study-cjson` `16-case-study-pronao` `17-comparisons` `18-status`, each `.md`, in this folder. Link to chapters by these names.
 An example's name starts with its chapter's number: `07_bounds_read.clg`.
 
 ## Before a chapter is finished

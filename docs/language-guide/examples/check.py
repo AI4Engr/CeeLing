@@ -122,6 +122,8 @@ def project_dir(name):
     env = os.environ.get('GUIDE_PROJECT_' + name.upper().replace('-', '_'))
     parent = os.path.dirname(REPO)
     candidates = [env, os.path.join(parent, name)]
+    if name.lower() == 'pronao':
+        candidates.append(os.path.join(parent, 'app-cling'))      # the project's earlier folder name
     candidates += [os.path.join(parent, d) for d in sorted(os.listdir(parent)) if d.lower() == name.lower()]   # a clone is cJSON-cling
     for p in candidates:
         if p and os.path.isdir(p):
@@ -451,6 +453,10 @@ def source_piece(rel, start, limit=0):
     """A piece of a real source file of a sibling project (<!-- source: cjson-cling/src/cjson_item.clg "Item overwrite" -->): from the first line that contains the text to the line
     that closes it (a line holding just the opening line's indentation and a closing brace). None if the project is not here; '' if the text is not found."""
     path = os.path.join(os.path.dirname(REPO), rel)
+    if not os.path.isfile(path):
+        project, _, rest = rel.partition('/')
+        root = project_dir(project)                  # a folder called cJSON-cling or app-cling is found under its name in the marker
+        path = os.path.join(root, rest) if root else path
     if not os.path.isfile(path):
         return None
     lines = read(path).split('\n')

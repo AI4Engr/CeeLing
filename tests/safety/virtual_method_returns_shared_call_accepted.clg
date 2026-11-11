@@ -4,7 +4,7 @@
 //@ reason: (`return firstChild(args);`). The method's return type was inferred unique_ptr, so the generated
 //@ reason: C++ did not compile. A virtual / override method's object parameters and return are now always
 //@ reason: shared: the base declaration and every override must have the identical C++ signature, which
-//@ reason: per-body inference cannot guarantee across a hierarchy. (Found by app-cling's command table.)
+//@ reason: per-body inference cannot guarantee across a hierarchy. (Found by Pronao's command table.)
 
 class Item {
 public:

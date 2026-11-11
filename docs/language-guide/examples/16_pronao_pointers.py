@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""The pointers the compiler inferred for app-cling, as a table.
+"""The pointers the compiler inferred for Pronao, as a table.
 
-Compiles the program's modules the way app-cling's scripts/build.sh does (pointer-demands step first, then every module to .cpp and .h with --pool-shared),
+Compiles the program's modules the way Pronao's scripts/build.sh does (pointer-demands step first, then every module to .cpp and .h with --pool-shared),
 reads the generated headers, and lists every class field, container element, method result, free-function result and closure capture that became unique_ptr,
-shared_ptr or weak_ptr, with the reason. Needs the sibling projects app-cling and cjson-cling (next to this repository, or GUIDE_PROJECT_APP_CLING /
+shared_ptr or weak_ptr, with the reason. Needs the sibling projects Pronao and cjson-cling (next to this repository, or GUIDE_PROJECT_PRONAO /
 GUIDE_PROJECT_CJSON_CLING) and the compiler (CLING, else build/cling.exe); exit status 77 and a message on stderr if one is missing.
 
 What the compiler says and what it does not: it prints its final reason for a member in one place only, the demands file (--ptr-demands-out), and only for the
@@ -39,12 +39,15 @@ def missing(message):
 
 
 def locate():
-    app = os.environ.get('GUIDE_PROJECT_APP_CLING') or os.path.join(os.path.dirname(REPO), 'app-cling')
+    parent = os.path.dirname(REPO)
+    app = os.environ.get('GUIDE_PROJECT_PRONAO') or next(
+        (os.path.join(parent, d) for d in ('pronao', 'Pronao', 'app-cling') if os.path.isdir(os.path.join(parent, d))),
+        os.path.join(parent, 'pronao'))
     cjson = os.environ.get('GUIDE_PROJECT_CJSON_CLING') or next(
         (os.path.join(os.path.dirname(REPO), d) for d in sorted(os.listdir(os.path.dirname(REPO))) if d.lower() == 'cjson-cling'),
         os.path.join(os.path.dirname(REPO), 'cjson-cling'))
     if not os.path.isfile(os.path.join(app, 'scripts', 'modules.sh')):
-        missing('project app-cling not found (set GUIDE_PROJECT_APP_CLING)')
+        missing('project Pronao not found (set GUIDE_PROJECT_PRONAO)')
     if not os.path.isfile(os.path.join(cjson, 'src', 'cjson_item.clg')):
         missing('project cjson-cling not found (set GUIDE_PROJECT_CJSON_CLING)')
     cling = os.environ.get('CLING') or ''
@@ -393,7 +396,7 @@ def table_rows(info):
         return 'rule: class %s has a weak field (%s), so every handle to an instance of %s is shared (compiler: "instances of this class participate in weak back-references")' % (typ, weak_targets[typ], typ)
 
     def group_of(m):
-        return 'app-cling' if m in info['modules'] else 'cjson-cling'
+        return 'pronao' if m in info['modules'] else 'cjson-cling'
 
     for m in info['everything']:
         g = group_of(m)
@@ -556,8 +559,8 @@ def main():
         out.append('| module | class | member | kind | reason |')
         out.append('|---|---|---|---|---|')
         order = {m: i for i, m in enumerate(info['everything'])}
-        order.update({m: i - 100 for i, m in enumerate(info['modules'])})      # (app-cling's modules first, in the build's order, then the library's)
-        for g in ('app-cling', 'cjson-cling'):
+        order.update({m: i - 100 for i, m in enumerate(info['modules'])})      # (Pronao's modules first, in the build's order, then the library's)
+        for g in ('pronao', 'cjson-cling'):
             for row in sorted([r for r in rows if r[0] == g], key=lambda r: (order[r[1]], r[2].startswith('('), r[2], r[3])):
                 out.append('| %s | %s | %s | %s | %s |' % (row[1], row[2], row[3], KIND[row[4]], row[5]))
         out.append('')
@@ -567,7 +570,7 @@ def main():
         out.append('')
         out.append('Declarations behind the table (a row for methods, free functions or captures can stand for several):')
         out.append('  %-12s %-34s %6s %6s %6s' % ('', '', 'unique', 'shared', 'weak'))
-        for g in ('app-cling', 'cjson-cling'):
+        for g in ('pronao', 'cjson-cling'):
             for what, label in (('member', 'fields and container elements'), ('result', 'results of methods'), ('free', 'results of free functions'), ('capture', 'objects captured by closures'), ('closure result', 'results of closure methods')):
                 c = {k: count[(g, what, k)] for k in ('unique', 'shared', 'weak')}
                 out.append('  %-12s %-34s %6d %6d %6d' % (g, label, c['unique'], c['shared'], c['weak']))
@@ -579,9 +582,9 @@ def main():
             classes += c
             structs += s
         out.append('')
-        out.append('app-cling declares %d classes and %d structs. A struct is stored by value, so it has no pointer kind to choose and no row in the table.' % (classes, structs))
+        out.append('Pronao declares %d classes and %d structs. A struct is stored by value, so it has no pointer kind to choose and no row in the table.' % (classes, structs))
         out.append('')
-        out.append('Every pointer token in the generated .cpp files of the %d app-cling modules (the count of scripts/ceeling_stats.sh), by where it stands:' % len(info['modules']))
+        out.append('Every pointer token in the generated .cpp files of the %d Pronao modules (the count of scripts/ceeling_stats.sh), by where it stands:' % len(info['modules']))
         out.append('  %-48s %6s %6s %6s' % ('', 'unique', 'shared', 'weak'))
         total = collections.Counter()
         for where, c in parts.items():
@@ -590,11 +593,11 @@ def main():
         out.append('  %-48s %6d %6d %6d' % ('all', total['unique'], total['shared'], total['weak']))
         out.append('Parameters are not listed in the table: a parameter of class type follows the kind of its class where it is declared.')
         out.append('')
-        out.append('How the two counts meet (app-cling modules only; each class is written into its own .cpp as well as its .h, and a method result appears in the class and in the definition):')
+        out.append('How the two counts meet (Pronao modules only; each class is written into its own .cpp as well as its .h, and a method result appears in the class and in the definition):')
         fields_cap = parts['field or container element in a class body'] + parts['captured object in a closure class']
         for k in ('unique', 'shared', 'weak'):
-            mem = count[('app-cling', 'member', k)] + count[('app-cling', 'capture', k)]
-            res = 2 * (count[('app-cling', 'result', k)] + count[('app-cling', 'closure result', k)]) + count[('app-cling', 'free', k)]
+            mem = count[('pronao', 'member', k)] + count[('pronao', 'capture', k)]
+            res = 2 * (count[('pronao', 'result', k)] + count[('pronao', 'closure result', k)]) + count[('pronao', 'free', k)]
             out.append('  %-7s fields, elements and captures: table %3d, .cpp %3d   results: 2 x (methods + closure methods) + free functions = %3d, .cpp %3d   %s' % (
                 k, mem, fields_cap[k], res, parts['result type (declaration or definition)'][k],
                 'agree' if (mem == fields_cap[k] and res == parts['result type (declaration or definition)'][k]) else 'DIFFER'))

@@ -125,7 +125,7 @@ cling 12_counter_main.clg --cpp 12_counter_main.cpp
 g++ -std=c++17 12_counter_main.cpp 12_counter_lib.cpp -o program
 ```
 
-The checker does exactly this for every example of this chapter. A real project does it with a script: app-cling's `scripts/build.sh` transpiles each module to its own `.cpp` and `.h` in parallel, compiles them in
+The checker does exactly this for every example of this chapter. A real project does it with a script: Pronao's `scripts/build.sh` transpiles each module to its own `.cpp` and `.h` in parallel, compiles them in
 parallel, and links them with the native layer in `shim/`.
 
 ## The safety checks are the same across files
@@ -333,10 +333,10 @@ public:
 ```
 
 Only members the file really reaches are written, so a field that merely shares a name with another class's is not demanded. Making one member shared can make another needed, so a driver repeats the rounds until
-the demands stop changing: app-cling's `scripts/pointer_demands.sh` compiles every module to write, merges, then compiles to read, a few rounds at most. Without either flag the output is byte for byte what it
+the demands stop changing: Pronao's `scripts/pointer_demands.sh` compiles every module to write, merges, then compiles to read, a few rounds at most. Without either flag the output is byte for byte what it
 was before. `tests/separate/run_demands_test.sh` (a CTest test) checks all three: the pair fails without demands, fits with them, and a demand that names nothing changes nothing.
 
-**Where it stops.** This fixes the *fit* of the generated files, not the safety analysis, which is still per file. Splitting a program into modules can change which copies the emitter inserts (app-cling's split
+**Where it stops.** This fixes the *fit* of the generated files, not the safety analysis, which is still per file. Splitting a program into modules can change which copies the emitter inserts (Pronao's split
 removed one defensive `std::string(...)` copy in `Watches::flush`, because name-matched call chains collide less in a smaller file).
 
 ## Generated JSON decoders: `decodeX(item)`
@@ -732,7 +732,7 @@ int main() {
 Error: error[semantic/struct-json-external]: `decodeArgs` is called, but struct `Args` is declared in another file. the decoder is generated in the file that declares the struct (call decodeArgs there, or declare a function `Args decodeArgs(Item j)` that calls it)
 ```
 
-The fix is the one the message names: a function next to the struct that calls the decoder, which the rest of the program calls instead. app-cling does this for every argument struct
+The fix is the one the message names: a function next to the struct that calls the decoder, which the rest of the program calls instead. Pronao does this for every argument struct
 ("a struct is decoded in the file that declares it: other files call this"):
 
 <!-- example: 12_decode_types.clg -->
@@ -766,7 +766,7 @@ int main() {
 /tmp
 ```
 
-<!-- source: app-cling/src/dialogs.clg "DialogArgs readDialogArgs" -->
+<!-- source: pronao/src/dialogs.clg "DialogArgs readDialogArgs" -->
 ```
 DialogArgs readDialogArgs(Item args) {
     return decodeDialogArgs(args);
@@ -783,4 +783,4 @@ DialogArgs readDialogArgs(Item args) {
 | `#include "x.clh"`, `--cpp x.h`, the pointer-demand flags | only the compiler |
 | `decodeX(item)` | the names of cJSON-cling (or a stand-in that defines them, as `12_mini_item.clg` does) |
 | `12_decode_cjson.clg` and the cJSON examples of [chapter 15](15-case-study-cjson.md) | the cJSON-cling project, built by its `tests/build.sh` |
-| `scripts/pointer_demands.sh` and `scripts/build.sh` | app-cling, as drivers for a many-module project |
+| `scripts/pointer_demands.sh` and `scripts/build.sh` | Pronao, as drivers for a many-module project |

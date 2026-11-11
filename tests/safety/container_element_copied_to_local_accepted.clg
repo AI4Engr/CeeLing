@@ -4,7 +4,7 @@
 //@ reason: The elements were inferred unique_ptr (the only push was of a parameter), and a unique_ptr cannot be
 //@ reason: copied out: the generated C++ did not compile. Now a local initialised from `v[i]` makes the
 //@ reason: container's elements shared, promotes the local, and promotes the values pushed into that container.
-//@ reason: (Found by app-cling's command table: a registry of handlers is exactly this shape.)
+//@ reason: (Found by Pronao's command table: a registry of handlers is exactly this shape.)
 
 class Cmd {
 public:

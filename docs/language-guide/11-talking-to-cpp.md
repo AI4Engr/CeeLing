@@ -81,7 +81,7 @@ double mySqrt(double x) { return std::sqrt(x); }
 ```
 
 You build it the way you build any C++ project: transpile every `.clg`, then compile and link all the `.cpp` together (`cling main.clg --cpp main.cpp`, `g++ main.cpp shim.cpp -o program`). A real
-project has many modules and one shim layer; app-cling's `scripts/build.sh` does exactly this, transpiling each module to its own `.cpp` and `.h` and linking them with the C++ in `shim/`.
+project has many modules and one shim layer; Pronao's `scripts/build.sh` does exactly this, transpiling each module to its own `.cpp` and `.h` and linking them with the C++ in `shim/`.
 
 Without the declaration the call is refused, because CeeLing has no fact about it. `std::sqrt` is C++'s own, and it is refused the same way:
 
@@ -329,7 +329,7 @@ int remember(const std::vector<int>& data) { kept = &data; return 0; }
 int firstRemembered() { return (*kept)[0]; }
 ```
 
-It is not run by the checker, only compiled and linked. This is the same hole `unsafe` is in Rust, and just as real; the difference is the size of the list. In app-cling the checked code reaches the operating system
+It is not run by the checker, only compiled and linked. This is the same hole `unsafe` is in Rust, and just as real; the difference is the size of the list. In Pronao the checked code reaches the operating system
 only through its `ext_fn` declarations (the head of each `.clg` file, with `shim/app_native.h` the C++ side), so the trusted surface is a list you can read, not the whole program.
 
 ## A library nobody wrote facts for: `--facts` and `opaque`

@@ -34,7 +34,7 @@ int main() {
         }
         done.send("worker got: " + text);
     });
-    if (toMain.wait(5000)) {          // in app-cling this loop is a Pump that the main loop runs when a worker wakes it
+    if (toMain.wait(5000)) {          // in Pronao this loop is a Pump that the main loop runs when a worker wakes it
         Request r = toMain.take();
         r.reply.send(gate.read(r.path));
     }

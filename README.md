@@ -169,7 +169,7 @@ These are libraries written for their own sake, each in its own repository. [Cha
 | **[cJSON-cling](https://github.com/AI4Engr/cJSON-cling)** | All of cJSON 1.7.19 and its Utils: 2,907 lines of CeeLing and a 52-line number shim |
 | **zlib-cling** | DEFLATE and the zlib format, about 3,400 lines of CeeLing (about 2,000 without comments) and a 248-line shim; verified in both directions against real zlib on a 15.7 MB corpus |
 | **yaml-cling** | A YAML library with the yaml-cpp API, used by a plain C++ project through generated headers |
-| **app-cling** | A desktop application shell whose commands are written in CeeLing; exercises the threading model under sanitizers |
+| **[Pronao](https://github.com/AI4Engr/pronao)** | A desktop application shell whose commands are written in CeeLing; exercises the threading model under sanitizers |
 
 **cJSON's 33 published issues.** Each issue published against cJSON 1.7.19 was reproduced in C and examined in the port (these are numbered issues, not CVE identifiers):
 

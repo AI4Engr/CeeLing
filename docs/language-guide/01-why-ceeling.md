@@ -612,6 +612,6 @@ port credible, are in [chapter 15](15-case-study-cjson.md).
 | see what the language has | [2. The language](02-language.md), [3. Values, text and containers](03-values-and-containers.md) |
 | understand each guarantee, with the C++ it replaces | chapters [4](04-ownership.md) to [10](10-threads.md) |
 | call C++ or split a program into files | [11](11-talking-to-cpp.md), [12](12-many-files.md) |
-| judge how far to trust it | [13](13-contract-and-threats.md), [14](14-how-it-works.md), [15](15-case-study-cjson.md), [16](16-case-study-app-cling.md), [17](17-comparisons.md), [18](18-status.md) |
+| judge how far to trust it | [13](13-contract-and-threats.md), [14](14-how-it-works.md), [15](15-case-study-cjson.md), [16](16-case-study-pronao.md), [17](17-comparisons.md), [18](18-status.md) |
 
 Every example in this guide lives under [`examples/`](examples/) and is checked by `python3 docs/language-guide/tools/guide.py check`; the C++ twins sit in the `cpp/` folders beside them.
