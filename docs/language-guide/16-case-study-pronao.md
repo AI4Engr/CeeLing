@@ -28,8 +28,8 @@ Generated C++ from those files (<work directory>):
   bounds checks inserted (cling::at): 520
   null checks inserted (cling::nn):   612
 $ scripts/shim_lines.sh
-win    2409 lines of code (976 shared + 1433 in win/); 2873 physical lines  OVER THE LIMIT of 1000
-posix  1363 lines of code (976 shared + 387 in posix/); 1682 physical lines  OVER THE LIMIT of 1000
+win    2409 lines of code (976 shared + 1433 in win/); 2812 physical lines  OVER THE LIMIT of 1000
+posix  1363 lines of code (976 shared + 387 in posix/); 1637 physical lines  OVER THE LIMIT of 1000
 ```
 
 Read it as follows. The program is about 6,300 lines of CeeLing (code only, comments and blank lines left out) in 19 files. Its trusted native layer is 2,409 lines of C++ for Windows (976 shared files plus 1,433 for the OS) and 1,363 for Linux. So on Windows a little over a quarter of the application's code is code the compiler does not check. The script also prints "OVER THE LIMIT of 1000": the project once set that limit and then dropped it as a rule. This chapter uses the measured figures.
@@ -281,48 +281,48 @@ The table is produced by `16_pronao_pointers.py`, which does what `pronao/script
 | settings | SettingsStore | result of `allItem()` (Item) | shared_ptr | pattern: returns the local `Item all = createObject()` |
 | settings | SettingsStore | result of `valueItem()` (Item) | shared_ptr | pattern: returns the local `Item made = createNumber(numbers[i])` |
 | placement | WindowMemory | field `gate` (FileGate) | unique_ptr | default: no rule made it shared |
-| dispatch | Dispatcher | elements of `asyncHandlers` (AsyncCommand) | shared_ptr | pattern: dispatch.clg:391 `AsyncCommand starter = asyncHandlers[asyncIndex];` |
-| dispatch | Dispatcher | elements of `handlers` (Command) | shared_ptr | pattern: dispatch.clg:415 `Command handler = handlers[index];` |
+| dispatch | Dispatcher | elements of `asyncHandlers` (AsyncCommand) | shared_ptr | pattern: dispatch.clg:384 `AsyncCommand starter = asyncHandlers[asyncIndex];` |
+| dispatch | Dispatcher | elements of `handlers` (Command) | shared_ptr | pattern: dispatch.clg:408 `Command handler = handlers[index];` |
 | dispatch | Dispatcher | field `caller` (CallContext) | shared_ptr | demand: another module needs it shared; compiler: passed to a parameter that is stored into an already-shared field |
 | dispatch | Dispatcher | field `rules` (CommandRules) | shared_ptr | demand: another module needs it shared; compiler: field is populated from a stored constructor parameter, matching the SHARED default a fresh inline-constructed argument already gets |
 | dispatch | Dispatcher | results of 1 method (Reply): `handle` | unique_ptr | default: no rule made it shared |
 | fscommands | (free functions) | results of 1 free function (Item): `entryItem` | shared_ptr | none: not printed, no pattern found |
-| programs | ProgramRegistry | elements of `specs` (ProgramSpec) | shared_ptr | pattern: programs.clg:80 `ProgramSpec spec = specs[i];` |
+| programs | ProgramRegistry | elements of `specs` (ProgramSpec) | shared_ptr | pattern: programs.clg:75 `ProgramSpec spec = specs[i];` |
 | programs | (free functions) | results of 1 free function (FsResult): `resolveProgram` | unique_ptr | default: no rule made it shared |
-| later | LaterBook | elements of `items` (Later) | shared_ptr | pattern: later.clg:44 `items[index] = items[last];` |
-| later | PumpBook | elements of `items` (Pump) | shared_ptr | pattern: later.clg:44 `items[index] = items[last];` (in class LaterBook: containers are told apart by name only) |
-| watches | WatchState | elements of `pending` (WatchEvent) | shared_ptr | pattern: watches.clg:71 `WatchEvent e = pending[i];` |
-| watches | Watches | elements of `states` (WatchState) | shared_ptr | pattern: watches.clg:113 `WatchState s = states[i];` |
-| windows | PopupBook | elements of `menus` (Menu) | shared_ptr | pattern: windows.clg:89 `Menu m = menus[i];` |
-| windows | Window | field `menu` (Menu) | shared_ptr | pattern: assigned from a variable: windows.clg:246 `menu = bar;` |
+| later | LaterBook | elements of `items` (Later) | shared_ptr | pattern: later.clg:45 `items[index] = items[last];` |
+| later | PumpBook | elements of `items` (Pump) | shared_ptr | pattern: later.clg:45 `items[index] = items[last];` (in class LaterBook: containers are told apart by name only) |
+| watches | WatchState | elements of `pending` (WatchEvent) | shared_ptr | pattern: watches.clg:66 `WatchEvent e = pending[i];` |
+| watches | Watches | elements of `states` (WatchState) | shared_ptr | pattern: watches.clg:108 `WatchState s = states[i];` |
+| windows | PopupBook | elements of `menus` (Menu) | shared_ptr | pattern: windows.clg:87 `Menu m = menus[i];` |
+| windows | Window | field `menu` (Menu) | shared_ptr | pattern: assigned from a variable: windows.clg:243 `menu = bar;` |
 | windows | Window | field `rules` (CommandRules) | shared_ptr | compiler: field is populated from a stored constructor parameter, matching the SHARED default a fresh inline-constructed argument already gets |
 | windows | Window | field `state` (WindowState) | shared_ptr | demand: another module needs it shared; compiler: copied between a field and another variable, so both are owners |
 | windows | Window | field `watches` (Watches) | shared_ptr | demand: another module needs it shared; compiler: copied between a field and another variable, so both are owners |
-| windows | WindowBook | elements of `items` (Window) | shared_ptr | pattern: windows.clg:373 `Window w = items[i];` |
+| windows | WindowBook | elements of `items` (Window) | shared_ptr | pattern: windows.clg:368 `Window w = items[i];` |
 | windows | WindowBook | result of `get()` (Window) | shared_ptr | pattern: returns the local `Window w = items[i]` |
 | windows | WindowBook | result of `needed()` (Window) | shared_ptr | pattern: returns the local `Window w = get(h)` |
-| theme | ThemeState | field `book` (WindowBook) | shared_ptr | pattern: assigned from a variable: theme.clg:61 `book = windows;` |
+| theme | ThemeState | field `book` (WindowBook) | shared_ptr | pattern: assigned from a variable: theme.clg:58 `book = windows;` |
 | theme | ThemeState | result of `stateItem()` (Item) | shared_ptr | pattern: returns the local `Item e = createObject()` |
-| drops | DropRules | field `gate` (FileGate) | shared_ptr | pattern: assigned from a variable: drops.clg:34 `gate = files;` |
-| app | App | elements of `trayMenus` (Menu) | shared_ptr | pattern: app.clg:1268 `Menu tm = trayMenus[ti];` |
+| drops | DropRules | field `gate` (FileGate) | shared_ptr | pattern: assigned from a variable: drops.clg:32 `gate = files;` |
+| app | App | elements of `trayMenus` (Menu) | shared_ptr | pattern: app.clg:1220 `Menu tm = trayMenus[ti];` |
 | app | App | field `dispatcher` (Dispatcher) | unique_ptr | default: no rule made it shared |
 | app | App | field `drops` (DropRules) | unique_ptr | default: no rule made it shared |
-| app | App | field `gate` (FileGate) | shared_ptr | pattern: copied into a local: app.clg:277 `FileGate files = gate;` |
+| app | App | field `gate` (FileGate) | shared_ptr | pattern: copied into a local: app.clg:261 `FileGate files = gate;` |
 | app | App | field `laters` (LaterBook) | unique_ptr | default: no rule made it shared |
-| app | App | field `links` (LinkRules) | shared_ptr | pattern: copied into a local: app.clg:276 `LinkRules rules = links;` |
-| app | App | field `memory` (WindowMemory) | shared_ptr | pattern: copied into a local: app.clg:1051 `WindowMemory mem = memory;` |
-| app | App | field `menuHandler` (MenuAction) | shared_ptr | pattern: copied into a local: app.clg:1274 `MenuAction trayItem = menuHandler;` |
-| app | App | field `notifier` (Notifier) | shared_ptr | pattern: copied into a local: app.clg:1386 `Notifier shared = notifier;` |
-| app | App | field `notifyHandler` (NotificationAction) | shared_ptr | pattern: copied into a local: app.clg:1404 `NotificationAction handler = notifyHandler;` |
-| app | App | field `popups` (PopupBook) | shared_ptr | pattern: copied into a local: app.clg:1314 `PopupBook book = popups;` |
-| app | App | field `programs` (ProgramRegistry) | shared_ptr | pattern: copied into a local: app.clg:583 `ProgramRegistry registry = programs;` |
+| app | App | field `links` (LinkRules) | shared_ptr | pattern: copied into a local: app.clg:260 `LinkRules rules = links;` |
+| app | App | field `memory` (WindowMemory) | shared_ptr | pattern: copied into a local: app.clg:1013 `WindowMemory mem = memory;` |
+| app | App | field `menuHandler` (MenuAction) | shared_ptr | pattern: copied into a local: app.clg:1226 `MenuAction trayItem = menuHandler;` |
+| app | App | field `notifier` (Notifier) | shared_ptr | pattern: copied into a local: app.clg:1331 `Notifier shared = notifier;` |
+| app | App | field `notifyHandler` (NotificationAction) | shared_ptr | pattern: copied into a local: app.clg:1349 `NotificationAction handler = notifyHandler;` |
+| app | App | field `popups` (PopupBook) | shared_ptr | pattern: copied into a local: app.clg:1262 `PopupBook book = popups;` |
+| app | App | field `programs` (ProgramRegistry) | shared_ptr | pattern: copied into a local: app.clg:557 `ProgramRegistry registry = programs;` |
 | app | App | field `pumps` (PumpBook) | unique_ptr | default: no rule made it shared |
-| app | App | field `settings` (SettingsStore) | shared_ptr | pattern: copied into a local: app.clg:189 `SettingsStore settings = this.settings;` |
-| app | App | field `theme` (ThemeState) | shared_ptr | pattern: copied into a local: app.clg:334 `ThemeState state = theme;` |
-| app | App | field `trayHandler` (TrayAction) | shared_ptr | pattern: copied into a local: app.clg:1774 `TrayAction clicked = trayHandler;` |
-| app | App | field `watches` (Watches) | shared_ptr | pattern: assigned from a variable: app.clg:1210 `watches = w.watches;` |
-| app | App | field `window` (WindowState) | shared_ptr | pattern: assigned from a variable: app.clg:1209 `window = w.state;` |
-| app | App | field `windows` (WindowBook) | shared_ptr | pattern: copied into a local: app.clg:202 `WindowBook book = windows;` |
+| app | App | field `settings` (SettingsStore) | shared_ptr | pattern: copied into a local: app.clg:182 `SettingsStore settings = this.settings;` |
+| app | App | field `theme` (ThemeState) | shared_ptr | pattern: copied into a local: app.clg:314 `ThemeState state = theme;` |
+| app | App | field `trayHandler` (TrayAction) | shared_ptr | pattern: copied into a local: app.clg:1699 `TrayAction clicked = trayHandler;` |
+| app | App | field `watches` (Watches) | shared_ptr | pattern: assigned from a variable: app.clg:1165 `watches = w.watches;` |
+| app | App | field `window` (WindowState) | shared_ptr | pattern: assigned from a variable: app.clg:1164 `window = w.state;` |
+| app | App | field `windows` (WindowBook) | shared_ptr | pattern: copied into a local: app.clg:195 `WindowBook book = windows;` |
 | app | (closures) | captured `book` (PopupBook) in 1 closure: `menu.popup` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `book` (WindowBook) in 11 closures: `fs.unwatch`, `fs.watch`, `settings.set`, ... | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `caller` (CallContext) in 1 closure: `notification.show` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
