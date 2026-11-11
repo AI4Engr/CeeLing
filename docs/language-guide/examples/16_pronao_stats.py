@@ -2,7 +2,7 @@
 """What CeeLing did for Pronao, in numbers: Pronao's own scripts/ceeling_stats.sh run on C++ generated now, and scripts/shim_lines.sh.
 
 Compiles the modules exactly as 16_pronao_pointers.py does (it is imported from the file next to this one), then runs the two scripts of the sibling project
-app-cling. Exit status 77 and a message on stderr if Pronao, cjson-cling, the compiler or bash is missing.
+Pronao. Exit status 77 and a message on stderr if Pronao, cJSON-cling, the compiler or bash is missing.
 """
 import importlib.util
 import os

@@ -774,7 +774,7 @@ The trusted code, the browser engine, the operating system and the programs `pro
 
 ## What the tools found, and where the language got in the way
 
-The project's document `docs/ceeling-in-app-cling.md` lists these; they are the other half of the numbers above.
+These are the other half of the numbers above.
 
 - **A reference cycle the compiler did not see** (above). Found by a leak checker at exit. The fix was a design change.
 - **A compiler bug.** A method parameter with the same name as a field was emitted as the field, so `choose(vector names)` in a class with a field `names` assigned the field. It compiled and ran with the wrong data. It is fixed (`tests/safety/param_shadows_field_accepted.clg`). Static checking does not catch a bug in the compiler itself.
@@ -796,4 +796,4 @@ Where the language was in the way, from the same document, each of which cost re
 - The numbers are of this program on this compiler. A new rule in the analysis changes the table, and this is why the chapter prints it from a command instead of copying it.
 - Nobody has measured the cost of 590 `shared_ptr` against 81 `unique_ptr` here. The project builds with `--pool-shared`, an allocator for shared objects, and measured the checks, not the pointers.
 
-The numbers in `docs/ceeling-in-app-cling.md` were measured at an earlier commit (6,115 lines, 79 `unique_ptr`, 559 `shared_ptr`, 17 modules; the same page says 47 closures in a table and 32 in the text, and 69 and 48 `ext_fn` functions). The figures in this chapter come from running the scripts on the code at hand.
+The figures in this chapter come from running the scripts on the code at hand, not from an earlier measurement.
