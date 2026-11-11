@@ -1,6 +1,6 @@
 # fact-gauge
 
-Do the library facts and the checker agree, and do the facts agree with the C++ standard? (`docs/design/third-party-inference.md` section 7, "the gauge".)
+Do the library facts and the checker agree, and do the facts agree with the C++ standard? (`docs/design/third-party-inference.md` section 3, rule 5; guide chapter 11, "Who vouches for a fact".)
 
 ```
 python -I tools/fact-gauge/gauge.py --cling build/cling.exe [--report report.md]

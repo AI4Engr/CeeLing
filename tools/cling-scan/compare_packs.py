@@ -4,7 +4,7 @@ usage: compare_packs.py <a.clfacts> <b.clfacts>        exit 0 if every method ha
 
 A pack written for `Eigen::VectorXd` says nothing about `Eigen::MatrixXd` or `Eigen::Matrix3f`: the facts of a template depend on its arguments
 (`cbegin` exists only for vectors). This prints, for each method name, the verdict in each pack (`fresh`, `borrow`, `mutator`, `function`, or
-`-` for "no fact: conservative") and lists only the names where they differ. It is the "witness types" check of docs/design/third-party-inference.md
+`-` for "no fact: conservative") and lists only the names where they differ. It is the "witness types" check of docs/design/third-party-inference.md (section 5)
 section 10 done after the fact: scan two instantiations, run this, and trust a pack for a third type only where they agree.
 """
 import re

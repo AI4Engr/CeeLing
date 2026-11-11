@@ -1,7 +1,6 @@
 # The `.clfacts` format (version 1)
 
-A fact pack is a plain-text file that tells the compiler what it may assume about a library. This is the format the built-in packs in `facts/` use today; the plan for what
-grows out of it (generated facts, downloadable packs, header-hash binding) is in `docs/design/third-party-inference.md`; the status of each part is in the [guide, chapter 18](../language-guide/18-status.md).
+A fact pack is a plain-text file that tells the compiler what it may assume about a library. This is the format the built-in packs in `facts/` use today; how to use packs, who vouches for a fact and the scanners are in [guide chapter 11](../language-guide/11-talking-to-cpp.md#who-vouches-for-a-fact); the reasoning, and what is not built (downloadable packs, body-derived facts), is in [docs/design/third-party-inference.md](../design/third-party-inference.md).
 
 ## Shape
 

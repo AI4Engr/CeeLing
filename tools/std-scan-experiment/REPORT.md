@@ -90,7 +90,7 @@ Method (all in this directory; rerun with the commands at the end):
 * The part that needs a human with the standard open: one invalidation row per category (sequence, string, associative, unordered, ...), and the
   review of every UNRESOLVED and every disagreement between libraries. For these two classes that is a dozen rows plus 13 flagged string names (20
   overloads), not hundreds of facts.
-* The part that stays hand-written for now: retention of class-typed arguments, which needs body analysis (phase 3 of `docs/design/third-party-inference.md`).
+* The part that stays hand-written for now: retention of class-typed arguments, which needs body analysis (`docs/design/third-party-inference.md`, section 8: body-derived facts, not built).
 * Plain text per header group is adequate at this size: `vector.facts.tsv` is 3.7 KB, `string.facts.tsv` 16 KB (both libraries: 40 KB for the four files).
 
 Limits of the experiment: two classes, two implementations of one language version, one author's transcription of the standard for the comparison

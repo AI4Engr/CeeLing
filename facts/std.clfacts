@@ -3,7 +3,7 @@
 # MIGRATED 2026-11-02 from the hand tables in library_summary.cpp with NO change in behaviour
 # (tests/facts/ checks that every answer is the same). Everything here is hand-written, so
 # source=declared review=hand. The vector and string method lists were replaced on 2026-11-02 by facts generated from the
-# library's own declarations, with admission computed by rule (docs/design/third-party-inference.md, the internal notes).
+# library's own declarations, with admission computed by rule (docs/design/third-party-inference.md).
 #
 # Format (docs/internals/facts-format.md): one fact per line,
 #     <kind> <subject> [flag ...] source=<declared|inferred> [review=<state>]

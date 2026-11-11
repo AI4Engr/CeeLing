@@ -8,7 +8,7 @@
 
 Design records say at the top whether they are current. The guide and the code are the description of behaviour.
 
-* [design/third-party-inference.md](design/third-party-inference.md): how the compiler learns what a C++ library's calls borrow, move and invalidate (fact packs, scanners, the trust tiers).
+* [design/third-party-inference.md](design/third-party-inference.md): the reasoning behind library facts and what is not built (how to use them is in [guide chapter 11](language-guide/11-talking-to-cpp.md#who-vouches-for-a-fact)).
 * [design/eigen-views.md](design/eigen-views.md): the first case of that, Eigen's view methods, and why it needed its own mechanism.
 * [internals/facts-format.md](internals/facts-format.md): the `.clfacts` file format.
 

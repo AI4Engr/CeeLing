@@ -1,4 +1,4 @@
-"""The gauge: do the library facts and the checker agree? (docs/design/third-party-inference.md section 7, "the gauge")
+"""The gauge: do the library facts and the checker agree? (docs/design/third-party-inference.md section 3, rule 5; guide chapter 11, "Who vouches for a fact")
 
 usage: gauge.py --cling <cling.exe> [--facts <facts dir>] [--scan <scan dir>] [--report <file>]
                 [--pretend-mutator NAME ...] [--pretend-nonmutator NAME ...]

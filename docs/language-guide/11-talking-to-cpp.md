@@ -386,7 +386,55 @@ experiment, `gfx_init` and its relatives, used to be built in; imgui-cling now k
 `diagonal`, which are treated as borrowing their receiver. That is [chapter 6](06-dangling-references.md) (a `block` that dangles is rejected; an unlisted method such as `topRows` is refused). The machine this guide
 was checked on has no Eigen installed, so no Eigen program is compiled here; only the rejections, which need no Eigen headers, are shown there.
 
-**Not built:** vendor-maintained declaration files for other libraries. The design (a table of borrow, invalidate and move facts plus an accepted and a rejected test per contentious line) is in [third-party-inference.md](../design/third-party-inference.md); no such registry exists. Until it exists, a library other than the ones above is reached through `ext_fn` shims over primitives, not directly.
+**Not built:** vendor-maintained packs published for download. A library other than the ones above is reached with a project pack you write or scan (`--facts`, `opaque`; the sections above), or through `ext_fn` shims over primitives. What is open is listed at the end of "Who vouches for a fact".
+
+## Who vouches for a fact
+
+A fact is a claim about what a library call does with ownership: its result is fresh, or it borrows the receiver; calling it invalidates every observer of the receiver, or it does not; an object handed to it may be kept. The dangling checker uses a fact for a library call exactly as it uses what it derived itself for a CeeLing function, so nothing in the analysis depends on where a fact came from. What differs is how far you can trust it, and the compiler keeps that visible. Every fact carries a `source` and a review state:
+
+| State | Who vouches | Set by |
+|---|---|---|
+| `declared`, `review=hand` | a person wrote the fact | by hand |
+| `review=reviewed:<name>:<date>` | a named person read it | `tools/cling-scan/review_pack.py --reviewer <name>`; nothing else sets it |
+| `review=probed:<date>` | a probe ran the fact against the real library under AddressSanitizer and found no contradiction (evidence, not review) | `tools/fact-gauge/probe_pack.py --mark-probed`, on a passing run, for the facts it exercised |
+| `inferred`, `review=unreviewed` | nobody: a scanner read the declaration | `tools/cling-scan` |
+| `opaque Name` | nobody wrote any fact; the worst is assumed | you, in one line |
+
+Three flags use this. `cling --report-facts` lists every fact a compile relied on, with its pack and source (the trusted-boundary report). `cling --strict` refuses to compile, with exit status 3 and no output, a program that relied on an inferred fact of a `--facts` pack that no person reviewed; `--strict=probed` also accepts `probed:` facts; `--strict-all` audits the facts shipped inside the compiler too, and fails today, because the scanned `std::vector`, `string` and `map` facts are inferred and nobody has reviewed them line by line. `opaque` always passes, because it can only make checking stricter.
+
+Two rules hold for every source. **An error may only go in the cautious direction:** a scanner may leave a method opaque, or write a fact that is too careful (a safe program is rejected and you add a declaration); it writes "fresh" (borrows nothing) only when the declaration proves it. And **a fact cannot open a sealed construct:** raw pointers, `.get()`, casts and unions are rejected by the escape-hatch checker whatever a pack says. A pack is data: loading one runs nothing and reads no other file, and a project pack can only add facts, never relax how `std` is judged or replace a fact the compiler ships.
+
+### Writing a pack by scanning: `cling-scan`
+
+```text
+python -I tools/cling-scan/cling_scan.py --clang clang++ --header grid.h --class Grid --out grid.clfacts
+python -I tools/cling-scan/cling_scan.py --clang clang++ --header Eigen/Dense --type Eigen::VectorXd -I eigen --out vx.clfacts
+cling --facts grid.clfacts program.clg
+```
+
+The scanner reads the **declared signature** of every public method, never the body, and writes a fact only when the signature proves it. A `const` method that returns a `void`, a number, a `bool`, an enum, a `std::string` or a `std::vector` of those is `fresh`: nothing it returns can refer to the receiver. A `const` method that returns a reference, a pointer, a view or an iterator is a `borrow`. A non-`const` method that returns nothing that borrows is a `mutator` (its observers die). A `static` method taking only plain values is a `function`. It writes `opaque Grid` first, so every method it could not decide keeps the cautious default, and it leaves a `#` comment with the reason for each (a class returned by value, overloads that disagree, member templates, operators). Every fact it writes is `inferred` and `unreviewed`.
+
+What it cannot see is what a signature does not say: it takes `const` at its word (a `mutable` member or a pointer the class keeps can make a `const` method not fresh), and "returns a number" is the declared type, not what the number means. A confidently wrong fact is possible, and is the same kind of hole as a wrong `ext_fn`. Three things narrow it:
+
+- **Header hashes.** The pack records the SHA-256 of every non-system header the translation unit included (265 for `Eigen/Dense`), and the compiler refuses a pack whose headers changed since the scan (exit status 2, naming the pack and the header). A header it cannot find is a warning, or an error with `--strict-headers`. A library upgrade cannot be paired silently with last year's facts.
+- **Witness types.** A template's facts depend on its arguments. `--witness OtherType` scans a second instantiation and keeps only the facts on which both agree; a method that differs falls back to the cautious default.
+- **Three backends, one analysis.** A text backend (over `clang -ast-dump`), a libclang backend (the stable C API; classes, not template instantiations) and a LibTooling program on clang's AST. They are tested to give the same verdict for every method on the same classes.
+
+### Checking the facts: the gauge and the probes
+
+Two tools ask whether facts and checker agree, and whether the facts are true.
+
+`tools/fact-gauge/gauge.py` (CTest `cling_fact_gauge`) makes three independent checks. For every scanned `std::vector` and `std::map` method it generates a program that would dangle if the fact "this method changes the receiver" were ignored (an observer, the call, a use of the observer) and lets the compiler judge it: a **false accept** must be zero, a false reject must be zero. It calls every admitted method validly and compiles the result with `g++ -std=c++17`. And it checks the facts against a hand transcription of the standard's own list of calls that invalidate references. The last is the one that matters: the first two only show that the compiler follows the facts, and the third is what found `reserve` missing from an earlier hand table. Two negative controls (the gauge told a wrong fact on purpose) must fail.
+
+`tools/fact-gauge/probe_pack.py` (CTest `cling_scan_probe`, the slowest test of the suite) checks a scanned pack against the **real library**: per fact, the compiler judges a seeded program, and a plain C++ twin holding a lazy view runs under AddressSanitizer. Results: `Eigen::VectorXd`, 56 facts, no contradiction (54 `fresh` and `borrow` facts run clean; the two mutators that really reallocate, `resize` and `conservativeResize`, are confirmed by `heap-use-after-free`); jsoncpp `Json::Value`, 41 facts, none contradicted (`clear` really frees the node a reference points into); yaml-cpp `YAML::Node`, 13 facts. For each library, declaring a mutator `fresh` makes the probe fail with a `heap-use-after-free` from the real library, and that is the point of the control: a probe that cannot fail proves nothing. The probe also found a bug in the scanner itself (it had read past the end of a class and credited jsoncpp's `Value` with the methods of its nested `CZString`); it is fixed, with a regression test.
+
+What these show, and what they do not: a clean run is evidence, not proof, for one object, one or two views and arguments a script chose. A probe sees storage going away or moving, not a value changing under a view. And none of it makes the library's own code checked: a vendor pack moves a library from "trusted" to "declared", and the guarantee stays "no dangling references in code CeeLing checked, excluding what trusted libraries do with what they are given".
+
+### The standard library's facts are generated
+
+The facts for `std::vector`, `string`, `string_view`, `optional` and `map` are not a list of names. `tools/std-scan-experiment/gen_pack.py` writes them from a scan of the real declarations (the MSVC STL and libstdc++, each reading the other's gaps), and the CTest `cling_facts_generated` fails if the committed pack is not exactly what the script produces. The compiler then **computes** admission: a method is admitted when every overload CeeLing can write returns something the checker can follow (`void`, a number, a fresh `string`, `*this`) and takes no reference it could write through. The ones refused say why: iterators (`begin end insert erase`), element references (`front back at`), raw pointers (`data c_str`). A method that changes the receiver invalidates every observer of it, derived as "a non-const member with no const twin", and checked by the gauge against the standard.
+
+**Not built** (the design, and the reasoning for each, is in [docs/design/third-party-inference.md](../design/third-party-inference.md)): facts derived from a library's own bodies (whether a call stores an argument, whether it reallocates); buffer-size contracts for C-style numerical routines; a scan driven by the names a program actually uses; downloadable, locked packs (`cling fetch-facts`); and a release gate that rescans the standard library against newer toolchains. Until the first of these exists, `opaque` is deliberately blunt about a library's methods, and a call it cannot judge is refused rather than guessed.
 
 ## The generated C++ is an ordinary library
 
