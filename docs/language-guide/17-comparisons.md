@@ -215,7 +215,7 @@ CeeLing covers several of the mechanisms that make Rust's safe subset safe, in a
 | No use after free / dangling references | **Yes, at compile time**, by tracking what each reference observes and when its owner dies. Inferred, no lifetimes in signatures. The open gaps are in [chapter 13](13-contract-and-threats.md) |
 | Ownership and move semantics; use after move is an error | **Yes.** The compiler inserts the moves and rejects a use after one, across calls, branches, loops and nested expressions |
 | No double free, no manual `delete` | **Yes.** `delete`, raw `new` and raw pointers cannot be written; cycles become `weak_ptr` |
-| No iterator invalidation | **Mostly.** A view or reference into a container dies at every call that can reallocate it, and iterators cannot be held at all (whole-vector methods such as `sort` replace them). A loop that grows the container it is walking is not caught yet |
+| No iterator invalidation | **Mostly.** A view or reference into a container dies at every call that can reallocate it, iterators cannot be held at all (whole-vector methods such as `sort` replace them), and a range-for body that grows the container it walks is rejected. A change made through a call into another class's code is not followed |
 | Bounds-checked indexing | **Yes, at run time** (`v[i]`, `s[i]`), aborting with the `.clg` line |
 | No null | Not by type; **a run-time check on every object handle**, aborting with the line |
 | No uninitialised reads | **Yes** for locals; number, bool and char fields start at zero |

@@ -164,6 +164,9 @@ private:
 
     // A call that may reallocate its container receiver kills every existing observer of it.
     void invalidateContainerObservers(const Expression* callExpr);
+    // `for (T x : v) { ... }` walks `v` with iterators the generated C++ holds: a call in the body that may
+    // reallocate or reshape `v` (`push_back`, `erase`, `clear`, ...), or an assignment to `v`, invalidates them.
+    void checkIteratedContainerNotMutated(const ForStatement* loop);
     // A span of a field vector of the current class (`std::span<int> s = items;` in a method)
     // observes the pseudo owner "@items". Nothing follows a field across calls, so such a span
     // dies at an assignment to the field, a vector mutator called on it, and any call that may

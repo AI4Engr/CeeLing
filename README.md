@@ -67,7 +67,7 @@ int main() {
 }
 ```
 
-Output: `total = 8`. Run the whole test suite with `ctest --test-dir build`. Verified: on Windows with MinGW-w64 a clean build passes all 387 safety fixtures and the guide's 565 examples; on Ubuntu 22.04 with g++ 11 a clean clone built, `hello.clg` ran and the 385 fixtures then existing passed (not repeated since). Two guide examples quote the diagnostics of g++ 16 and differ on older compilers. macOS and MSVC have not been tried.
+Output: `total = 8`. Run the whole test suite with `ctest --test-dir build`. Verified: on Windows with MinGW-w64 a clean build passes all 394 safety fixtures and the guide's 565 examples; on Ubuntu 22.04 with g++ 11 a clean clone built, `hello.clg` ran and the 385 fixtures then existing passed (not repeated since). Two guide examples quote the diagnostics of g++ 16 and differ on older compilers. macOS and MSVC have not been tried.
 
 ## What the compiler rejects
 
@@ -184,7 +184,7 @@ These are libraries written for their own sake, each in its own repository. [Cha
 
 The memory errors (1 to 13) are mostly removed or turned into a located abort; the 17 logic errors remain, because a language that checks memory cannot know that `~1` must decode to `/`. The defective C, a C program that triggers each one, the port's code and the full 33-row table are in [chapter 15](docs/language-guide/15-case-study-cjson.md), with the speed and memory figures.
 
-**Tests.** 387 safety fixtures that must be rejected, or accepted, compiled and run with their output asserted; 565 guide examples checked by the test suite; seeded dangling programs for every scanned `std::vector` and `string` method, with negative controls that must fail.
+**Tests.** 394 safety fixtures that must be rejected, or accepted, compiled and run with their output asserted; 565 guide examples checked by the test suite; seeded dangling programs for every scanned `std::vector` and `string` method, with negative controls that must fail.
 
 ## Using C++ libraries
 

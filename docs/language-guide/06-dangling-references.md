@@ -1407,9 +1407,7 @@ error[semantic/use-after-move]: use of dangling observer `r` (its owner `v` is g
 
 ### Iterators, and the range-`for`
 
-CeeLing does not track iterators, so it does not let you hold one: `begin()`, `end()` and the other iterator-returning methods are refused (since 2026-11-02; until then they were on a hand-written list). A
-`for (int x : v)` loop over a vector or a map works, but the checker has no notion of an iterator object that depends on a container, so a loop that grows the vector it walks is not caught. The C++ shape, and
-the CeeLing program that is accepted although it should not be:
+CeeLing does not track iterators, so it does not let you hold one: `begin()`, `end()` and the other iterator-returning methods are refused (since 2026-11-02; until then they were on a hand-written list). A `for (int x : v)` loop over a vector or a map works and holds iterators the generated C++ owns, so a body that changes `v` is checked directly (below). The C++ shape of both mistakes:
 
 <!-- example: 06_iterator.cpp -->
 ```cpp
@@ -1445,7 +1443,7 @@ int main() {
 }
 ```
 
-<!-- example: 06_gap_range_for.clg -->
+<!-- example: 06_range_for_push_back_rejected.clg -->
 ```cpp
 int main() {
     std::vector<int> v;
@@ -1458,9 +1456,21 @@ int main() {
     return 0;
 }
 ```
+<!-- error: 06_range_for_push_back_rejected.clg -->
+```
+error[semantic/container-changed-while-iterated]: `v.push_back(...)` may reallocate `v` while the loop is walking it
+  --> 06_range_for_push_back_rejected.clg:6:9
+  help: `for (int x : v)` holds iterators into `v`, and a call that may reallocate or reshape it (`push_back`, `erase`, `clear`, `resize`, ...) leaves them pointing at freed or moved memory. Collect the changes in another container and apply them after the loop, or walk by index with a `while` loop.
+```
 
-This is a gap, not a design. The second program is undefined behaviour in C++ and CeeLing accepts it. (The same program with `ref Node` elements is also accepted. A loop variable is treated as
-a fresh owner of each element.) The only protection today is that the standard vector mutators the checker cannot follow are refused, and that the common mistake with a *stored* iterator can no longer be written:
+**This is rejected since 2026-11-10.** It used to be a gap: the program above was accepted and is undefined behaviour in C++. The check reads the body of the loop for the container the loop walks (a local, a field named bare inside a method, or `obj.field`; a vector, a `string` or a map) and rejects:
+
+* a call of a method on the list of those that may reallocate or reshape it (the same list that kills observers: `push_back`, `pop_back`, `erase`, `clear`, `resize`, `reserve`, `assign`, `append` for a string, ...);
+* a call of that kind through a `ref` observer of the container (`ref std::vector<int> r = v; for (int x : v) { r.push_back(x); }`);
+* an assignment to the container;
+* inside a method, when the container is a field: a bare call of another method of the same class that is not heap-pure (it changes a container or field it does not own), since it can reach the field through `this`.
+
+Growing a different container, or reading the one being walked, is accepted. What it does **not** see, and so is still open: a change to the container made through a function or method of another class that holds a handle to the same object; a `closure` in the body (its body is read like any other, so a closure that changes a copy of the vector it captured is a false rejection); and the number-of-iterations question, since nothing checks what a loop does to its own bound. The check is on what the body *says*; it does not follow the container through calls.
 
 * A variable of type `std::vector<int>::iterator` does not parse.
 * `auto it = v.begin();` parses (CeeLing passes a type name it does not recognise through to C++ unchanged), but the `begin()` call is refused, because the scan of `std::vector` finds that it returns

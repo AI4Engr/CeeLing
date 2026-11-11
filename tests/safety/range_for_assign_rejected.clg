@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: `v` is assigned a new value while the loop is walking it
+//@ reason: assigning to the vector being walked replaces its storage under the loop's iterators.
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    std::vector<int> empty;
+    for (int x : v) {
+        v = empty;
+    }
+    return 0;
+}

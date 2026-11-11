@@ -1,0 +1,22 @@
+//@ expect: reject
+//@ error: `add(...)` may change `items`
+//@ reason: the loop walks a vector field, and a method of the same class that is not heap-pure (it pushes onto that field) is called in the body: the call reaches `items` through `this`.
+class Bag {
+public:
+    std::vector<int> items;
+    Bag() { }
+    void add(int x) {
+        items.push_back(x);
+    }
+    void doubleUp() {
+        for (int x : items) {
+            add(x);
+        }
+    }
+};
+
+int main() {
+    Bag b = new Bag();
+    b.doubleUp();
+    return 0;
+}

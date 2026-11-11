@@ -1,6 +1,7 @@
 #include "passes/dangling_checker.h"
 
 #include <functional>
+#include "syntax/ast_walk.h"
 #include "syntax/class_hierarchy.h"
 #include "facts/library_summary.h"
 #include "passes/closure_desugar.h"
@@ -833,6 +834,70 @@ int DanglingChecker::calleeHeapEffect(const FunctionCall* call) const {
     }
     if (!user) return 0;
     return pure ? 1 : 2;
+}
+
+namespace {
+// A container named by a bare identifier (`v`, a local or a field of the current class) or by `obj.field`.
+std::string containerKey(const Expression* expr) {
+    if (auto id = dynamic_cast<const Identifier*>(expr)) return id->name;
+    if (auto member = dynamic_cast<const MemberAccess*>(expr)) {
+        if (auto obj = dynamic_cast<const Identifier*>(member->object.get())) return obj->name + "." + member->member;
+    }
+    return {};
+}
+}  // namespace
+
+void DanglingChecker::checkIteratedContainerNotMutated(const ForStatement* loop) {
+    const std::string key = containerKey(loop->container.get());
+    if (key.empty()) return;
+    const std::string type = declaredTypeOf(loop->container.get());
+    if (!isVectorType(type) && !isStringType(type) && !isMapType(type)) return;
+
+    auto mayInvalidate = [&](const std::string& method) {
+        if (isVectorType(type)) return vectorMethodInvalidatesReferences(method);
+        if (isStringType(type)) return stringMethodInvalidatesReferences(method);
+        return mapMethodInvalidatesReferences(method);
+    };
+    auto report = [&](const ASTNode& at, const std::string& what) {
+        DanglingError e;
+        e.line = at.loc.line;
+        e.column = at.loc.column;
+        e.code = "container-changed-while-iterated";
+        e.message = what + " while the loop is walking it";
+        e.help = "`for (" + loop->loopVarType + " " + loop->loopVarName + " : " + key + ")` holds iterators into `" + key +
+                 "`, and a call that may reallocate or reshape it (`push_back`, `erase`, `clear`, `resize`, ...) leaves them "
+                 "pointing at freed or moved memory. Collect the changes in another container and apply them after the loop, "
+                 "or walk by index with a `while` loop.";
+        errors_.push_back(e);
+    };
+
+    // A FIELD of the current class named bare (`items`): a bare call of one of this class's own methods that is not
+    // heap-pure (it changes a container or field it does not own) may reach `items` through `this`.
+    const bool bareField = loop->container != nullptr && dynamic_cast<const Identifier*>(loop->container.get()) != nullptr &&
+                           localType_.find(key) == localType_.end();
+    astwalk::walkStatements(const_cast<std::vector<StatementPtr>&>(loop->body), [&](ASTNode& node) {
+        if (auto call = dynamic_cast<FunctionCall*>(&node)) {
+            auto member = dynamic_cast<const MemberAccess*>(call->callee.get());
+            // `r.push_back(x)` through a `ref r = v;` observer reaches the same storage as `v.push_back(x)`.
+            std::string via = member != nullptr ? containerKey(member->object.get()) : std::string();
+            if (!via.empty() && via != key) {
+                if (auto owner = observerOf_.find(via); owner != observerOf_.end() && owner->second == key) via = key;
+            }
+            if (member != nullptr && via == key && mayInvalidate(member->member)) {
+                const std::string spelled = containerKey(member->object.get());
+                report(*call, "`" + spelled + "." + member->member + "(...)` may reallocate `" + key + "`");
+            } else if (bareField && call->callee == nullptr && !currentClass_.empty()) {
+                auto cls = classMethodParams_.find(currentClass_);
+                if (cls != classMethodParams_.end() && cls->second.count(call->function_name) > 0 && calleeHeapEffect(call) == 2) {
+                    report(*call, "`" + call->function_name + "(...)` may change `" + key + "` (it is a method of this class that is not heap-pure)");
+                }
+            }
+        } else if (auto assign = dynamic_cast<AssignmentStatement*>(&node)) {
+            const bool whole = assign->target == nullptr && assign->variable == key;
+            const bool field = assign->target != nullptr && containerKey(assign->target.get()) == key;
+            if (whole || field) report(*assign, "`" + key + "` is assigned a new value");
+        }
+    });
 }
 
 void DanglingChecker::invalidateContainerObservers(const Expression* callExpr) {
@@ -1727,6 +1792,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
     } else if (auto fors = dynamic_cast<const ForStatement*>(stmt)) {
         checkExpressionUses(fors->container.get());
         applyCallArgMoves(fors->container.get());
+        checkIteratedContainerNotMutated(fors);
         processLoop(nullptr, fors, fors->body);
     } else if (auto exprStmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         // e.g. `sink(a);`: check uses, then apply the moves.

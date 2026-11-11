@@ -1,0 +1,12 @@
+//@ expect: reject
+//@ error: `v.push_back(...)` may reallocate `v` while the loop is walking it
+//@ reason: a range-for holds iterators into `v`; `push_back` in its body may reallocate v's storage, so the next step of the loop reads freed memory.
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    for (int x : v) {
+        v.push_back(x);
+    }
+    std::cout << v.size() << std::endl;
+    return 0;
+}

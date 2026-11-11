@@ -1,0 +1,19 @@
+//@ expect: reject
+//@ error: `items.push_back(...)` may reallocate `items` while the loop is walking it
+//@ reason: the loop walks a vector FIELD named bare inside a method, and the body grows that same field.
+class Bag {
+public:
+    std::vector<int> items;
+    Bag() { }
+    void doubleUp() {
+        for (int x : items) {
+            items.push_back(x);
+        }
+    }
+};
+
+int main() {
+    Bag b = new Bag();
+    b.doubleUp();
+    return 0;
+}

@@ -1,4 +1,5 @@
-//@ expect: accept
+//@ expect: reject
+//@ error: `v.push_back(...)` may reallocate `v` while the loop is walking it
 int main() {
     std::vector<int> v;
     v.push_back(1);

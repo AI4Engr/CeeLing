@@ -19,7 +19,7 @@ documents and the compiler agree on it, with the places where they disagree name
 | Generated JSON decoders for structs (`decodeX`) | working | [3](03-values-and-containers.md) |
 
 The safety contract is tested by `tests/safety/`: 306 fixtures (186 that must compile, 120 that must be refused), 154 of them also run with their output asserted and 7 that must die at run time with a stated message. Every
-accepted fixture's generated C++ is compiled by `g++`. A second suite splits each splittable fixture across two files and requires the same verdict (279 fixtures). The guide's own examples are another suite, compiled
+accepted fixture's generated C++ is compiled by `g++`. A second suite splits each splittable fixture across two files and requires the same verdict (281 fixtures). The guide's own examples are another suite, compiled
 and run by the same compiler. How to read these is [chapter 13](13-contract-and-threats.md); the fixture and cross-file counts were re-run on 2026-11-09.
 
 ## The run-time checks, and how a program is built
@@ -54,7 +54,7 @@ percent on decompression and 11.3 percent on compression.
 
 Grouped; each is described where it belongs and listed in [chapter 13](13-contract-and-threats.md). None of them is a plan to be quiet about.
 
-**Dangling analysis does not see:** a loop that grows the container it walks (a stored iterator is refused at `begin()`, not tracked), every Eigen view method beyond eight on one type. (`string_view` is followed since 2026-11-03 and `std::span` since 2026-11-04; Eigen's lazy `auto` expressions cannot be written: since 2026-11-02 a type name the compiler does not know, `auto` included, is an error. They used to pass through unchanged.) Also: `ref` observers are raw pointers in the
+**Dangling analysis does not see:** a change to a range-for's container made through code of another class (the direct cases are rejected since 2026-11-10; a stored iterator is refused at `begin()`, not tracked), every Eigen view method beyond eight on one type. (`string_view` is followed since 2026-11-03 and `std::span` since 2026-11-04; Eigen's lazy `auto` expressions cannot be written: since 2026-11-02 a type name the compiler does not know, `auto` included, is an error. They used to pass through unchanged.) Also: `ref` observers are raw pointers in the
 generated C++, so a miss in the analysis is not caught by a run-time check (making them self-checking is an open item); an observer of a container element depends on the whole container, which refuses more than necessary.
 
 **Other static checks that stop short:** `std::variant` (never guarded), reference cycles (a back link becomes `weak_ptr` by a naming rule or a hint, not by cycle
