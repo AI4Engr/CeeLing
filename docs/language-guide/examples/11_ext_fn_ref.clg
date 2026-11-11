@@ -1,7 +1,7 @@
 //@ expect: accept
 //@ with: 11_ext_fn_ref_shim.cpp
-//@ run: 6 3 5 filled by C++
-//@ generated: sumAll(std::move(v))
+//@ run: 6 3 5 filled by C++ 3
+//@ generated: sumAll(v)
 ext_fn int sumAll(ref std::vector<int> data);        // read-only borrow: const std::vector<int>&
 ext_fn int splitTens(int value, ref int rest);       // out-parameter: int&
 ext_fn int fillText(ref string out);                 // out-parameter: std::string&
@@ -16,6 +16,6 @@ int main() {
     int tens = splitTens(35, rest);
     string text = "";
     int ignored = fillText(text);
-    std::cout << total << " " << tens << " " << rest << " " << text << std::endl;
+    std::cout << total << " " << tens << " " << rest << " " << text << " " << v.size() << std::endl;
     return 0;
 }

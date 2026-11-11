@@ -291,6 +291,7 @@ void AstEmitter::collectClassNames(const Program& program) {
         } else if (auto extFn = dynamic_cast<const ExternFunctionDeclaration*>(stmt.get())) {
             functionParams_[extFn->name] = extFn->parameters;
             functionReturnType_[extFn->name] = extFn->returnType;
+            if (!extFn->refParams.empty()) externRefParamsByName_[extFn->name] = extFn->refParams;
         }
     }
     // Flatten base classes first: a missing inherited field type would make an inherited smart-pointer field emit `.` instead of `->`.

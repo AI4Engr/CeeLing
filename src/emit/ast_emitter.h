@@ -248,6 +248,9 @@ private:
     // ExternFunctionDeclaration::refParams in ast.h), lowered to `const T&` (container) or `T&` (primitive).
     // Reset per signature; empty for everything else.
     std::set<size_t> currentExternRefParams_;
+    // ext_fn name -> indices of its `ref` parameters, for the CALL sites: such an argument is a borrow (`const&` / `&`), so the
+    // caller's variable is passed as it is, never wrapped in std::move (DanglingChecker does not mark it moved either).
+    std::map<std::string, std::set<size_t>> externRefParamsByName_;
     // Names of `ostream`-typed locals and parameters; the first operand of a stream chain (see isStreamChain).
     std::set<std::string> ostreamVars_;
     // Per-class field name -> declared type (for `this->` and nested `->` resolution).

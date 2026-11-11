@@ -244,6 +244,13 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
                 s += emitAsString(call->arguments[i].get());      // a view handed to a `string` parameter: an explicit copy
                 continue;
             }
+            if (call->callee == nullptr) {
+                if (auto refs = externRefParamsByName_.find(call->function_name);
+                    refs != externRefParamsByName_.end() && refs->second.count(i) > 0) {
+                    s += emitExpression(call->arguments[i].get());      // an ext_fn `ref` parameter borrows: no std::move
+                    continue;
+                }
+            }
             s += emitMovedArg(call->arguments[i].get(), calleeParam(*call, i));
         }
         s += ")";

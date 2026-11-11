@@ -120,8 +120,7 @@ error[semantic/spawn-captures-object]: `spawn` cannot move `o` into a new thread
 The guarantee is data-race freedom through `spawn` and `Channel` in checked code. Deadlock, waiting forever, `ext_fn` and shim state, the file system and the thread count are unchecked. Objects with object fields,
 objects from calls or parameters and cJSON-style trees cannot be sent.
 
-**Trusted boundaries:** `ext_fn` declarations, shims, libraries, the C++ compiler. One bug is known and unfixed here: a *local* vector passed to an `ext_fn ref std::vector<T>` parameter is emitted as
-`std::move(local)` though the parameter is `const&`, and the checker does not mark the local moved-from:
+**Trusted boundaries:** `ext_fn` declarations, shims, libraries, the C++ compiler. (A *local* vector passed to an `ext_fn ref std::vector<T>` parameter used to be emitted as `std::move(local)` though the parameter is `const&`; fixed 2026-11-10, and the example below pins the generated call.)
 
 <!-- example: 18_ext_fn_ref_local.clg -->
 ```cpp
@@ -140,13 +139,13 @@ int main() {
 int main() {
     std::vector<int> data;
     data.push_back(4);
-    int x = firstOf(std::move(data));
+    int x = firstOf(data);
     std::cout << x << std::endl;
     return 0;
 }
 ```
 
-The `std::move` is the bug. A later read of `data` would see the moved-from state and the checker would not object.
+The argument is passed as it is, so `data` is still intact after the call.
 
 **Accepted by CeeLing, refused by the C++ compiler afterwards:** a number of mistakes (an int assigned to an enum, a closure assigned to a field outside a constructor, a repeated name in a capture list, a local copied
 from a field, `ref` on a primitive or a vector). Not a safety hole, but "CeeLing accepted it" is not "it builds"; see [chapter 13](13-contract-and-threats.md). A shift beside a comparison binds the other way round from C++

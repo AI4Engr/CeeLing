@@ -213,13 +213,13 @@ int main() {
     int tens = splitTens(35, rest);
     string text = "";
     int ignored = fillText(text);
-    std::cout << total << " " << tens << " " << rest << " " << text << std::endl;
+    std::cout << total << " " << tens << " " << rest << " " << text << " " << v.size() << std::endl;
     return 0;
 }
 ```
 <!-- output: 11_ext_fn_ref.clg -->
 ```
-6 3 5 filled by C++
+6 3 5 filled by C++ 3
 ```
 <!-- example: 11_ext_fn_ref_shim.cpp -->
 ```cpp
@@ -243,8 +243,7 @@ int fillText(std::string& out) {
 }
 ```
 
-**A known bug, shown by this example.** The call `sumAll(v)` is emitted as `sumAll(std::move(v))`, though the parameter is a `const&`. It compiles and the call is correct, but the local `v` is left in the standard's "valid
-but unspecified" state, and the checker does not mark it moved, so reading `v` afterwards compiles and gives nothing reliable. The bug is known and not yet fixed in the compiler; passing a *field* is not affected. Until it is fixed, do not read a local vector after handing it to an `ext_fn ref`.
+**Fixed 2026-11-10: a local vector passed to a `ref` parameter is not moved.** The call `sumAll(v)` is emitted as `sumAll(v)`, and the example prints `v.size()` after it (3). Until then it was emitted as `sumAll(std::move(v))`, which compiled and gave the right answer for the call, but left the local `v` in the standard's "valid but unspecified" state while the checker still treated it as usable, so a later read of `v` compiled and gave nothing reliable. The emitter now knows which parameters of an `ext_fn` are `ref` and passes those arguments as they are; the checker already did not mark them moved.
 
 ### A container is moved in by default
 
