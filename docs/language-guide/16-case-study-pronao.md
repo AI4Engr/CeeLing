@@ -282,49 +282,49 @@ The table is produced by `16_pronao_pointers.py`, which does what `pronao/script
 | settings | SettingsStore | result of `valueItem()` (Item) | shared_ptr | pattern: returns the local `Item made = createNumber(numbers[i])` |
 | http | (free functions) | results of 1 free function (Item): `httpResponseHeaderObject` | shared_ptr | none: not printed, no pattern found |
 | placement | WindowMemory | field `gate` (FileGate) | unique_ptr | default: no rule made it shared |
-| dispatch | Dispatcher | elements of `asyncHandlers` (AsyncCommand) | shared_ptr | pattern: dispatch.clg:384 `AsyncCommand starter = asyncHandlers[asyncIndex];` |
-| dispatch | Dispatcher | elements of `handlers` (Command) | shared_ptr | pattern: dispatch.clg:408 `Command handler = handlers[index];` |
+| dispatch | Dispatcher | elements of `asyncHandlers` (AsyncCommand) | shared_ptr | pattern: dispatch.clg:385 `AsyncCommand starter = asyncHandlers[asyncIndex];` |
+| dispatch | Dispatcher | elements of `handlers` (Command) | shared_ptr | pattern: dispatch.clg:409 `Command handler = handlers[index];` |
 | dispatch | Dispatcher | field `caller` (CallContext) | shared_ptr | demand: another module needs it shared; compiler: passed to a parameter that is stored into an already-shared field |
 | dispatch | Dispatcher | field `rules` (CommandRules) | shared_ptr | demand: another module needs it shared; compiler: field is populated from a stored constructor parameter, matching the SHARED default a fresh inline-constructed argument already gets |
 | dispatch | Dispatcher | results of 1 method (Reply): `handle` | unique_ptr | default: no rule made it shared |
 | fscommands | (free functions) | results of 1 free function (Item): `entryItem` | shared_ptr | none: not printed, no pattern found |
-| programs | ProgramRegistry | elements of `specs` (ProgramSpec) | shared_ptr | pattern: programs.clg:75 `ProgramSpec spec = specs[i];` |
+| programs | ProgramRegistry | elements of `specs` (ProgramSpec) | shared_ptr | pattern: programs.clg:76 `ProgramSpec spec = specs[i];` |
 | programs | (free functions) | results of 1 free function (FsResult): `resolveProgram` | unique_ptr | default: no rule made it shared |
-| later | LaterBook | elements of `items` (Later) | shared_ptr | pattern: later.clg:45 `items[index] = items[last];` |
-| later | PumpBook | elements of `items` (Pump) | shared_ptr | pattern: later.clg:45 `items[index] = items[last];` (in class LaterBook: containers are told apart by name only) |
-| watches | WatchState | elements of `pending` (WatchEvent) | shared_ptr | pattern: watches.clg:66 `WatchEvent e = pending[i];` |
-| watches | Watches | elements of `states` (WatchState) | shared_ptr | pattern: watches.clg:108 `WatchState s = states[i];` |
-| windows | PopupBook | elements of `menus` (Menu) | shared_ptr | pattern: windows.clg:87 `Menu m = menus[i];` |
-| windows | Window | field `menu` (Menu) | shared_ptr | pattern: assigned from a variable: windows.clg:243 `menu = bar;` |
+| later | LaterBook | elements of `items` (Later) | shared_ptr | pattern: later.clg:46 `items[index] = items[last];` |
+| later | PumpBook | elements of `items` (Pump) | shared_ptr | pattern: later.clg:46 `items[index] = items[last];` (in class LaterBook: containers are told apart by name only) |
+| watches | WatchState | elements of `pending` (WatchEvent) | shared_ptr | pattern: watches.clg:67 `WatchEvent e = pending[i];` |
+| watches | Watches | elements of `states` (WatchState) | shared_ptr | pattern: watches.clg:109 `WatchState s = states[i];` |
+| windows | PopupBook | elements of `menus` (Menu) | shared_ptr | pattern: windows.clg:88 `Menu m = menus[i];` |
+| windows | Window | field `menu` (Menu) | shared_ptr | pattern: assigned from a variable: windows.clg:244 `menu = bar;` |
 | windows | Window | field `rules` (CommandRules) | shared_ptr | compiler: field is populated from a stored constructor parameter, matching the SHARED default a fresh inline-constructed argument already gets |
 | windows | Window | field `state` (WindowState) | shared_ptr | demand: another module needs it shared; compiler: copied between a field and another variable, so both are owners |
 | windows | Window | field `watches` (Watches) | shared_ptr | demand: another module needs it shared; compiler: copied between a field and another variable, so both are owners |
-| windows | WindowBook | elements of `items` (Window) | shared_ptr | pattern: windows.clg:368 `Window w = items[i];` |
+| windows | WindowBook | elements of `items` (Window) | shared_ptr | pattern: windows.clg:369 `Window w = items[i];` |
 | windows | WindowBook | result of `get()` (Window) | shared_ptr | pattern: returns the local `Window w = items[i]` |
 | windows | WindowBook | result of `needed()` (Window) | shared_ptr | pattern: returns the local `Window w = get(h)` |
-| theme | ThemeState | field `book` (WindowBook) | shared_ptr | pattern: assigned from a variable: theme.clg:58 `book = windows;` |
+| theme | ThemeState | field `book` (WindowBook) | shared_ptr | pattern: assigned from a variable: theme.clg:59 `book = windows;` |
 | theme | ThemeState | result of `stateItem()` (Item) | shared_ptr | pattern: returns the local `Item e = createObject()` |
-| drops | DropRules | field `gate` (FileGate) | shared_ptr | pattern: assigned from a variable: drops.clg:32 `gate = files;` |
-| app | App | elements of `trayMenus` (Menu) | shared_ptr | pattern: app.clg:1350 `Menu tm = trayMenus[ti];` |
+| drops | DropRules | field `gate` (FileGate) | shared_ptr | pattern: assigned from a variable: drops.clg:33 `gate = files;` |
+| app | App | elements of `trayMenus` (Menu) | shared_ptr | pattern: app.clg:1351 `Menu tm = trayMenus[ti];` |
 | app | App | field `dispatcher` (Dispatcher) | unique_ptr | default: no rule made it shared |
 | app | App | field `drops` (DropRules) | unique_ptr | default: no rule made it shared |
-| app | App | field `gate` (FileGate) | shared_ptr | pattern: copied into a local: app.clg:264 `FileGate files = gate;` |
-| app | App | field `httpRules` (HttpRules) | shared_ptr | pattern: copied into a local: app.clg:678 `HttpRules rules = httpRules;` |
+| app | App | field `gate` (FileGate) | shared_ptr | pattern: copied into a local: app.clg:265 `FileGate files = gate;` |
+| app | App | field `httpRules` (HttpRules) | shared_ptr | pattern: copied into a local: app.clg:679 `HttpRules rules = httpRules;` |
 | app | App | field `laters` (LaterBook) | unique_ptr | default: no rule made it shared |
-| app | App | field `links` (LinkRules) | shared_ptr | pattern: copied into a local: app.clg:263 `LinkRules rules = links;` |
-| app | App | field `memory` (WindowMemory) | shared_ptr | pattern: copied into a local: app.clg:1143 `WindowMemory mem = memory;` |
-| app | App | field `menuHandler` (MenuAction) | shared_ptr | pattern: copied into a local: app.clg:1356 `MenuAction trayItem = menuHandler;` |
-| app | App | field `notifier` (Notifier) | shared_ptr | pattern: copied into a local: app.clg:1461 `Notifier shared = notifier;` |
-| app | App | field `notifyHandler` (NotificationAction) | shared_ptr | pattern: copied into a local: app.clg:1479 `NotificationAction handler = notifyHandler;` |
-| app | App | field `popups` (PopupBook) | shared_ptr | pattern: copied into a local: app.clg:1392 `PopupBook book = popups;` |
-| app | App | field `programs` (ProgramRegistry) | shared_ptr | pattern: copied into a local: app.clg:560 `ProgramRegistry registry = programs;` |
+| app | App | field `links` (LinkRules) | shared_ptr | pattern: copied into a local: app.clg:264 `LinkRules rules = links;` |
+| app | App | field `memory` (WindowMemory) | shared_ptr | pattern: copied into a local: app.clg:1144 `WindowMemory mem = memory;` |
+| app | App | field `menuHandler` (MenuAction) | shared_ptr | pattern: copied into a local: app.clg:1357 `MenuAction trayItem = menuHandler;` |
+| app | App | field `notifier` (Notifier) | shared_ptr | pattern: copied into a local: app.clg:1462 `Notifier shared = notifier;` |
+| app | App | field `notifyHandler` (NotificationAction) | shared_ptr | pattern: copied into a local: app.clg:1480 `NotificationAction handler = notifyHandler;` |
+| app | App | field `popups` (PopupBook) | shared_ptr | pattern: copied into a local: app.clg:1393 `PopupBook book = popups;` |
+| app | App | field `programs` (ProgramRegistry) | shared_ptr | pattern: copied into a local: app.clg:561 `ProgramRegistry registry = programs;` |
 | app | App | field `pumps` (PumpBook) | unique_ptr | default: no rule made it shared |
-| app | App | field `settings` (SettingsStore) | shared_ptr | pattern: copied into a local: app.clg:185 `SettingsStore settings = this.settings;` |
-| app | App | field `theme` (ThemeState) | shared_ptr | pattern: copied into a local: app.clg:317 `ThemeState state = theme;` |
-| app | App | field `trayHandler` (TrayAction) | shared_ptr | pattern: copied into a local: app.clg:1829 `TrayAction clicked = trayHandler;` |
-| app | App | field `watches` (Watches) | shared_ptr | pattern: assigned from a variable: app.clg:1295 `watches = w.watches;` |
-| app | App | field `window` (WindowState) | shared_ptr | pattern: assigned from a variable: app.clg:1294 `window = w.state;` |
-| app | App | field `windows` (WindowBook) | shared_ptr | pattern: copied into a local: app.clg:198 `WindowBook book = windows;` |
+| app | App | field `settings` (SettingsStore) | shared_ptr | pattern: copied into a local: app.clg:186 `SettingsStore settings = this.settings;` |
+| app | App | field `theme` (ThemeState) | shared_ptr | pattern: copied into a local: app.clg:318 `ThemeState state = theme;` |
+| app | App | field `trayHandler` (TrayAction) | shared_ptr | pattern: copied into a local: app.clg:1830 `TrayAction clicked = trayHandler;` |
+| app | App | field `watches` (Watches) | shared_ptr | pattern: assigned from a variable: app.clg:1296 `watches = w.watches;` |
+| app | App | field `window` (WindowState) | shared_ptr | pattern: assigned from a variable: app.clg:1295 `window = w.state;` |
+| app | App | field `windows` (WindowBook) | shared_ptr | pattern: copied into a local: app.clg:199 `WindowBook book = windows;` |
 | app | (closures) | captured `book` (PopupBook) in 1 closure: `menu.popup` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `book` (WindowBook) in 11 closures: `fs.unwatch`, `fs.watch`, `settings.set`, ... | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `caller` (CallContext) in 1 closure: `notification.show` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
@@ -339,7 +339,7 @@ The table is produced by `16_pronao_pointers.py`, which does what `pronao/script
 | app | (closures) | result of `call()` (Item) in 33 closures | shared_ptr | rule: a closure implements a virtual method, and such signatures are shared so a hierarchy agrees |
 | cjson_item | Item | field `child` (Item) | shared_ptr | compiler: passed to a read-only free-function parameter (must survive the call); passed to a read-only method parameter (must survive the call) |
 | cjson_item | Item | field `next` (Item) | shared_ptr | compiler: bidirectional ownership needs a shared forward edge; copied between a field and another variable, so both are owners |
-| cjson_item | Item | field `prev` (Item) | weak_ptr | hint: `//@ptr weak Item.prev` at line 13 |
+| cjson_item | Item | field `prev` (Item) | weak_ptr | hint: `//@ptr weak Item.prev` at line 14 |
 | cjson_item | (free functions) | results of 36 free functions (Item): `addArrayToObject`, `addBoolToObject`, `addFalseToObject`, ... | shared_ptr | none: not printed, no pattern found |
 | cjson_parse | ParseResult | field `item` (Item) | shared_ptr | rule: class Item has a weak field (Item.prev), so every handle to an instance of Item is shared (compiler: "instances of this class participate in weak back-references") |
 | cjson_parse | (free functions) | results of 3 free functions (ParseResult): `parseBuffer`, `parseWithLengthOptsResult`, `parseWithOptsResult` | unique_ptr | default: no rule made it shared |

@@ -993,7 +993,7 @@ int main() {
 ```
 <!-- output: 15_cjson_05_detach_null_child.clg -->
 ```
-cling: null dereference at line 439
+cling: null dereference at line 440
 ```
 
 The line it names is `parent.child.prev = item.prev;` in `src/cjson_item.clg`. The exit status is 3.
@@ -1121,7 +1121,7 @@ int main() {
 ```
 <!-- output: 15_cjson_11_patch_null_root.clg -->
 ```
-cling: null dereference at line 607
+cling: null dereference at line 608
 ```
 
 The comment in the port's source says what the line is: upstream's unguarded dereference, kept, so that the language's check is what catches it.
