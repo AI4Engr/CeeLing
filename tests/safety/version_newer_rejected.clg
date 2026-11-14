@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: this file is written for CeeLing 0.2, and this compiler implements 0.1
+//@ reason: a file written for a newer language version is refused with a message that says so, instead of failing on whatever syntax the newer version added.
+//ceeling 0.2
+
+int main() {
+    return 0;
+}

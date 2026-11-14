@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: `0.01` is not a language version
+//@ reason: one way to write each version: 0.01 is not another spelling of 0.1.
+//ceeling 0.01
+
+int main() {
+    return 0;
+}

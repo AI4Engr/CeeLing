@@ -1,0 +1,9 @@
+//@ expect: reject
+//@ error: the language version is given twice
+//@ reason: one line, so that there is one answer to which version the file is written for.
+//ceeling 0.1
+//ceeling 0.1
+
+int main() {
+    return 0;
+}

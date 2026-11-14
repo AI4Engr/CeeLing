@@ -1,0 +1,11 @@
+//@ expect: accept
+//@ run: ok
+//@ reason: a comment that starts with the word, but with a space after the slashes or other words after it, is prose and is never read as the version line.
+// ceeling checks the code
+//ceelings are not versions
+int main() {
+    // ceeling 9.9 is only a sentence here, and so is the next line:
+    //ceeling-like comment
+    std::cout << "ok" << std::endl;
+    return 0;
+}

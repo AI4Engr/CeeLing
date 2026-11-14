@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: the language version line comes after code
+//@ reason: a version line that is not in the header would be read by nobody, so it is refused instead of ignored.
+
+int main() {
+    return 0;
+}
+//ceeling 0.1

@@ -1,0 +1,8 @@
+//@ expect: accept
+//@ run: hello from CeeLing 0.1
+//ceeling 0.1
+
+int main() {
+    std::cout << "hello from CeeLing 0.1" << std::endl;
+    return 0;
+}

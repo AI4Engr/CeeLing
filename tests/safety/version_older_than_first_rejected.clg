@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: CeeLing 0.0 is not a version of the language
+//@ reason: the first version is 0.1, so a lower one does not exist.
+//ceeling 0.0
+
+int main() {
+    return 0;
+}

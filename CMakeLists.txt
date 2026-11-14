@@ -44,6 +44,7 @@ cling_embed_facts(${CMAKE_BINARY_DIR}/generated/builtin_facts_data.cpp ${CMAKE_S
 set(CORE_SOURCES
     src/syntax/ast_builder.cpp
     src/syntax/class_hierarchy.cpp
+    src/syntax/language_version.cpp
     src/passes/struct_json.cpp
     src/passes/closure_desugar.cpp
     src/passes/channel_check.cpp
@@ -172,6 +173,9 @@ if(BASH_PROGRAM)
     # Debugging: `cling -g` puts a #line before every statement; every accepted fixture still compiles, and gdb steps through the .clg source
     add_test(NAME cling_debug_lines
         COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/debug/run_debug_lines_test.sh $<TARGET_FILE:cling>)
+    # The language version line (//ceeling 0.1): reported, checked in every file, and without effect on the generated C++
+    add_test(NAME cling_language_version
+        COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/tests/version/run_language_version_test.sh $<TARGET_FILE:cling>)
     # The language guide: every example compiles/runs as its tags say, every code block and message quoted in a chapter is what the compiler really produces
 endif()
 find_program(PYTHON_PROGRAM NAMES python3 python)

@@ -1,0 +1,9 @@
+//@ expect: accept
+//@ run: ok
+//@ reason: a file that names the current language version is compiled as usual. The line is an ordinary comment, so a compiler that does not know about it ignores it.
+//ceeling 0.1
+
+int main() {
+    std::cout << "ok" << std::endl;
+    return 0;
+}

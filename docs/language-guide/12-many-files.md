@@ -776,6 +776,48 @@ DialogArgs readDialogArgs(Item args) {
 **What it does not do.** Validate meaning (a path, a length), produce JSON (`toJson` is open), or decode into classes. The result holds plain values only, so it can be captured by a `spawn`
 ([chapter 10](10-threads.md)).
 
+## The language version of a file
+
+The language will change, and a program written today should not be left guessing which version it was written for. A file may say so on a line in its header (the `//` comments and blank lines before the first line of code):
+
+<!-- example: 12_version_current.clg -->
+```cpp
+//ceeling 0.1
+
+int main() {
+    std::cout << "hello from CeeLing 0.1" << std::endl;
+    return 0;
+}
+```
+<!-- output: 12_version_current.clg -->
+```
+hello from CeeLing 0.1
+```
+
+The line is an ordinary comment, so a compiler that has never heard of it ignores it. A file **without** the line is taken to be written for the current version, so nothing written before the line existed has to change. Today there is one version, `0.1` (`cling --language-version` prints the one your compiler implements).
+
+The check is made on each `.clg` file the compiler reads, a file reached through `#include "x.clh"` included, and the message names the file that carries the line. A file written for a newer version than the compiler implements is refused with a sentence that says so, instead of a syntax error on whatever the newer version added:
+
+<!-- example: 12_version_newer.clg -->
+```cpp
+//ceeling 0.2
+
+int main() {
+    std::cout << "a syntax that 0.1 does not have" << std::endl;
+    return 0;
+}
+```
+<!-- error: 12_version_newer.clg -->
+```
+error[version/newer]: this file is written for CeeLing 0.2, and this compiler implements 0.1
+  --> 12_version_newer.clg:1:1
+  help: use a compiler that implements 0.2, or write the file for 0.1
+```
+
+What else is refused, each with its own message: a version that does not exist (`0.0`), one that is not two numbers with a dot (`latest`, or `0.01`: one way to write each version), the line given twice, and the line after code (it would be read by nobody, so it is an error and not ignored). A comment that only starts with the word (`// ceeling checks ...`, with a space after the slashes) is prose and never an error.
+
+**Where it stops.** This is the first half of a mechanism, not the mechanism. There is no older version to migrate from yet, and no `cling --fix`. The rule that is meant to go with it (written down in the project's TODO, not enforced by anything yet): a change that makes older code stop compiling ships together with a mechanical rewrite for it, or it waits. A change in what existing code *means* (the number fields that start at zero are one) cannot be rewritten, because the source does not change; it is announced as a change in behaviour, not a version. And the compiler will support the current version and the one before it, not every version ever written.
+
 ## What needs which other project
 
 | Feature | Needs |

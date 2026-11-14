@@ -19,17 +19,17 @@ The sizes, measured by the project's own scripts on the code as it stands (the g
 <!-- command: 16_pronao_stats.py -->
 ```
 $ scripts/ceeling_stats.sh <work directory>
-CeeLing source (src/*.clg): 6345 lines of code (comments and blank lines left out)
-  ext_fn declarations (the trusted native surface): 72 different functions (93 declaration lines: a function used by several files is declared in each)
-  closures: 49 (spawn jobs among them: 7)
+CeeLing source (src/*.clg): 7038 lines of code (comments and blank lines left out)
+  ext_fn declarations (the trusted native surface): 73 different functions (95 declaration lines: a function used by several files is declared in each)
+  closures: 51 (spawn jobs among them: 8)
   manual-memory words in the source (delete, .get(), reinterpret, std::move, unique_ptr, shared_ptr, weak_ptr): 0
 Generated C++ from those files (<work directory>):
-  std::unique_ptr: 81   std::shared_ptr: 590   std::weak_ptr: 0   std::move: 67
-  bounds checks inserted (cling::at): 520
-  null checks inserted (cling::nn):   612
+  std::unique_ptr: 81   std::shared_ptr: 605   std::weak_ptr: 0   std::move: 73
+  bounds checks inserted (cling::at): 550
+  null checks inserted (cling::nn):   633
 $ scripts/shim_lines.sh
-win    2409 lines of code (976 shared + 1433 in win/); 2812 physical lines  OVER THE LIMIT of 1000
-posix  1363 lines of code (976 shared + 387 in posix/); 1637 physical lines  OVER THE LIMIT of 1000
+win    2671 lines of code (1013 shared + 1658 in win/); 3113 physical lines  OVER THE LIMIT of 1000
+posix  1411 lines of code (1013 shared + 398 in posix/); 1698 physical lines  OVER THE LIMIT of 1000
 ```
 
 Read it as follows. The program is about 6,300 lines of CeeLing (code only, comments and blank lines left out) in 19 files. Its trusted native layer is 2,409 lines of C++ for Windows (976 shared files plus 1,433 for the OS) and 1,363 for Linux. So on Windows a little over a quarter of the application's code is code the compiler does not check. The script also prints "OVER THE LIMIT of 1000": the project once set that limit and then dropped it as a rule. This chapter uses the measured figures.
@@ -280,6 +280,7 @@ The table is produced by `16_pronao_pointers.py`, which does what `pronao/script
 | settings | SettingsStore | field `gate` (FileGate) | unique_ptr | default: no rule made it shared |
 | settings | SettingsStore | result of `allItem()` (Item) | shared_ptr | pattern: returns the local `Item all = createObject()` |
 | settings | SettingsStore | result of `valueItem()` (Item) | shared_ptr | pattern: returns the local `Item made = createNumber(numbers[i])` |
+| http | (free functions) | results of 1 free function (Item): `httpResponseHeaderObject` | shared_ptr | none: not printed, no pattern found |
 | placement | WindowMemory | field `gate` (FileGate) | unique_ptr | default: no rule made it shared |
 | dispatch | Dispatcher | elements of `asyncHandlers` (AsyncCommand) | shared_ptr | pattern: dispatch.clg:384 `AsyncCommand starter = asyncHandlers[asyncIndex];` |
 | dispatch | Dispatcher | elements of `handlers` (Command) | shared_ptr | pattern: dispatch.clg:408 `Command handler = handlers[index];` |
@@ -304,30 +305,32 @@ The table is produced by `16_pronao_pointers.py`, which does what `pronao/script
 | theme | ThemeState | field `book` (WindowBook) | shared_ptr | pattern: assigned from a variable: theme.clg:58 `book = windows;` |
 | theme | ThemeState | result of `stateItem()` (Item) | shared_ptr | pattern: returns the local `Item e = createObject()` |
 | drops | DropRules | field `gate` (FileGate) | shared_ptr | pattern: assigned from a variable: drops.clg:32 `gate = files;` |
-| app | App | elements of `trayMenus` (Menu) | shared_ptr | pattern: app.clg:1220 `Menu tm = trayMenus[ti];` |
+| app | App | elements of `trayMenus` (Menu) | shared_ptr | pattern: app.clg:1350 `Menu tm = trayMenus[ti];` |
 | app | App | field `dispatcher` (Dispatcher) | unique_ptr | default: no rule made it shared |
 | app | App | field `drops` (DropRules) | unique_ptr | default: no rule made it shared |
-| app | App | field `gate` (FileGate) | shared_ptr | pattern: copied into a local: app.clg:261 `FileGate files = gate;` |
+| app | App | field `gate` (FileGate) | shared_ptr | pattern: copied into a local: app.clg:264 `FileGate files = gate;` |
+| app | App | field `httpRules` (HttpRules) | shared_ptr | pattern: copied into a local: app.clg:678 `HttpRules rules = httpRules;` |
 | app | App | field `laters` (LaterBook) | unique_ptr | default: no rule made it shared |
-| app | App | field `links` (LinkRules) | shared_ptr | pattern: copied into a local: app.clg:260 `LinkRules rules = links;` |
-| app | App | field `memory` (WindowMemory) | shared_ptr | pattern: copied into a local: app.clg:1013 `WindowMemory mem = memory;` |
-| app | App | field `menuHandler` (MenuAction) | shared_ptr | pattern: copied into a local: app.clg:1226 `MenuAction trayItem = menuHandler;` |
-| app | App | field `notifier` (Notifier) | shared_ptr | pattern: copied into a local: app.clg:1331 `Notifier shared = notifier;` |
-| app | App | field `notifyHandler` (NotificationAction) | shared_ptr | pattern: copied into a local: app.clg:1349 `NotificationAction handler = notifyHandler;` |
-| app | App | field `popups` (PopupBook) | shared_ptr | pattern: copied into a local: app.clg:1262 `PopupBook book = popups;` |
-| app | App | field `programs` (ProgramRegistry) | shared_ptr | pattern: copied into a local: app.clg:557 `ProgramRegistry registry = programs;` |
+| app | App | field `links` (LinkRules) | shared_ptr | pattern: copied into a local: app.clg:263 `LinkRules rules = links;` |
+| app | App | field `memory` (WindowMemory) | shared_ptr | pattern: copied into a local: app.clg:1143 `WindowMemory mem = memory;` |
+| app | App | field `menuHandler` (MenuAction) | shared_ptr | pattern: copied into a local: app.clg:1356 `MenuAction trayItem = menuHandler;` |
+| app | App | field `notifier` (Notifier) | shared_ptr | pattern: copied into a local: app.clg:1461 `Notifier shared = notifier;` |
+| app | App | field `notifyHandler` (NotificationAction) | shared_ptr | pattern: copied into a local: app.clg:1479 `NotificationAction handler = notifyHandler;` |
+| app | App | field `popups` (PopupBook) | shared_ptr | pattern: copied into a local: app.clg:1392 `PopupBook book = popups;` |
+| app | App | field `programs` (ProgramRegistry) | shared_ptr | pattern: copied into a local: app.clg:560 `ProgramRegistry registry = programs;` |
 | app | App | field `pumps` (PumpBook) | unique_ptr | default: no rule made it shared |
-| app | App | field `settings` (SettingsStore) | shared_ptr | pattern: copied into a local: app.clg:182 `SettingsStore settings = this.settings;` |
-| app | App | field `theme` (ThemeState) | shared_ptr | pattern: copied into a local: app.clg:314 `ThemeState state = theme;` |
-| app | App | field `trayHandler` (TrayAction) | shared_ptr | pattern: copied into a local: app.clg:1699 `TrayAction clicked = trayHandler;` |
-| app | App | field `watches` (Watches) | shared_ptr | pattern: assigned from a variable: app.clg:1165 `watches = w.watches;` |
-| app | App | field `window` (WindowState) | shared_ptr | pattern: assigned from a variable: app.clg:1164 `window = w.state;` |
-| app | App | field `windows` (WindowBook) | shared_ptr | pattern: copied into a local: app.clg:195 `WindowBook book = windows;` |
+| app | App | field `settings` (SettingsStore) | shared_ptr | pattern: copied into a local: app.clg:185 `SettingsStore settings = this.settings;` |
+| app | App | field `theme` (ThemeState) | shared_ptr | pattern: copied into a local: app.clg:317 `ThemeState state = theme;` |
+| app | App | field `trayHandler` (TrayAction) | shared_ptr | pattern: copied into a local: app.clg:1829 `TrayAction clicked = trayHandler;` |
+| app | App | field `watches` (Watches) | shared_ptr | pattern: assigned from a variable: app.clg:1295 `watches = w.watches;` |
+| app | App | field `window` (WindowState) | shared_ptr | pattern: assigned from a variable: app.clg:1294 `window = w.state;` |
+| app | App | field `windows` (WindowBook) | shared_ptr | pattern: copied into a local: app.clg:198 `WindowBook book = windows;` |
 | app | (closures) | captured `book` (PopupBook) in 1 closure: `menu.popup` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `book` (WindowBook) in 11 closures: `fs.unwatch`, `fs.watch`, `settings.set`, ... | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `caller` (CallContext) in 1 closure: `notification.show` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `files` (FileGate) in 13 closures: `fs.exists`, `fs.list`, `fs.mkdir`, ... | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `registry` (ProgramRegistry) in 1 closure: `proc.run` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
+| app | (closures) | captured `rules` (HttpRules) in 1 closure: `http.request` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `rules` (LinkRules) in 3 closures: `shell.openFile`, `shell.openUrl`, `shell.reveal` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `settings` (SettingsStore) in 3 closures: `settings.get`, `settings.getAll`, `settings.set` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
 | app | (closures) | captured `shared` (Notifier) in 1 closure: `notification.show` | shared_ptr | pattern: a captured object is copied into the closure, and the capturing code keeps its own handle (two owners) |
@@ -347,12 +350,12 @@ Members that are unique when their module is compiled alone and shared once the 
 
 Declarations behind the table (a row for methods, free functions or captures can stand for several):
                                                   unique shared   weak
-  pronao       fields and container elements           6     32      0
+  pronao       fields and container elements           6     33      0
   pronao       results of methods                     12      6      0
-  pronao       results of free functions               1      3      0
-  pronao       objects captured by closures            0     51      0
+  pronao       results of free functions               1      4      0
+  pronao       objects captured by closures            0     52      0
   pronao       results of closure methods              0     33      0
-  pronao       all declarations                       19    125      0
+  pronao       all declarations                       19    128      0
   cjson-cling  fields and container elements           0      3      1
   cjson-cling  results of methods                      0      0      0
   cjson-cling  results of free functions               6     40      0
@@ -360,21 +363,21 @@ Declarations behind the table (a row for methods, free functions or captures can
   cjson-cling  results of closure methods              0      0      0
   cjson-cling  all declarations                        6     43      1
 
-Pronao declares 36 classes and 8 structs. A struct is stored by value, so it has no pointer kind to choose and no row in the table.
+Pronao declares 37 classes and 11 structs. A struct is stored by value, so it has no pointer kind to choose and no row in the table.
 
-Every pointer token in the generated .cpp files of the 19 Pronao modules (the count of scripts/ceeling_stats.sh), by where it stands:
+Every pointer token in the generated .cpp files of the 20 Pronao modules (the count of scripts/ceeling_stats.sh), by where it stands:
                                                    unique shared   weak
-  field or container element in a class body            6     32      0
-  captured object in a closure class                    0     51      0
-  result type (declaration or definition)              25     81      0
-  parameter type (declaration or definition)            0    266      0
-  inside a function body                               50    160      0
-  all                                                  81    590      0
+  field or container element in a class body            6     33      0
+  captured object in a closure class                    0     52      0
+  result type (declaration or definition)              25     82      0
+  parameter type (declaration or definition)            0    270      0
+  inside a function body                               50    168      0
+  all                                                  81    605      0
 Parameters are not listed in the table: a parameter of class type follows the kind of its class where it is declared.
 
 How the two counts meet (Pronao modules only; each class is written into its own .cpp as well as its .h, and a method result appears in the class and in the definition):
   unique  fields, elements and captures: table   6, .cpp   6   results: 2 x (methods + closure methods) + free functions =  25, .cpp  25   agree
-  shared  fields, elements and captures: table  83, .cpp  83   results: 2 x (methods + closure methods) + free functions =  81, .cpp  81   agree
+  shared  fields, elements and captures: table  85, .cpp  85   results: 2 x (methods + closure methods) + free functions =  82, .cpp  82   agree
   weak    fields, elements and captures: table   0, .cpp   0   results: 2 x (methods + closure methods) + free functions =   0, .cpp   0   agree
 ```
 
@@ -744,7 +747,7 @@ The list of modules, in the order each comes after the ones it includes, is one 
 
 <!-- source: pronao/scripts/modules.sh "APP_MODULES=" 1 -->
 ```
-APP_MODULES="text core files assets settings links placement menu dispatch fscommands dialogs notify programs later watches windows theme drops app"
+APP_MODULES="text core files assets settings links http placement menu dispatch fscommands dialogs notify programs later watches windows theme drops app"
     ...
 ```
 

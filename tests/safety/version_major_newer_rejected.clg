@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: this file is written for CeeLing 1.0
+//@ reason: a newer major version is newer too.
+//ceeling 1.0
+
+int main() {
+    return 0;
+}

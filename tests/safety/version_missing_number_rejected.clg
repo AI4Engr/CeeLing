@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: `` is not a language version
+//@ reason: the word alone, with no version after it, is a mistake and is said so.
+//ceeling
+
+int main() {
+    return 0;
+}

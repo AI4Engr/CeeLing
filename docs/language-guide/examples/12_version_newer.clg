@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: this file is written for CeeLing 0.2, and this compiler implements 0.1
+//ceeling 0.2
+
+int main() {
+    std::cout << "a syntax that 0.1 does not have" << std::endl;
+    return 0;
+}

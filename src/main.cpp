@@ -20,6 +20,7 @@
 
 #ifdef WITH_TREE_SITTER
 #include "syntax/ast_builder.h"
+#include "syntax/language_version.h"
 #endif
 
 #ifdef _WIN32
@@ -106,6 +107,7 @@ void mergeExternalDeclarations(Program& program, const std::string& baseDir,
         }
 
         std::string includedSource = readFile(resolvedPath);
+        checkLanguageVersion(includedSource, resolvedPath);
         ASTBuilder includedBuilder;
         std::unique_ptr<Program> includedProgram = includedBuilder.buildProgram(includedSource);
         for (auto& includedStmt : includedProgram->statements) includedStmt->originFile = resolvedPath;
@@ -152,6 +154,7 @@ void showUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [options] <file.clg>" << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << "  --cpp <output>  - Compile to C++ and save to <output> file" << std::endl;
+    std::cout << "  --language-version - Print the language version this compiler implements (a file may begin with //ceeling X.Y)" << std::endl;
     std::cout << "  --no-bounds-checks - Do not insert runtime bounds checks on v[i] / s[i]" << std::endl;
     std::cout << "  --no-null-checks   - Do not insert runtime null checks on object-handle dereferences" << std::endl;
     std::cout << "  --ptr-demands-out <file> - Write the pointer kinds this file needs from the classes it includes (separate compilation; see smart_pointer_analyzer.h)" << std::endl;
@@ -267,6 +270,9 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--help") {
             showUsage(argv[0]);
             return 0;
+        } else if (arg == "--language-version") {
+            std::cout << languageVersionText() << std::endl;       // the version a file may name on its `//ceeling` line
+            return 0;
         } else if (arg[0] == '-') {
             std::cerr << "Error: Unknown option " << arg << std::endl;
             showUsage(argv[0]);
@@ -300,6 +306,7 @@ int main(int argc, char* argv[]) {
 
     try {
         std::string source = readFile(inputFile);
+        checkLanguageVersion(source, inputFile);
 
         std::unique_ptr<Program> program;
 
@@ -476,6 +483,10 @@ int main(int argc, char* argv[]) {
             }
         }
 
+    } catch (const LanguageVersionError& e) {
+        std::cerr << e.what() << std::endl;
+        pauseIfNeeded();
+        return 1;
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         pauseIfNeeded();

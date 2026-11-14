@@ -1,0 +1,12 @@
+//@ expect: accept
+//@ run: ok
+//@ reason: the line may follow other comments and blank lines in the header; the header ends at the first line of code.
+// A comment about the file.
+
+//ceeling 0.1
+// Another comment.
+
+int main() {
+    std::cout << "ok" << std::endl;
+    return 0;
+}

@@ -1,0 +1,8 @@
+//@ expect: reject
+//@ error: `latest` is not a language version
+//@ reason: the version is two numbers with a dot.
+//ceeling latest
+
+int main() {
+    return 0;
+}

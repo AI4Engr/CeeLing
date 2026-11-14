@@ -1,0 +1,8 @@
+//@ expect: accept
+//@ run: ok
+//@ reason: a file without a version line is taken to be written for the current version, so the files written before the line existed need no change.
+
+int main() {
+    std::cout << "ok" << std::endl;
+    return 0;
+}
