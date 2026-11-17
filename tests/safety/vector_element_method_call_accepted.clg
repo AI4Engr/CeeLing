@@ -1,0 +1,65 @@
+//@ expect: accept
+//@ reason: `v[i].method()` was rejected as "call to unknown function/method" because the escape-hatch checker resolved a call's receiver
+//@ reason: class by name and a subscript expression has no name (`v[i].field` already worked: the emitter resolved a subscript receiver).
+//@ reason: Found by probing the shape of an OO finite-element program: a `std::vector<Element>` filled by a factory function, then walked
+//@ reason: with virtual dispatch. The receiver of `v[i]` is now the vector's element class. The run line proves the virtual calls
+//@ reason: reach the overrides (Bar, Truss2D, Element) and not the base class.
+//@ run: Bar 2.5 Truss2D 2.5 Element 0 total=5
+class Element {
+public:
+    int id;
+    Element() {
+        id = 0;
+    }
+    virtual string typeName() {
+        return "Element";
+    }
+    virtual double stiff() {
+        return 0.0;
+    }
+};
+class ElementBar : public Element {
+public:
+    ElementBar() {
+        id = 1;
+    }
+    virtual string typeName() {
+        return "Bar";
+    }
+    virtual double stiff() {
+        return 2.5;
+    }
+};
+class ElementTruss2D : public ElementBar {
+public:
+    ElementTruss2D() {
+        id = 2;
+    }
+    virtual string typeName() {
+        return "Truss2D";
+    }
+};
+Element createElement(string kind) {
+    if (kind == "bar") {
+        return new ElementBar();
+    }
+    if (kind == "truss") {
+        return new ElementTruss2D();
+    }
+    return new Element();
+}
+int main() {
+    std::vector<Element> elements;
+    elements.push_back(createElement("bar"));
+    elements.push_back(createElement("truss"));
+    elements.push_back(createElement("none"));
+    double total = 0.0;
+    int i = 0;
+    while (i < elements.size()) {
+        std::cout << elements[i].typeName() << " " << elements[i].stiff() << " ";
+        total = total + elements[i].stiff();
+        i = i + 1;
+    }
+    std::cout << "total=" << total << std::endl;
+    return 0;
+}

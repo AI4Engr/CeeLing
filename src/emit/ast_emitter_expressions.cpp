@@ -224,9 +224,12 @@ std::string AstEmitter::emitExpression(const Expression* expr) {
                 if (elementIsShared && argIsShared) {
                     s += emitExpression(call->arguments[i].get());  // share: plain copy
                 } else if (elementIsShared) {
-                    // element=shared, arg=unique -> move into a shared_ptr wrapper.
-                    s += "std::shared_ptr<" + argClass + ">(" +
-                         emitMovedArg(call->arguments[i].get()) + ")";
+                    // element=shared, arg=unique -> move into a shared_ptr wrapper. An argument that is not a plain variable (a call that
+                    // returns an object: `v.push_back(createElement("bar"))`) has no class of its own here: the wrapper takes the
+                    // container's element type, to which a unique_ptr of the element or of a subclass converts.
+                    const std::string wrapClass = !argClass.empty() ? argClass : vectorElementType(receiverContainerType);
+                    s += wrapClass.empty() ? emitMovedArg(call->arguments[i].get())
+                                           : "std::shared_ptr<" + wrapClass + ">(" + emitMovedArg(call->arguments[i].get()) + ")";
                 } else {
                     s += emitMovedArg(call->arguments[i].get(), calleeParam(*call, i));
                 }

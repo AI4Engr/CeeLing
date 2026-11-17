@@ -1,0 +1,21 @@
+//@ expect: reject
+//@ reason: The subscript receiver is resolved to the element class, but a method the class does not have is still an unknown call: the
+//@ reason: default-reject rule is unchanged. (Control for vector_element_method_call_accepted.clg: if the checker accepted any call on a
+//@ reason: subscript, this would pass.)
+class E {
+public:
+    int id;
+    E() {
+        id = 0;
+    }
+    int plain() {
+        return id;
+    }
+};
+int main() {
+    std::vector<E> v;
+    v.push_back(new E());
+    int i = 0;
+    int k = v[i].missing();
+    return k;
+}

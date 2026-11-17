@@ -28,13 +28,13 @@ Generated C++ from those files (<work directory>):
   bounds checks inserted (cling::at): 550
   null checks inserted (cling::nn):   633
 $ scripts/shim_lines.sh
-win    2671 lines of code (1013 shared + 1658 in win/); 3113 physical lines  OVER THE LIMIT of 1000
-posix  1411 lines of code (1013 shared + 398 in posix/); 1698 physical lines  OVER THE LIMIT of 1000
+win    2804 lines of code (1146 shared + 1658 in win/); 3266 physical lines  OVER THE LIMIT of 1000
+posix  3197 lines of code (1146 shared + 2051 in posix/); 3753 physical lines  OVER THE LIMIT of 1000
 ```
 
-Read it as follows. The program is about 6,300 lines of CeeLing (code only, comments and blank lines left out) in 19 files. Its trusted native layer is 2,409 lines of C++ for Windows (976 shared files plus 1,433 for the OS) and 1,363 for Linux. So on Windows a little over a quarter of the application's code is code the compiler does not check. The script also prints "OVER THE LIMIT of 1000": the project once set that limit and then dropped it as a rule. This chapter uses the measured figures.
+Read it as follows. The program is about 7,000 lines of CeeLing (code only, comments and blank lines left out). Its trusted native layer is 2,804 lines of C++ for Windows (1,146 shared plus 1,658 for the OS) and 3,197 for Linux (1,146 shared plus 2,051; the Linux window layer was added on 2026-11-14, which is why that number grew from about 1,400). So on Windows about a quarter of the application's code is code the compiler does not check, and on Linux a little more. The script also prints "OVER THE LIMIT of 1000": the project once set that limit and then dropped it as a rule. This chapter uses the measured figures.
 
-That is the first honest number about what CeeLing does for a real program: it checks the majority of the application, and it does not check the rest. What the rest can do is bounded by a list of 72 declared functions, below.
+That is the first honest number about what CeeLing does for a real program: it checks the majority of the application, and it does not check the rest. What the rest can do is bounded by a list of 73 declared functions, below.
 
 ## What the program looks like
 

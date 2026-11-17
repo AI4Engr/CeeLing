@@ -1,0 +1,22 @@
+//@ expect: accept
+//@ reason: `v.push_back(makeE())` (the argument is a CALL that returns an object) into a vector whose elements are shared, because an element
+//@ reason: is copied out (`E e = v[0];`), used to emit `std::shared_ptr<>(makeE())` -- an empty template argument list that g++ rejects. The
+//@ reason: wrapper now names the container's element class. The run line proves it compiles and the copy shares the element.
+//@ run: 3 3
+class E {
+public:
+    int id;
+    E() {
+        id = 3;
+    }
+};
+E makeE() {
+    return new E();
+}
+int main() {
+    std::vector<E> v;
+    v.push_back(makeE());
+    E e = v[0];
+    std::cout << e.id << " " << v[0].id << std::endl;
+    return 0;
+}

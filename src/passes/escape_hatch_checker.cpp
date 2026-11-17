@@ -390,6 +390,15 @@ std::string EscapeHatchChecker::resolveObjectType(const Expression* expr) const 
         const std::string& returnType = methodIt->second;
         return classNames_.count(returnType) ? returnType : std::string{};
     }
+    // `v[i]` on a vector of objects (`v[i].method()`, `v[i].field.method()`): the class of the elements. The emitter already
+    // resolves a subscript receiver the same way (`exprObjectClass`), which is why `v[i].field` worked while `v[i].method()` was
+    // rejected here as an unknown call.
+    if (auto sub = dynamic_cast<const SubscriptExpression*>(expr)) {
+        const std::string container = resolveDeclaredType(sub->object.get());
+        if (!isVectorType(container)) return {};
+        const std::string element = vectorElementType(container);
+        return classNames_.count(element) ? element : std::string{};
+    }
     // `new`, literals, etc: not resolved by this lightweight pass.
     return {};
 }

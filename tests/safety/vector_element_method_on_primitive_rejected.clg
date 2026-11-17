@@ -1,0 +1,10 @@
+//@ expect: reject
+//@ reason: A method call on an element of a vector of PRIMITIVES (`v[i].plain()`) has no class to resolve to and stays rejected; only a
+//@ reason: vector of objects gets its element class as the receiver.
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    int i = 0;
+    int k = v[i].plain();
+    return k;
+}

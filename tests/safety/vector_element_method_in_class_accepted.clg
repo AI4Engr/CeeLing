@@ -1,0 +1,35 @@
+//@ expect: accept
+//@ reason: `ps[i].method()` where `ps` is a vector FIELD of the enclosing class, with a variable index and with a computed one: the receiver
+//@ reason: class comes from the field's declared type. Same fix as vector_element_method_call_accepted.clg, in the shape a class uses it.
+//@ run: 1 1 1
+class P {
+public:
+    int n;
+    P() {
+        n = 1;
+    }
+    int one() {
+        return n;
+    }
+};
+class H {
+public:
+    std::vector<P> ps;
+    H() {
+        ps.push_back(new P());
+    }
+    int first() {
+        return ps[0].one();
+    }
+    int at(int i) {
+        return ps[i].one();
+    }
+    int last() {
+        return ps[ps.size() - 1].one();
+    }
+};
+int main() {
+    H h = new H();
+    std::cout << h.at(0) << " " << h.first() << " " << h.last() << std::endl;
+    return 0;
+}
