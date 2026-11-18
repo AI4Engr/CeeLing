@@ -1,0 +1,24 @@
+//@ expect: accept
+//@ reason: A handle stored into a field of another object from a vector element (`m.handler = handlers[i];`) left the field unique_ptr while the vector's elements are shared_ptr: g++ "no match for operator=".
+//@ reason: Found by writing httplib-cling (2026-11-16); the workaround had been to store an index. The field is now shared.
+//@ run: 7
+class Handler { public: int id; Handler() { id = 7; } int get() { return id; } };
+class Entry { public: Handler handler; Entry() { } };
+class Table {
+public:
+    std::vector<Handler> handlers;
+    Table() { }
+    void add(Handler h) { handlers.push_back(h); }
+    Entry make(int i) {
+        Entry m = new Entry();
+        m.handler = handlers[i];
+        return m;
+    }
+};
+int main() {
+    Table t = new Table();
+    t.add(new Handler());
+    Entry e = t.make(0);
+    std::cout << e.handler.get() << std::endl;
+    return 0;
+}

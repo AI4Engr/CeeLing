@@ -697,6 +697,8 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocals(const Program& program) 
 }
 
 void SmartPointerAnalyzer::promoteReturnsOfSharedLocalsOnce(const Program& program, bool& changed) {
+    // A local assigned from a call whose result is shared must be shared before the method returning it is looked at.
+    promoteLocalsAssignedFromSharedCalls(program, changed);
     // inferAliasReturningMethods is structural and does not recognize `return <local>;`. A local can become shared in a later pass (promoteSharedCallArguments),
     // and the method returning it must then return shared. This pass runs after that one and reuses getPointerTypeForVariable.
     for (const auto& stmt : program.statements) {
@@ -718,6 +720,11 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocalsOnce(const Program& progr
             // Scoped lookup ("Class::method"): a plain name-only match would collide with a same-named local in an unrelated function.
             const std::string methodScope = cls->name + "::" + method->name;
             for (const Expression* expr : returns) {
+                // `return h.handle(req);`: a call whose result is already shared (a virtual method's result always is) cannot be returned as a unique_ptr.
+                if (dynamic_cast<const FunctionCall*>(expr) != nullptr && localComesFromSharedCall(expr, cls->name, methodScope)) {
+                    anyLocalIsShared = true;
+                    break;
+                }
                 // `return this;` is handled by the anyReturnsThis / classesNeedingSharedFromThis_ mechanism; ThisExpression is not an Identifier, so it falls through here.
                 auto id = dynamic_cast<const Identifier*>(expr);
                 if (id == nullptr) continue;
@@ -751,6 +758,10 @@ void SmartPointerAnalyzer::promoteReturnsOfSharedLocalsOnce(const Program& progr
         bool anyLocalIsShared = false;
         // Scoped lookup (bare fn->name), for the same reason as the class-method loop above.
         for (const Expression* expr : returns) {
+            if (dynamic_cast<const FunctionCall*>(expr) != nullptr && localComesFromSharedCall(expr, "", fn->name)) {
+                anyLocalIsShared = true;
+                break;
+            }
             auto id = dynamic_cast<const Identifier*>(expr);
             if (id == nullptr) continue;
             if (getPointerTypeForVariableInScope(fn->name, id->name) == PointerType::SHARED ||
@@ -860,6 +871,108 @@ void flattenBody(const std::vector<StatementPtr>& body, std::vector<FlatStmt>& o
     }
 }
 } // namespace
+
+// `Response r = new Response(); ... r = h.handle(req);`: a call whose result is shared cannot be assigned to a unique_ptr local (g++: no match for operator=).
+// A declaration `Response r = h.handle(req);` already works, because the emitter declares that local as shared; only the later assignment was missed.
+// Which calls return shared depends on this pass itself (a promoted local makes the method returning it shared), so it runs inside the fixed point.
+void SmartPointerAnalyzer::promoteLocalsAssignedFromSharedCalls(const Program& program, bool& changed) {
+    auto scan = [&](const std::vector<StatementPtr>& body, const std::vector<std::pair<std::string, std::string>>& params,
+                    const std::string& ownClass, const std::string& scope) {
+        std::map<std::string, std::string> types;  // object-class locals and parameters
+        for (const auto& [ptype, pname] : params) {
+            if (classNames.count(ptype) > 0) types[pname] = ptype;
+        }
+        std::vector<FlatStmt> flat;
+        flattenBody(body, flat);
+        for (const auto& fs : flat) {
+            if (auto decl = dynamic_cast<const VariableDeclaration*>(fs.stmt)) {
+                if (classNames.count(decl->type) > 0 && !decl->isObserver) types[decl->identifier] = decl->type;
+            }
+        }
+        // The class of an object expression on the left of a field store: a local or parameter, `this`, or a field chain.
+        std::function<std::string(const Expression*)> classOf = [&](const Expression* e) -> std::string {
+            if (dynamic_cast<const ThisExpression*>(e) != nullptr) return ownClass;
+            if (auto id = dynamic_cast<const Identifier*>(e)) {
+                auto t = types.find(id->name);
+                if (t != types.end()) return t->second;
+                if (!ownClass.empty()) {
+                    auto f = symbolTypesByScope.find(makeSymbolKey(ownClass, id->name));
+                    if (f != symbolTypesByScope.end()) return f->second;
+                }
+                return "";
+            }
+            if (auto m = dynamic_cast<const MemberAccess*>(e)) {
+                const std::string owner = classOf(m->object.get());
+                if (owner.empty()) return "";
+                auto f = symbolTypesByScope.find(makeSymbolKey(owner, m->member));
+                return f == symbolTypesByScope.end() ? std::string() : f->second;
+            }
+            return "";
+        };
+        // A field (of `owner`) that receives a shared handle must be a shared_ptr field: `m.handler = handlers[i];` with the vector's elements shared.
+        auto promoteField = [&](const std::string& owner, const std::string& fieldName) {
+            auto ft = symbolTypesByScope.find(makeSymbolKey(owner, fieldName));
+            if (ft == symbolTypesByScope.end() || classNames.count(ft->second) == 0) return;
+            for (auto& [key, ref] : variableReferences) {
+                if (ref.className != ft->second || ref.variableName != fieldName || ref.containingScope != normalizeScope(owner)) continue;
+                if (ref.hasExplicitHint) continue;
+                auto dec = pointerDecisions.find(key);
+                if (dec == pointerDecisions.end() || dec->second != PointerType::UNIQUE) continue;
+                dec->second = PointerType::SHARED;
+                pointerReasons[key] = "assigned from a vector element or a call whose result is shared";
+                ref.reason = pointerReasons[key];
+                changed = true;
+            }
+        };
+        for (const auto& fs : flat) {
+            auto asg = dynamic_cast<const AssignmentStatement*>(fs.stmt);
+            if (asg == nullptr) continue;
+            const bool fromSharedCall = dynamic_cast<const FunctionCall*>(asg->expression.get()) != nullptr &&
+                                        localComesFromSharedCall(asg->expression.get(), ownClass, scope);
+            // A handle copied out of a vector element: the elements are shared (scanContainerElementKinds), so the target must be too.
+            const bool fromElement = dynamic_cast<const SubscriptExpression*>(asg->expression.get()) != nullptr;
+            if (!fromSharedCall && !fromElement) continue;
+            if (asg->target) {
+                if (auto member = dynamic_cast<const MemberAccess*>(asg->target.get())) {
+                    const std::string owner = classOf(member->object.get());
+                    if (!owner.empty()) promoteField(owner, member->member);
+                }
+                continue;
+            }
+            auto ti = types.find(asg->variable);
+            if (ti == types.end()) {
+                // not a local: a bare field of the enclosing class
+                if (!ownClass.empty()) promoteField(ownClass, asg->variable);
+                continue;
+            }
+            if (!fromSharedCall) continue;  // a local copied from an element is promoteAliasedLocals' job
+            const std::string key = buildKey(scope, ti->second, asg->variable);
+            auto it = pointerDecisions.find(key);
+            if (it == pointerDecisions.end() || it->second != PointerType::UNIQUE) continue;  // already shared, or a weak field: leave it
+            auto vr = variableReferences.find(key);
+            if (vr != variableReferences.end() && vr->second.hasExplicitHint) continue;       // an explicit hint always wins
+            it->second = PointerType::SHARED;
+            pointerReasons[key] = "assigned from a call whose result is shared";
+            changed = true;
+        }
+    };
+    for (const auto& stmt : program.statements) {
+        if (auto fn = dynamic_cast<const FunctionDeclaration*>(stmt.get())) {
+            scan(fn->body, fn->parameters, "", fn->name);
+        } else if (auto mn = dynamic_cast<const MainFunction*>(stmt.get())) {
+            scan(mn->body, {}, "", "main");
+        } else if (auto cls = dynamic_cast<const ClassDeclaration*>(stmt.get())) {
+            for (const auto& member : cls->members) {
+                if (auto method = dynamic_cast<const MethodDeclaration*>(member.get())) {
+                    if (!method->specializationArg.empty()) continue;
+                    scan(method->body, method->parameters, cls->name, cls->name + "::" + method->name);
+                } else if (auto ctor = dynamic_cast<const ConstructorDeclaration*>(member.get())) {
+                    scan(ctor->body, ctor->parameters, cls->name, cls->name + "::" + ctor->name);
+                }
+            }
+        }
+    }
+}
 
 void SmartPointerAnalyzer::promoteAliasedLocalsInBody(
     const std::vector<StatementPtr>& body,

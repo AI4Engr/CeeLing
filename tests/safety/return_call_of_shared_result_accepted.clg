@@ -1,0 +1,25 @@
+//@ expect: accept
+//@ reason: A method that returns the result of another object's virtual method (`return h.handle(req);`) was emitted as returning unique_ptr while the virtual method returns shared_ptr: g++ "could not convert shared_ptr to unique_ptr".
+//@ reason: Found by writing httplib-cling (2026-11-16). The return of a call whose result is shared now makes the method return shared, like `Response a = h.handle(req); return a;` always did.
+//@ run: 500
+class Response { public: int status; Response() { status = 0; } };
+class Request { public: string path; Request() { path = ""; } };
+Response textResponse(int s) { Response r = new Response(); r.status = s; return r; }
+class Handler { public: Handler() { } virtual Response handle(Request req) { return textResponse(500); } };
+class Router {
+public:
+    std::vector<Handler> handlers;
+    Router() { }
+    void add(Handler h) { handlers.push_back(h); }
+    Response run(int i, Request req) {
+        Handler h = handlers[i];
+        return h.handle(req);
+    }
+};
+int main() {
+    Router r = new Router();
+    r.add(new Handler());
+    Response a = r.run(0, new Request());
+    std::cout << a.status << std::endl;
+    return 0;
+}

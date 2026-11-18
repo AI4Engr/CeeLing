@@ -1,0 +1,23 @@
+//@ expect: accept
+//@ reason: A local created with `new` and later assigned the result of a call that returns shared (`r = h.handle(req);`) stayed unique_ptr: g++ "no match for operator=".
+//@ reason: Found by writing httplib-cling (2026-11-16). Such a local is now shared; initialising it from the call (`Response r = h.handle(req);`) already worked.
+//@ run: 400
+class Response { public: int status; Response() { status = 0; } };
+class Request { public: string path; Request() { path = ""; } };
+Response textResponse(int s) { Response r = new Response(); r.status = s; return r; }
+Response errorResponse(int s) { return textResponse(s); }
+class Handler { public: Handler() { } virtual Response handle(Request req) { return errorResponse(500); } };
+Response build(Handler h, Request req, bool bad) {
+    Response r = new Response();
+    if (bad) {
+        r = errorResponse(400);
+    } else {
+        r = h.handle(req);
+    }
+    return r;
+}
+int main() {
+    Response a = build(new Handler(), new Request(), true);
+    std::cout << a.status << std::endl;
+    return 0;
+}

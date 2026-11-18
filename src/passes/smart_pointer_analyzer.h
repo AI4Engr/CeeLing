@@ -205,6 +205,8 @@ private:
     // Needs every local's final decision, so it runs after promoteSharedCallArguments.
     void promoteReturnsOfSharedLocals(const Program& program);
     void promoteReturnsOfSharedLocalsOnce(const Program& program, bool& changed);
+    // A local assigned (`r = h.handle(req);`) from a call whose result is shared becomes shared; part of the fixed point above.
+    void promoteLocalsAssignedFromSharedCalls(const Program& program, bool& changed);
     bool localComesFromSharedCall(const Expression* init, const std::string& ownClass, const std::string& scope) const;
 
     // Free-function counterpart of inferAliasReturningMethods; runs after promoteReturnsOfSharedLocals.
