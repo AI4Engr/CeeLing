@@ -1,0 +1,14 @@
+//@ expect: accept
+//@ reason: Writing a field INSIDE an element (`items[0].v = 5;`) replaces nothing, so `ref Item a = items[0];` stays valid. Positive control for the element-replacement rule: only a store whose target is the element itself kills the observers.
+//@ run: 5 6
+class Item { public: int v; Item(int x) { v = x; } };
+int main() {
+    std::vector<Item> items;
+    items.push_back(new Item(1));
+    items.push_back(new Item(2));
+    ref Item a = items[0];
+    items[0].v = 5;
+    items[1].v = 6;
+    std::cout << a.v << " " << items[1].v << std::endl;
+    return 0;
+}

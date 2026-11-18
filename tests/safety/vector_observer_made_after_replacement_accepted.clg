@@ -1,0 +1,14 @@
+//@ expect: accept
+//@ reason: An observer bound AFTER the element was replaced (`items[0] = new Item(9); ref Item a = items[0];`) points at the new object and is valid. Positive control: the rule kills observers that exist at the store, not ones made later.
+//@ run: 9 2
+class Item { public: int v; Item(int x) { v = x; } };
+int main() {
+    std::vector<Item> items;
+    items.push_back(new Item(1));
+    items.push_back(new Item(2));
+    Item keep = items[1];
+    items[0] = new Item(9);
+    ref Item a = items[0];
+    std::cout << a.v << " " << keep.v << std::endl;
+    return 0;
+}

@@ -172,7 +172,9 @@ private:
     // dies at an assignment to the field, a vector mutator called on it, and any call that may
     // reach the heap (a user function that is not heap-pure, or a `new`). Passing such a span to
     // a call that may change the field is refused.
-    void killFieldObservers(const std::string& field);      // "" = every field observer
+    void killFieldObservers(const std::string& field);
+    // `v[i] = x;` on a vector of objects frees the old element: every observer of `v` dies.
+    void killObserversOfReplacedElement(const SubscriptExpression* sub);      // "" = every field observer
     bool hasFieldObservers() const;
     // 0: not user code (a library call), 1: every user function/method of that name is heap-pure, 2: some is not
     int calleeHeapEffect(const FunctionCall* call) const;

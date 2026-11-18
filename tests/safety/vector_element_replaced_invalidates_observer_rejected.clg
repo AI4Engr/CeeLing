@@ -1,0 +1,15 @@
+//@ expect: reject
+//@ reason: `items[0] = new Item(9);` replaces the element and frees the object it held, so `ref Item a = items[0];` points at freed memory.
+//@ reason: Found 2026-11-17 while reading Ante's and Valen's articles on shape stability: the checker accepted this and the generated C++ read freed memory (AddressSanitizer: heap-use-after-free), which breaks the headline promise.
+//@ reason: An assignment whose target is `v[i]` on a vector of objects now kills every observer of `v` (killObserversOfReplacedElement). `keep` is only there to make the elements shared, so the program compiled in g++ before the fix.
+class Item { public: int v; Item(int x) { v = x; } };
+int main() {
+    std::vector<Item> items;
+    items.push_back(new Item(1));
+    items.push_back(new Item(2));
+    Item keep = items[1];
+    ref Item a = items[0];
+    items[0] = new Item(9);
+    std::cout << a.v << std::endl;
+    return 0;
+}

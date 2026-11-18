@@ -1,0 +1,12 @@
+//@ expect: accept
+//@ reason: `v[0] = 7;` on a vector of numbers frees nothing, so a span of `v` stays valid and sees the new value. Positive control: the element-replacement rule applies only to a vector of objects.
+//@ run: 7 2
+int main() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    std::span<int> s = v;
+    v[0] = 7;
+    std::cout << s[0] << " " << s.size() << std::endl;
+    return 0;
+}

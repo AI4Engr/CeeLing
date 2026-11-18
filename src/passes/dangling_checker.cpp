@@ -801,6 +801,32 @@ void DanglingChecker::applyOneCallMoves(const Expression* expr) {
     }
 }
 
+// `v[i] = x;` on a vector of OBJECTS replaces the element and frees the object it held, so a `ref` bound to an element of `v` (the checker records it as an
+// observer of the whole container, not of one index) may now point at freed memory. Every observer of `v` dies; that also rejects a `ref` to a DIFFERENT element,
+// which would be safe, because telling the two apart needs the index (`v[0]` vs `v[1]`) and the checker has no per-element paths. A vector of primitives is
+// untouched: writing a number into a slot frees nothing, and a span of that vector stays valid.
+void DanglingChecker::killObserversOfReplacedElement(const SubscriptExpression* sub) {
+    const Expression* object = sub->object.get();
+    std::string container;       // a local vector, by name
+    std::string field;           // a vector field (named bare, or reached through an object), by field name
+    std::string type;
+    if (auto id = dynamic_cast<const Identifier*>(object)) {
+        auto it = localType_.find(id->name);
+        if (it != localType_.end()) { container = id->name; type = it->second; }
+        else { field = id->name; type = declaredTypeOf(id); }
+    } else if (auto m = dynamic_cast<const MemberAccess*>(object)) {
+        field = m->member;
+        type = declaredTypeOf(m);
+    }
+    if (!isVectorType(type) || classNames_.count(vectorElementType(type)) == 0) return;
+    if (!container.empty()) {
+        for (const auto& [obs, owner] : observerOf_) {
+            if (owner == container) danglingObservers_.insert(obs);
+        }
+    }
+    if (!field.empty()) killFieldObservers(field);
+}
+
 void DanglingChecker::killFieldObservers(const std::string& field) {
     for (const auto& [obs, owner] : observerOf_) {
         if (!owner.empty() && owner[0] == '@' && (field.empty() || owner == "@" + field)) danglingObservers_.insert(obs);
@@ -1671,6 +1697,7 @@ void DanglingChecker::processStatement(const Statement* stmt) {
             // a store into a field replaces what a span of that field points into (by name)
             if (auto m = dynamic_cast<const MemberAccess*>(assign->target.get())) killFieldObservers(m->member);
             else if (!assign->target) killFieldObservers(assign->variable);
+            else if (auto sub = dynamic_cast<const SubscriptExpression*>(assign->target.get())) killObserversOfReplacedElement(sub);
         } else if (observerNames_.find(assign->variable) != observerNames_.end()) {
             // Assigning to an observer rebinds it (`b = inner;`); it loses any alias exemption.
             danglingObservers_.erase(assign->variable);

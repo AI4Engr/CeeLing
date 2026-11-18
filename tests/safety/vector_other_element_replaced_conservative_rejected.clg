@@ -1,0 +1,14 @@
+//@ expect: reject
+//@ reason: Replacing a DIFFERENT element (`items[1] = ...` while `a` observes `items[0]`) is safe, and Ante accepts the analogous code, but the checker records an element observer against the whole container and has no per-element path, so it rejects.
+//@ reason: This fixture documents the precision that was given up to close the hole in vector_element_replaced_invalidates_observer_rejected.clg. If per-element tracking is ever added, this is the fixture that should flip to accept, deliberately.
+class Item { public: int v; Item(int x) { v = x; } };
+int main() {
+    std::vector<Item> items;
+    items.push_back(new Item(1));
+    items.push_back(new Item(2));
+    Item keep = items[1];
+    ref Item a = items[0];
+    items[1] = new Item(9);
+    std::cout << a.v << std::endl;
+    return 0;
+}
